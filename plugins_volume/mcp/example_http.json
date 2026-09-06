@@ -1,0 +1,12 @@
+{
+  "plugin_id": "mcp.example_http",
+  "name": "Example MCP HTTP",
+  "kind": "mcp_http",
+  "version": "0.1.0",
+  "description": "Example remote MCP HTTP plugin (disabled by default until URL is set)",
+  "enabled": false,
+  "config": {
+    "url": "http://127.0.0.1:9000",
+    "rpc_path": "/mcp"
+  }
+}

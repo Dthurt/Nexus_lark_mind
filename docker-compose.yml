@@ -1,0 +1,108 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: nlm-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  core-kernel:
+    build: .
+    image: nexus-lark-mind:latest
+    container_name: nlm-core-kernel
+    restart: unless-stopped
+    command: ["python", "-m", "src.entry_kernel"]
+    env_file:
+      - .env
+    environment:
+      HEALTH_PORT: "8001"
+      KERNEL_HOST: "0.0.0.0"
+      KERNEL_PORT: "8001"
+      DATABASE_URL: "sqlite+aiosqlite:///data/nexus.db"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - ./data:/app/data
+      - ./plugins_volume:/app/plugins_volume
+      - ./logs:/app/logs
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  orchestrator:
+    image: nexus-lark-mind:latest
+    container_name: nlm-orchestrator
+    restart: unless-stopped
+    command: ["python", "-m", "src.entry_orchestrator"]
+    env_file:
+      - .env
+    environment:
+      HEALTH_PORT: "8002"
+      ORCHESTRATOR_HOST: "0.0.0.0"
+      ORCHESTRATOR_PORT: "8002"
+      KERNEL_RPC_URL: "http://core-kernel:8001"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "8002:8002"
+    depends_on:
+      redis:
+        condition: service_healthy
+      core-kernel:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  adapters:
+    image: nexus-lark-mind:latest
+    container_name: nlm-adapters
+    restart: unless-stopped
+    command: ["python", "-m", "src.entry_adapters"]
+    env_file:
+      - .env
+    environment:
+      HEALTH_PORT: "8000"
+      ADAPTERS_HOST: "0.0.0.0"
+      ADAPTERS_PORT: "8000"
+      ORCHESTRATOR_RPC_URL: "http://orchestrator:8002"
+      KERNEL_RPC_URL: "http://core-kernel:8001"
+      REDIS_URL: "redis://redis:6379/0"
+      WEB_STATIC_DIR: "/app/web-static"
+    volumes:
+      - ./web-static:/app/web-static
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  redis_data:
