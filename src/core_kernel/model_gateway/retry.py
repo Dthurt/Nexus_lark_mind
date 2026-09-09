@@ -8,7 +8,6 @@ from typing import Optional, Tuple
 
 from src.common.errors import RateLimitError
 
-
 _RETRYABLE_MARKERS = (
     "429",
     "rate limit",
@@ -19,6 +18,9 @@ _RETRYABLE_MARKERS = (
     '"code": 1305',
     "1305",
 )
+
+# GLM free/flash tiers often return 429 without Retry-After; short waits just re-hit the limit.
+_DEFAULT_RETRY_AFTER_SECONDS = 12.0
 
 
 def is_rate_limit_message(text: str) -> bool:
@@ -60,17 +62,21 @@ def compute_backoff_seconds(
     """attempt is 0-based."""
     if retry_after is not None and retry_after > 0:
         # Slight jitter so concurrent clients don't sync-thump
-        return min(maximum, retry_after + random.uniform(0.0, 0.75))
+        return min(maximum, retry_after + random.uniform(0.0, 1.5))
     exp = base * (2**attempt)
-    jitter = random.uniform(0.0, min(1.0, base))
+    jitter = random.uniform(0.0, min(2.0, base))
     return min(maximum, exp + jitter)
 
 
 def raise_if_rate_limited(status_code: int, body: str, headers: Optional[dict] = None) -> None:
     if status_code == 429 or is_rate_limit_message(body):
+        ra = parse_retry_after_seconds(headers, body)
+        if ra is None and status_code == 429:
+            # Vendor omitted Retry-After (common for open.bigmodel.cn)
+            ra = _DEFAULT_RETRY_AFTER_SECONDS
         raise RateLimitError(
             body or f"HTTP {status_code}",
-            retry_after=parse_retry_after_seconds(headers, body),
+            retry_after=ra,
             status_code=status_code or 429,
         )
 
@@ -88,9 +94,12 @@ def format_rate_limit_exhausted(max_retries: int) -> str:
 
 def classify_http_error(status_code: int, body: str, headers: Optional[dict] = None) -> Tuple[bool, Optional[RateLimitError]]:
     if status_code == 429 or is_rate_limit_message(body):
+        ra = parse_retry_after_seconds(headers, body)
+        if ra is None and status_code == 429:
+            ra = _DEFAULT_RETRY_AFTER_SECONDS
         err = RateLimitError(
             body or f"HTTP {status_code}",
-            retry_after=parse_retry_after_seconds(headers, body),
+            retry_after=ra,
             status_code=status_code or 429,
         )
         return True, err

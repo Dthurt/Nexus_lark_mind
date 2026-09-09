@@ -7,10 +7,11 @@ import logging
 from typing import Any, Dict, Optional
 
 from src.adapters.base_adapter import BaseAdapter
+from src.adapters.channels import resolve_feishu
 from src.adapters.feishu.cards import build_streaming_card, build_text_card
 from src.adapters.feishu.client import FeishuClient
 from src.adapters.feishu.crypto import AESCipher, verify_request_signature, verify_token
-from src.adapters.feishu.events import classify_payload
+from src.adapters.feishu.events import classify_payload, strip_mention_placeholders
 from src.common.config import Settings, get_settings
 from src.common.rpc_client import RpcClient
 from src.common.schemas import BusEvent, ChannelType, EventType, StandardTask
@@ -62,19 +63,35 @@ class FeishuAdapter(BaseAdapter):
             return task
         if kind == "message":
             msg = data
+            chat_type = (msg.chat_type or "").lower()
+            # Group chats: only reply when the bot is @mentioned.
+            # P2P / unknown: always accept (DM to bot).
+            if chat_type == "group" and not msg.mentioned_bot:
+                logger.info(
+                    "Ignore feishu group message without @bot chat=%s msg=%s",
+                    msg.chat_id,
+                    msg.message_id,
+                )
+                return None
+            text = strip_mention_placeholders(msg.text) or msg.text
+            if not text.strip():
+                logger.debug("Ignore empty feishu message after stripping mentions")
+                return None
             task = StandardTask(
                 session_id=f"feishu:{msg.chat_id}:{msg.user_id}",
                 channel=ChannelType.FEISHU,
                 user_id=msg.user_id,
-                content=msg.text,
+                content=text,
                 metadata={
                     "feishu_message_id": msg.message_id,
                     "feishu_chat_id": msg.chat_id,
+                    "feishu_chat_type": chat_type or "unknown",
+                    "feishu_mentioned_bot": bool(msg.mentioned_bot),
                 },
             )
             # Seed streaming card
             if msg.chat_id:
-                card = build_streaming_card("Nexus-Lark-Mind", "")
+                card = build_streaming_card("Nexus Lark Mind", "")
                 sent = await self.client.send_card_to_chat(msg.chat_id, card)
                 message_id = (
                     ((sent.get("data") or {}).get("message_id"))
@@ -89,22 +106,26 @@ class FeishuAdapter(BaseAdapter):
         return None
 
     def decode_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if "encrypt" in payload and self.settings.feishu_encrypt_key:
-            return AESCipher(self.settings.feishu_encrypt_key).decrypt(payload["encrypt"])
+        creds = resolve_feishu(self.settings)
+        if "encrypt" in payload and creds.encrypt_key:
+            return AESCipher(creds.encrypt_key).decrypt(payload["encrypt"])
         return payload
 
     def verify(self, payload: Dict[str, Any], *, headers: Dict[str, str], body: str) -> None:
-        verify_token(payload, self.settings.feishu_verification_token)
+        creds = resolve_feishu(self.settings)
+        verify_token(payload, creds.verification_token)
         verify_request_signature(
             timestamp=headers.get("x-lark-request-timestamp") or headers.get("X-Lark-Request-Timestamp") or "",
             nonce=headers.get("x-lark-request-nonce") or headers.get("X-Lark-Request-Nonce") or "",
             signature=headers.get("x-lark-signature") or headers.get("X-Lark-Signature") or "",
-            encrypt_key=self.settings.feishu_encrypt_key,
+            encrypt_key=creds.encrypt_key,
             body=body,
         )
 
     async def on_bus_event(self, event: BusEvent) -> None:
-        if event.channel != ChannelType.FEISHU:
+        # Hard channel isolation: web/system tasks must never update Feishu cards.
+        channel = event.channel.value if hasattr(event.channel, "value") else str(event.channel)
+        if channel != ChannelType.FEISHU.value:
             return
         task_id = event.task_id
         if event.event_type == EventType.TASK_STATUS:

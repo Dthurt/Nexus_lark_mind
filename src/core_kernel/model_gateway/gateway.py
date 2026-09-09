@@ -27,7 +27,8 @@ class ModelGateway:
         provider_name = request.provider or self.settings.default_model_provider
         provider = self.registry.get(provider_name)
         if not request.model:
-            request = request.model_copy(update={"model": self.settings.default_model_name})
+            model = getattr(provider, "default_model", None) or self.settings.default_model_name
+            request = request.model_copy(update={"model": model})
 
         started = time.perf_counter()
         error: Optional[str] = None
@@ -58,17 +59,21 @@ class ModelGateway:
         provider_name = request.provider or self.settings.default_model_provider
         provider = self.registry.get(provider_name)
         if not request.model:
-            request = request.model_copy(update={"model": self.settings.default_model_name})
+            model = getattr(provider, "default_model", None) or self.settings.default_model_name
+            request = request.model_copy(update={"model": model})
 
         started = time.perf_counter()
         collected = ""
         error: Optional[str] = None
         finish_reason: Optional[str] = None
+        usage: dict = {}
         try:
             async for chunk in provider.guarded_stream(request):
                 collected += chunk.content or ""
                 if chunk.finish_reason:
                     finish_reason = chunk.finish_reason
+                if chunk.usage:
+                    usage = dict(chunk.usage)
                 yield chunk
         except Exception as exc:
             error = str(exc)
@@ -78,6 +83,7 @@ class ModelGateway:
             response = ModelResponse(
                 content=collected,
                 finish_reason=finish_reason,
+                usage=usage,
                 provider=provider_name,
                 model=request.model or self.settings.default_model_name,
             )

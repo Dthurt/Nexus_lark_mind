@@ -49,7 +49,7 @@ async def init_database(settings: Optional[Settings] = None) -> async_sessionmak
         _ensure_sqlite_dir(settings.database_url)
         _engine = create_async_engine(
             settings.database_url,
-            echo=settings.app_env == "development",
+            echo=False,
             future=True,
         )
         _session_factory = async_sessionmaker(

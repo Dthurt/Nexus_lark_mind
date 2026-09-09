@@ -16,7 +16,7 @@ os.chdir(ROOT)
 from src.adapters.app import create_adapters_app
 from src.agent_orchestrator.app import create_orchestrator_app
 from src.common.config import get_settings
-from src.common.logging import setup_logging
+from src.common.logging import setup_logging, uvicorn_log_level
 from src.core_kernel.rpc_server import create_kernel_app
 
 logger = logging.getLogger("local")
@@ -27,7 +27,7 @@ async def _serve(app, host: str, port: int, name: str) -> None:
         app,
         host=host,
         port=port,
-        log_level=get_settings().log_level.lower(),
+        log_level=uvicorn_log_level(),
         access_log=False,
     )
     server = uvicorn.Server(config)

@@ -40,19 +40,27 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
+    openai_default_model: str = "gpt-4o-mini"
+    openai_models: str = "gpt-4o-mini,gpt-4o,gpt-4.1-mini,gpt-4.1"
+
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/v1"
+    deepseek_default_model: str = "deepseek-chat"
+    deepseek_models: str = "deepseek-chat,deepseek-reasoner"
 
     glm_api_key: str = ""
     glm_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
     glm_default_model: str = "glm-4.7-flash"
+    glm_models: str = "glm-4.7-flash,glm-4-flash,glm-4.5-flash,glm-z1-flash,glm-4-plus"
 
     anthropic_api_key: str = ""
     anthropic_base_url: str = "https://api.anthropic.com"
+    anthropic_default_model: str = "claude-3-5-sonnet-20241022"
+    anthropic_models: str = "claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022,claude-sonnet-4-20250514"
 
-    model_max_retries: int = 5
-    model_retry_base_seconds: float = 1.0
-    model_retry_max_seconds: float = 32.0
+    model_max_retries: int = 8
+    model_retry_base_seconds: float = 2.0
+    model_retry_max_seconds: float = 60.0
     model_timeout_seconds: int = 120
     model_circuit_failure_threshold: int = 5
     model_circuit_reset_seconds: int = 60
@@ -66,6 +74,11 @@ class Settings(BaseSettings):
     plugins_dir: str = "plugins_volume"
     plugin_isolation: bool = True
     cli_auto_register: bool = True
+
+    # Optional web search (Tavily). If empty, CLI web_search falls back to DuckDuckGo.
+    tavily_api_key: str = ""
+    tavily_search_depth: str = "basic"
+    brave_api_key: str = ""
 
     web_static_dir: str = "web-static"
     cors_origins: str = "*"

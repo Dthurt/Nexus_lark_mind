@@ -2,6 +2,35 @@
 setlocal EnableExtensions
 cd /d "%~dp0\.."
 
+set "ACTION=%~1"
+if /I "%ACTION%"=="stop" goto :stop
+if /I "%ACTION%"=="/stop" goto :stop
+if /I "%ACTION%"=="--stop" goto :stop
+if /I "%ACTION%"=="help" goto :help
+if /I "%ACTION%"=="/?" goto :help
+if /I "%ACTION%"=="-h" goto :help
+if /I "%ACTION%"=="--help" goto :help
+if not "%ACTION%"=="" if /I not "%ACTION%"=="start" (
+  echo [ERROR] Unknown argument: %ACTION%
+  echo Use: scripts\start_local.bat [start^|stop]
+  exit /b 1
+)
+
+goto :start
+
+:stop
+echo === Nexus-Lark-Mind local stop ===
+call :free_ports
+echo Stopped.
+exit /b 0
+
+:help
+echo Usage: scripts\start_local.bat [start^|stop]
+echo   start  Start local services (default)
+echo   stop   Stop services on ports 8000/8001/8002
+exit /b 0
+
+:start
 echo === Nexus-Lark-Mind local start ===
 
 REM Prefer real Python installs over Windows Store stub
@@ -34,6 +63,10 @@ if not exist .env copy /Y .env.example .env >nul
 if not exist data mkdir data
 if not exist logs mkdir logs
 
+REM Free ports if a previous instance is still running
+echo Freeing ports 8000/8001/8002 if busy...
+call :free_ports
+
 REM Force local overrides for this session (do not rewrite secrets in .env)
 set KERNEL_RPC_URL=http://127.0.0.1:8001
 set ORCHESTRATOR_RPC_URL=http://127.0.0.1:8002
@@ -48,8 +81,22 @@ echo Web UI:          http://127.0.0.1:8000
 echo Kernel health:   http://127.0.0.1:8001/health
 echo Orchestrator:    http://127.0.0.1:8002/health
 echo Broker:          memory://local  (no Redis needed)
-echo Ctrl+C to stop
+echo Frontend:        Vue source in web\  (rebuild: scripts\build_web.bat)
+echo Ctrl+C to stop, or: scripts\start_local.bat stop
 echo.
 
 python -m src.entry_local
 endlocal
+exit /b %ERRORLEVEL%
+
+:free_ports
+set "KILLED="
+for %%P in (8000 8001 8002) do (
+  for /f "tokens=5" %%A in ('netstat -ano ^| findstr ":%%P .*LISTENING"') do (
+    echo   Killing PID %%A on port %%P
+    taskkill /F /PID %%A >nul 2>&1
+    set "KILLED=1"
+  )
+)
+if not defined KILLED echo   Ports 8000/8001/8002 already free.
+goto :eof

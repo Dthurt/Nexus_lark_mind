@@ -25,12 +25,15 @@ class MemoryBroker:
         self._queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._subscribers: Set[asyncio.Queue[bytes]] = set()
         self._sessions: Dict[str, dict] = {}
+        self._session_order: List[str] = []
         self._lock = asyncio.Lock()
         self._connected = False
 
     async def connect(self) -> None:
+        already = self._connected
         self._connected = True
-        logger.info("Memory broker connected (local mode, no Redis)")
+        if not already:
+            logger.info("Memory broker ready (local mode, no Redis)")
 
     async def close(self) -> None:
         self._connected = False
@@ -68,7 +71,7 @@ class MemoryBroker:
     ) -> None:
         q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1024)
         self._subscribers.add(q)
-        logger.info("Memory broker subscribed to events")
+        logger.debug("Memory broker subscriber attached (%s total)", len(self._subscribers))
         try:
             while True:
                 if stop_event and stop_event.is_set():
@@ -89,10 +92,47 @@ class MemoryBroker:
         return f"{self.settings.redis_session_prefix}{session_id}"
 
     async def set_session(self, session_id: str, payload: dict, ttl: int = 86400) -> None:
-        self._sessions[self._session_key(session_id)] = payload
+        key = self._session_key(session_id)
+        self._sessions[key] = payload
+        if session_id not in self._session_order:
+            self._session_order.append(session_id)
 
     async def get_session(self, session_id: str) -> Optional[dict]:
         return self._sessions.get(self._session_key(session_id))
+
+    async def delete_session(self, session_id: str) -> None:
+        self._sessions.pop(self._session_key(session_id), None)
+        self._session_order = [s for s in self._session_order if s != session_id]
+
+    async def list_sessions(self) -> List[dict]:
+        out: List[dict] = []
+        for sid in reversed(self._session_order):
+            sess = await self.get_session(sid)
+            if not sess:
+                continue
+            msgs = sess.get("messages") or []
+            preview = ""
+            for m in reversed(msgs):
+                if m.get("role") == "user" and m.get("content"):
+                    preview = str(m["content"])[:80]
+                    break
+            out.append(
+                {
+                    "session_id": sid,
+                    "title": sess.get("title") or "新对话",
+                    "updated_at": sess.get("updated_at"),
+                    "created_at": sess.get("created_at"),
+                    "message_count": len(msgs),
+                    "preview": preview,
+                    "channel": sess.get("channel"),
+                    "cwd": sess.get("cwd") or "",
+                    "workspace_id": sess.get("workspace_id") or "",
+                    "workspace_title": sess.get("workspace_title") or "",
+                    "workspace_kind": sess.get("workspace_kind") or "local",
+                    "ssh_host_id": sess.get("ssh_host_id") or "",
+                }
+            )
+        return out
 
     async def append_session_message(self, session_id: str, message: dict, ttl: int = 86400) -> dict:
         session = await self.get_session(session_id) or {

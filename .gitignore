@@ -13,3 +13,6 @@ logs/
 .DS_Store
 .idea/
 .vscode/
+web/node_modules/
+web/dist/
+.tools/

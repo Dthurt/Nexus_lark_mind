@@ -18,7 +18,21 @@ cd E:\cursor\open_program\Nexus_lark_mind
 .\scripts\start_local.ps1
 ```
 
-脚本会自动：创建 venv → 安装依赖 → 用内存总线拉起三服务。
+脚本会自动：创建 venv → 安装依赖 → 用内存总线拉起三服务。启动前会释放已被占用的 8000/8001/8002。
+
+## 停止
+
+另开一个终端：
+
+```bat
+scripts\start_local.bat stop
+```
+
+```powershell
+.\scripts\start_local.ps1 stop
+```
+
+会结束占用 8000/8001/8002 的进程。运行中的窗口也可用 Ctrl+C。
 
 ## 访问
 

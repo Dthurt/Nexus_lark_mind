@@ -114,3 +114,92 @@
 | `GET /health` on 8000/8001/8002 | 进程存活 |
 | `GET /rpc/providers` | 已注册模型厂商 |
 | `GET /rpc/plugins` | 插件列表与状态 |
+
+---
+
+## 10. 架构图
+
+```mermaid
+flowchart LR
+    subgraph Web["Web Frontend"]
+        W1["App.vue"]
+        W2["Views"]
+        W3["Components"]
+        W4["Composables"]
+        W5["Runtime"]
+    end
+
+    subgraph Adapters["Adapters (Port 8000)"]
+        A1["app.py"]
+        A2["Feishu"]
+        A3["Web"]
+        A4["Channels"]
+        A5["Workspaces"]
+    end
+
+    subgraph Orchestrator["Orchestrator (Port 8002)"]
+        O1["app.py"]
+        O2["Task Dispatcher"]
+        O3["Queue Service"]
+        O4["Session Context"]
+        O5["Event Consumer"]
+        O6["Schemas"]
+    end
+
+    subgraph CoreKernel["Core Kernel (Port 8001)"]
+        K1["app.py"]
+        K2["Agent Runner"]
+        K3["RPC Server"]
+        K4["Model Gateway"]
+        K5["Plugin Runtime"]
+        K6["Subagent"]
+    end
+
+    subgraph Infra["Infrastructure"]
+        R1["Redis Client"]
+        R2["Memory Broker"]
+        R3["Storage"]
+    end
+
+    subgraph Data["Data & Config"]
+        S1["SQLite DB"]
+        S2["Redis Cache"]
+        S3[".env"]
+    end
+
+    W1 --> W2
+    W1 --> W3
+    W1 --> W4
+    W1 --> W5
+
+    A1 --> A2
+    A1 --> A3
+    A1 --> A4
+    A1 --> A5
+
+    O1 --> O2
+    O1 --> O3
+    O1 --> O4
+    O1 --> O5
+    O1 --> O6
+
+    K1 --> K2
+    K1 --> K3
+    K1 --> K4
+    K1 --> K5
+    K1 --> K6
+
+    R1 --> S2
+    R2 --> S2
+    R3 --> S1
+
+    W1 -.-> A1
+    A1 --> O1
+    O1 --> K1
+    K1 --> Infra
+
+    O1 -.->|"Redis Event Bus"| K1
+
+    A1 -.->|"HTTP RPC"| K1
+    O1 -.->|"HTTP RPC"| K1
+```

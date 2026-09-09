@@ -84,10 +84,125 @@ def create_orchestrator_app() -> FastAPI:
             data=EnqueueResponse(task_id=task.task_id, session_id=task.session_id).model_dump(),
         )
 
+    @app.post("/rpc/tasks/{task_id}/cancel")
+    async def cancel_task(task_id: str):
+        dispatcher: TaskDispatcher = state["dispatcher"]
+        active = dispatcher.request_cancel(task_id)
+        return RpcEnvelope(ok=True, data={"task_id": task_id, "cancel_requested": True, "was_active": active})
+
+    @app.post("/rpc/sessions/{session_id}/cancel")
+    async def cancel_session(session_id: str):
+        dispatcher: TaskDispatcher = state["dispatcher"]
+        task_id = dispatcher.cancel_session(session_id)
+        # Best-effort: ask kernel to deny pending approval/ask gates
+        kernel: RpcClient = state["kernel"]
+        try:
+            await kernel.call("POST", f"/rpc/gates/deny-session", json={"session_id": session_id})
+        except Exception:
+            logger.exception("deny-session gates failed for %s", session_id)
+        return RpcEnvelope(
+            ok=True,
+            data={"session_id": session_id, "task_id": task_id, "cancel_requested": bool(task_id)},
+        )
+
     @app.get("/rpc/sessions/{session_id}")
     async def get_session(session_id: str):
         sessions: SessionContext = state["sessions"]
         data = await sessions.redis.get_session(session_id)
         return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/rpc/sessions")
+    async def create_or_ensure_session(request: Request):
+        body = await request.json()
+        sessions: SessionContext = state["sessions"]
+        session_id = str(body.get("session_id") or "").strip()
+        if not session_id:
+            from src.common.schemas import new_id
+
+            session_id = new_id("web_")
+        data = await sessions.ensure(
+            session_id,
+            user_id=str(body.get("user_id") or "web-user"),
+            channel=str(body.get("channel") or "web"),
+            cwd=str(body.get("cwd") or "").strip() or None,
+            workspace_id=str(body.get("workspace_id") or "").strip() or None,
+            workspace_title=str(body.get("workspace_title") or "").strip() or None,
+            workspace_kind=str(body.get("workspace_kind") or "").strip() or None,
+            ssh_host_id=str(body.get("ssh_host_id") or "").strip() or None,
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.patch("/rpc/sessions/{session_id}/workspace")
+    async def bind_session_workspace(session_id: str, request: Request):
+        body = await request.json()
+        sessions: SessionContext = state["sessions"]
+        cwd = str(body.get("cwd") or "").strip()
+        if not cwd:
+            from src.common.errors import ValidationAppError
+
+            raise ValidationAppError("cwd required")
+        # ensure session exists first
+        await sessions.ensure(
+            session_id,
+            user_id=str(body.get("user_id") or "web-user"),
+            channel=str(body.get("channel") or "web"),
+        )
+        try:
+            data = await sessions.bind_workspace(
+                session_id,
+                cwd=cwd,
+                workspace_id=str(body.get("workspace_id") or ""),
+                workspace_title=str(body.get("workspace_title") or ""),
+                workspace_kind=str(body.get("workspace_kind") or "local"),
+                ssh_host_id=str(body.get("ssh_host_id") or ""),
+                force=bool(body.get("force")),
+            )
+        except ValueError as exc:
+            from src.common.errors import ValidationAppError
+
+            raise ValidationAppError(str(exc)) from exc
+        except KeyError as exc:
+            from src.common.errors import NotFoundError
+
+            raise NotFoundError(session_id) from exc
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.patch("/rpc/sessions/{session_id}/interaction")
+    async def patch_session_interaction(session_id: str, request: Request):
+        body = await request.json()
+        sessions: SessionContext = state["sessions"]
+        await sessions.ensure(
+            session_id,
+            user_id=str(body.get("user_id") or "web-user"),
+            channel=str(body.get("channel") or "web"),
+        )
+        try:
+            data = await sessions.set_interaction(
+                session_id,
+                agent_mode=body.get("agent_mode"),
+                auto_accept=body.get("auto_accept"),
+                plan_status=body.get("plan_status"),
+            )
+        except ValueError as exc:
+            from src.common.errors import ValidationAppError
+
+            raise ValidationAppError(str(exc)) from exc
+        except KeyError as exc:
+            from src.common.errors import NotFoundError
+
+            raise NotFoundError(session_id) from exc
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/rpc/sessions")
+    async def list_sessions():
+        sessions: SessionContext = state["sessions"]
+        data = await sessions.list_summaries()
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.delete("/rpc/sessions/{session_id}")
+    async def delete_session(session_id: str):
+        sessions: SessionContext = state["sessions"]
+        await sessions.clear(session_id)
+        return RpcEnvelope(ok=True, data={"deleted": session_id})
 
     return app

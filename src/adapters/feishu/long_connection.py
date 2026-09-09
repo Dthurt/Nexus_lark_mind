@@ -64,8 +64,10 @@ def p2_message_to_payload(data: Any) -> Dict[str, Any]:
             "message": {
                 "message_id": getattr(message, "message_id", None) if message else None,
                 "chat_id": getattr(message, "chat_id", None) if message else None,
+                "chat_type": getattr(message, "chat_type", None) if message else None,
                 "message_type": getattr(message, "message_type", None) if message else "text",
                 "content": content or "{}",
+                "mentions": _obj_to_dict(getattr(message, "mentions", None) if message else None) or [],
             },
         },
     }
@@ -110,22 +112,38 @@ class FeishuLongConnection:
         self,
         on_event: EventCallback,
         settings: Optional[Settings] = None,
+        *,
+        app_id: str = "",
+        app_secret: str = "",
+        use_long_connection: Optional[bool] = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.on_event = on_event
+        self._app_id = app_id
+        self._app_secret = app_secret
+        self._use_long = use_long_connection
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._main_loop: Optional[asyncio.AbstractEventLoop] = None
         self.connected = False
 
+    def _resolve_creds(self) -> tuple[str, str, bool]:
+        if self._app_id and self._app_secret:
+            use = True if self._use_long is None else bool(self._use_long)
+            return self._app_id, self._app_secret, use
+        from src.adapters.channels import resolve_feishu
+
+        creds = resolve_feishu(self.settings)
+        use = creds.use_long_connection and creds.enabled
+        return creds.app_id, creds.app_secret, use
+
     async def start(self) -> None:
-        if not (
-            self.settings.feishu_use_long_connection
-            and self.settings.feishu_app_id
-            and self.settings.feishu_app_secret
-        ):
+        app_id, app_secret, use_long = self._resolve_creds()
+        if not (use_long and app_id and app_secret):
             logger.info("Feishu long connection disabled or unconfigured")
             return
+        self._app_id = app_id
+        self._app_secret = app_secret
         self._stop.clear()
         self._main_loop = asyncio.get_running_loop()
         self._thread = threading.Thread(
@@ -134,11 +152,11 @@ class FeishuLongConnection:
             daemon=True,
         )
         self._thread.start()
-        logger.info("Feishu long-connection thread started")
+        logger.info("Feishu long-connection thread started (app_id=%s)", app_id)
 
     async def stop(self) -> None:
         self._stop.set()
-        # WS client blocks; thread is daemon — process exit will clean up
+        # WS client blocks; daemon thread exits on process shutdown / next disconnect
 
     def _dispatch_async(self, payload: dict) -> None:
         if not self._main_loop or not self._main_loop.is_running():
@@ -202,14 +220,14 @@ class FeishuLongConnection:
         while not self._stop.is_set():
             try:
                 cli = WSClient(
-                    self.settings.feishu_app_id,
-                    self.settings.feishu_app_secret,
+                    self._app_id,
+                    self._app_secret,
                     event_handler=event_handler,
-                    log_level=lark.LogLevel.INFO,
+                    log_level=lark.LogLevel.WARNING,
                 )
                 logger.info(
                     "Connecting Feishu WS (app_id=%s)…",
-                    self.settings.feishu_app_id,
+                    self._app_id,
                 )
                 self.connected = True
                 cli.start()  # blocks until disconnect

@@ -4,7 +4,7 @@ import uvicorn
 
 from src.agent_orchestrator.app import create_orchestrator_app
 from src.common.config import get_settings
-from src.common.logging import setup_logging
+from src.common.logging import setup_logging, uvicorn_log_level
 
 
 def main() -> None:
@@ -15,7 +15,8 @@ def main() -> None:
         app,
         host=settings.orchestrator_host,
         port=settings.orchestrator_port,
-        log_level=settings.log_level.lower(),
+        log_level=uvicorn_log_level(settings.log_level),
+        access_log=False,
     )
 
 

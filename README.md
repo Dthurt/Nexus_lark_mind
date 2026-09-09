@@ -52,7 +52,7 @@ docker compose up --build -d
 - `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `ANTHROPIC_API_KEY`
 - 飞书：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`
 
-详见 [docs/architecture.md](docs/architecture.md)。
+详见 [docs/architecture.md](docs/architecture.md)、[docs/diagrams.md](docs/diagrams.md)、[docs/experience-tiers.md](docs/experience-tiers.md)、[docs/interaction-modes.md](docs/interaction-modes.md)。
 
 ## 插件
 

@@ -157,12 +157,50 @@ class RedisClient:
             orjson.dumps(payload),
             ex=ttl,
         )
+        await self.r.zadd(self.settings.redis_session_prefix + "index", {session_id: asyncio.get_event_loop().time()})
 
     async def get_session(self, session_id: str) -> Optional[dict]:
         raw = await self.r.get(self._session_key(session_id))
         if not raw:
             return None
         return orjson.loads(raw)
+
+    async def delete_session(self, session_id: str) -> None:
+        await self.r.delete(self._session_key(session_id))
+        await self.r.zrem(self.settings.redis_session_prefix + "index", session_id)
+
+    async def list_sessions(self) -> list:
+        index_key = self.settings.redis_session_prefix + "index"
+        ids = await self.r.zrevrange(index_key, 0, 99)
+        out = []
+        for sid in ids:
+            session_id = sid.decode() if isinstance(sid, (bytes, bytearray)) else sid
+            sess = await self.get_session(session_id)
+            if not sess:
+                continue
+            msgs = sess.get("messages") or []
+            preview = ""
+            for m in reversed(msgs):
+                if m.get("role") == "user" and m.get("content"):
+                    preview = str(m["content"])[:80]
+                    break
+            out.append(
+                {
+                    "session_id": session_id,
+                    "title": sess.get("title") or "新对话",
+                    "updated_at": sess.get("updated_at"),
+                    "created_at": sess.get("created_at"),
+                    "message_count": len(msgs),
+                    "preview": preview,
+                    "channel": sess.get("channel"),
+                    "cwd": sess.get("cwd") or "",
+                    "workspace_id": sess.get("workspace_id") or "",
+                    "workspace_title": sess.get("workspace_title") or "",
+                    "workspace_kind": sess.get("workspace_kind") or "local",
+                    "ssh_host_id": sess.get("ssh_host_id") or "",
+                }
+            )
+        return out
 
     async def append_session_message(self, session_id: str, message: dict, ttl: int = 86400) -> dict:
         session = await self.get_session(session_id) or {

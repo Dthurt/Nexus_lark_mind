@@ -14,6 +14,9 @@ class ParsedFeishuMessage(BaseModel):
     user_id: str
     text: str
     message_type: str = "text"
+    chat_type: str = ""  # p2p | group | ...
+    mentions: list = Field(default_factory=list)
+    mentioned_bot: bool = False
     raw: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -39,6 +42,37 @@ def extract_event_body(payload: Dict[str, Any]) -> Dict[str, Any]:
     if "event" in payload:
         return payload["event"]
     return payload
+
+
+def _mentions_include_bot(mentions: list) -> bool:
+    for m in mentions or []:
+        if not isinstance(m, dict):
+            continue
+        mtype = str(m.get("id", {}).get("id_type") or m.get("id_type") or "").lower()
+        mentioned_type = str(m.get("mentioned_type") or "").lower()
+        name = str(m.get("name") or "").lower()
+        if mentioned_type == "bot":
+            return True
+        if mtype == "open_id" and mentioned_type in {"bot", "app"}:
+            return True
+        # Some payloads only mark bots via name/key patterns
+        if "bot" in mentioned_type or mentioned_type == "app":
+            return True
+        key = str(m.get("key") or "")
+        if key.startswith("@_user_") and mentioned_type == "bot":
+            return True
+        # Feishu docs: mentioned_type is "user" or "bot"
+        if m.get("mentioned_type") == "bot":
+            return True
+    return False
+
+
+def strip_mention_placeholders(text: str) -> str:
+    import re
+
+    cleaned = re.sub(r"@_user_\d+", " ", text or "")
+    cleaned = re.sub(r"<at\s+[^>]+>|</at>", " ", cleaned, flags=re.I)
+    return " ".join(cleaned.split()).strip()
 
 
 def parse_im_message(payload: Dict[str, Any]) -> Optional[ParsedFeishuMessage]:
@@ -72,6 +106,20 @@ def parse_im_message(payload: Dict[str, Any]) -> Optional[ParsedFeishuMessage]:
     )
     message_id = message.get("message_id") or message.get("msg_id") or ""
     chat_id = message.get("chat_id") or ""
+    chat_type = str(message.get("chat_type") or "").lower()
+    mentions = message.get("mentions") or []
+    if not isinstance(mentions, list):
+        mentions = []
+    mentioned_bot = _mentions_include_bot(mentions)
+    # Fallback: text still has @_user_ placeholders while mentions array present
+    if not mentioned_bot and mentions and "@_user_" in (text or ""):
+        # If Feishu delivered this under group_at scope, treat any mention as targeting us
+        # when any mention is typed bot; otherwise require explicit bot type.
+        mentioned_bot = any(
+            isinstance(m, dict) and str(m.get("mentioned_type") or "").lower() == "bot"
+            for m in mentions
+        )
+
     if not message_id:
         return None
     return ParsedFeishuMessage(
@@ -80,6 +128,9 @@ def parse_im_message(payload: Dict[str, Any]) -> Optional[ParsedFeishuMessage]:
         user_id=user_id,
         text=text.strip(),
         message_type=msg_type,
+        chat_type=chat_type,
+        mentions=mentions,
+        mentioned_bot=mentioned_bot,
         raw=payload,
     )
 

@@ -38,6 +38,34 @@ class WebAdapter(BaseAdapter):
             return None
         session_id = payload.get("session_id") or new_id("web_")
         user_id = payload.get("user_id") or "web-user"
+        meta: Dict[str, Any] = {"source": "web"}
+        cwd = (payload.get("cwd") or "").strip()
+        workspace_id = (payload.get("workspace_id") or "").strip()
+        workspace_title = (payload.get("workspace_title") or "").strip()
+        workspace_kind = (payload.get("workspace_kind") or "").strip()
+        ssh_host_id = (payload.get("ssh_host_id") or "").strip()
+        if workspace_id and not cwd:
+            try:
+                from src.adapters.workspaces import get_workspace_store
+
+                rec = get_workspace_store().get(workspace_id)
+                if rec:
+                    cwd = rec.path
+                    workspace_title = workspace_title or rec.title
+                    workspace_kind = workspace_kind or rec.kind or "local"
+                    ssh_host_id = ssh_host_id or rec.ssh_host_id or ""
+            except Exception:
+                logger.exception("Failed resolving workspace_id=%s", workspace_id)
+        if cwd:
+            meta["cwd"] = cwd
+            meta["workspace_id"] = workspace_id
+            meta["workspace_title"] = workspace_title
+            meta["workspace_kind"] = workspace_kind or ("ssh" if ssh_host_id else "local")
+            meta["ssh_host_id"] = ssh_host_id
+        if payload.get("agent_mode") is not None:
+            meta["agent_mode"] = str(payload.get("agent_mode") or "agent").strip().lower()
+        if payload.get("auto_accept") is not None:
+            meta["auto_accept"] = bool(payload.get("auto_accept"))
         task = StandardTask(
             session_id=session_id,
             channel=ChannelType.WEB,
@@ -46,7 +74,8 @@ class WebAdapter(BaseAdapter):
             model_provider=payload.get("model_provider"),
             model_name=payload.get("model_name"),
             stream=bool(payload.get("stream", True)),
-            metadata={"source": "web"},
+            tools_enabled=bool(payload.get("tools_enabled", True)),
+            metadata=meta,
         )
         await self.submit(task)
         return task

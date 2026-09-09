@@ -1,0 +1,12 @@
+{
+  "plugin_id": "mcp.tavily",
+  "name": "Tavily MCP (optional)",
+  "kind": "mcp_stdio",
+  "version": "0.1.0",
+  "description": "Official Tavily MCP server — search/extract/crawl. Requires Node.js + TAVILY_API_KEY. Prefer plugins_volume/cli/web_search.py for zero-Node setup.",
+  "enabled": false,
+  "config": {
+    "command": "npx",
+    "args": ["-y", "tavily-mcp@latest"]
+  }
+}

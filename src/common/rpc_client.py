@@ -62,7 +62,13 @@ class RpcClient:
             raise RpcError("RPC logical failure", detail=envelope.error)
         return envelope.data
 
-    async def stream_post(self, path: str, json: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
+    async def stream_post(
+        self,
+        path: str,
+        json: Dict[str, Any],
+        *,
+        abort_event: Optional[Any] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
         try:
             async with self.client.stream("POST", path, json=json) as response:
                 if response.status_code >= 400:
@@ -72,6 +78,10 @@ class RpcClient:
                         detail=text.decode("utf-8", errors="ignore"),
                     )
                 async for line in response.aiter_lines():
+                    if abort_event is not None and getattr(abort_event, "is_set", lambda: False)():
+                        await response.aclose()
+                        yield {"delta": "", "done": True, "error": "cancelled", "cancelled": True}
+                        return
                     if not line:
                         continue
                     if line.startswith("data:"):

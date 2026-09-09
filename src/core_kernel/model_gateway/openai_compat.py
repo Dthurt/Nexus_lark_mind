@@ -69,6 +69,9 @@ class OpenAICompatProvider(BaseModelProvider):
             payload["max_tokens"] = request.max_tokens
         if request.tools:
             payload["tools"] = request.tools
+        if stream:
+            # Ask providers that support it to return usage on the final SSE chunk.
+            payload["stream_options"] = {"include_usage": True}
         return payload
 
     def _retry_budget(self) -> tuple[int, float, float]:
@@ -116,16 +119,26 @@ class OpenAICompatProvider(BaseModelProvider):
                 await asyncio.sleep(wait)
                 attempt += 1
 
+    def _http_timeout(self) -> httpx.Timeout:
+        # Connect/write fail fast; read can wait for slow model tokens.
+        read = float(self.settings.model_timeout_seconds)
+        return httpx.Timeout(connect=15.0, read=read, write=30.0, pool=15.0)
+
     async def _complete_once(self, request: ModelRequest) -> ModelResponse:
         url = f"{self.base_url}/chat/completions"
         payload = self._payload(request, stream=False)
-        timeout = self.settings.model_timeout_seconds
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, headers=self._headers(), json=payload)
-            if resp.status_code >= 400:
-                raise_if_rate_limited(resp.status_code, resp.text, dict(resp.headers))
-                raise ModelGatewayError(f"{self.name} HTTP {resp.status_code}: {resp.text}")
-            data = resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
+                resp = await client.post(url, headers=self._headers(), json=payload)
+                if resp.status_code >= 400:
+                    raise_if_rate_limited(resp.status_code, resp.text, dict(resp.headers))
+                    raise ModelGatewayError(f"{self.name} HTTP {resp.status_code}: {resp.text}")
+                data = resp.json()
+        except (httpx.TimeoutException, httpx.RemoteProtocolError, httpx.NetworkError) as exc:
+            raise RateLimitError(
+                f"{self.name} upstream timeout/network: {exc}",
+                retry_after=8.0,
+            ) from exc
 
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
@@ -151,6 +164,13 @@ class OpenAICompatProvider(BaseModelProvider):
         attempt = 0
         while True:
             try:
+                if attempt > 0:
+                    yield ModelChunk(
+                        content="",
+                        notice=f"正在重新连接模型（第 {attempt}/{max_retries} 次重试）…",
+                        retry_attempt=attempt,
+                        raw={"reconnect": True},
+                    )
                 async for chunk in self._stream_once(request):
                     yield chunk
                 return
@@ -188,43 +208,61 @@ class OpenAICompatProvider(BaseModelProvider):
     async def _stream_once(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
         url = f"{self.base_url}/chat/completions"
         payload = self._payload(request, stream=True)
-        timeout = self.settings.model_timeout_seconds
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream("POST", url, headers=self._headers(), json=payload) as resp:
-                if resp.status_code >= 400:
-                    body = await resp.aread()
-                    text = body.decode("utf-8", errors="ignore")
-                    raise_if_rate_limited(resp.status_code, text, dict(resp.headers))
-                    raise ModelGatewayError(
-                        f"{self.name} stream HTTP {resp.status_code}: {text}"
-                    )
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    if line.startswith("data:"):
-                        line = line[5:].strip()
-                    if line == "[DONE]":
-                        yield ModelChunk(content="", finish_reason="stop")
-                        break
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    # Some gateways embed error objects in SSE
-                    if isinstance(data, dict) and data.get("error"):
-                        err = data["error"]
-                        msg = err if isinstance(err, str) else json.dumps(err, ensure_ascii=False)
-                        raise_if_rate_limited(429 if "1305" in msg or "429" in msg else 500, msg)
-                        raise ModelGatewayError(f"{self.name} stream error: {msg}")
-                    choice = (data.get("choices") or [{}])[0]
-                    delta = choice.get("delta") or {}
-                    yield ModelChunk(
-                        content=delta.get("content") or "",
-                        finish_reason=choice.get("finish_reason"),
-                        tool_calls=delta.get("tool_calls"),
-                        usage=data.get("usage"),
-                        raw=data,
-                    )
+        last_error_text = ""
+        for strip_stream_options in (False, True):
+            if strip_stream_options:
+                payload.pop("stream_options", None)
+            try:
+                async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
+                    async with client.stream("POST", url, headers=self._headers(), json=payload) as resp:
+                        if resp.status_code >= 400:
+                            body = await resp.aread()
+                            text = body.decode("utf-8", errors="ignore")
+                            last_error_text = text
+                            if (
+                                not strip_stream_options
+                                and resp.status_code == 400
+                                and "stream_options" in text.lower()
+                            ):
+                                continue  # retry without stream_options
+                            raise_if_rate_limited(resp.status_code, text, dict(resp.headers))
+                            raise ModelGatewayError(
+                                f"{self.name} stream HTTP {resp.status_code}: {text}"
+                            )
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            if line.startswith("data:"):
+                                line = line[5:].strip()
+                            if line == "[DONE]":
+                                yield ModelChunk(content="", finish_reason="stop")
+                                return
+                            try:
+                                data = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            if isinstance(data, dict) and data.get("error"):
+                                err = data["error"]
+                                msg = err if isinstance(err, str) else json.dumps(err, ensure_ascii=False)
+                                raise_if_rate_limited(429 if "1305" in msg or "429" in msg else 500, msg)
+                                raise ModelGatewayError(f"{self.name} stream error: {msg}")
+                            choice = (data.get("choices") or [{}])[0]
+                            delta = choice.get("delta") or {}
+                            yield ModelChunk(
+                                content=delta.get("content") or "",
+                                finish_reason=choice.get("finish_reason"),
+                                tool_calls=delta.get("tool_calls"),
+                                usage=data.get("usage"),
+                                raw=data,
+                            )
+                        return
+            except (httpx.TimeoutException, httpx.RemoteProtocolError, httpx.NetworkError) as exc:
+                raise RateLimitError(
+                    f"{self.name} stream timeout/network: {exc}",
+                    retry_after=10.0,
+                ) from exc
+            # loop continues only when breaking for stream_options retry
+        raise ModelGatewayError(f"{self.name} stream HTTP 400: {last_error_text}")
 
     @staticmethod
     def _echo_fallback(request: ModelRequest) -> str:

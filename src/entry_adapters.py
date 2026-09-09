@@ -3,7 +3,7 @@
 import uvicorn
 
 from src.common.config import get_settings
-from src.common.logging import setup_logging
+from src.common.logging import setup_logging, uvicorn_log_level
 from src.adapters.app import create_adapters_app
 
 
@@ -15,7 +15,8 @@ def main() -> None:
         app,
         host=settings.adapters_host,
         port=settings.adapters_port,
-        log_level=settings.log_level.lower(),
+        log_level=uvicorn_log_level(settings.log_level),
+        access_log=False,
     )
 
 

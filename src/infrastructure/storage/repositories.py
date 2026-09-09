@@ -143,6 +143,42 @@ class PluginCallRepository:
         await self.session.flush()
         return row
 
+    async def list_recent(self, *, limit: int = 40) -> list[PluginCallRecord]:
+        q = (
+            select(PluginCallRecord)
+            .order_by(PluginCallRecord.created_at.desc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(q)).scalars())
+
+    async def list_by_session(self, session_id: str, *, limit: int = 40) -> list[PluginCallRecord]:
+        q = (
+            select(PluginCallRecord)
+            .join(TaskRecord, PluginCallRecord.task_id == TaskRecord.task_id)
+            .where(TaskRecord.session_id == session_id)
+            .order_by(PluginCallRecord.created_at.desc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(q)).scalars())
+
+    @staticmethod
+    def to_dict(row: PluginCallRecord) -> dict:
+        result = None
+        if row.result_json and isinstance(row.result_json, dict):
+            result = row.result_json.get("value", row.result_json)
+        return {
+            "call_id": row.call_id,
+            "task_id": row.task_id,
+            "plugin_id": row.plugin_id,
+            "tool_name": row.tool_name,
+            "arguments": row.arguments_json or {},
+            "success": bool(row.success),
+            "result": result,
+            "error": row.error,
+            "duration_ms": row.duration_ms,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
 
 class ModelCallRepository:
     def __init__(self, session: AsyncSession) -> None:

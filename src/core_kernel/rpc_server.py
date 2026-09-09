@@ -24,7 +24,7 @@ from src.common.schemas import (
 from src.core_kernel.model_gateway.gateway import ModelGateway
 from src.core_kernel.plugin_runtime.manager import PluginManager
 from src.infrastructure.storage.database import close_database, get_session_factory, init_database
-from src.infrastructure.storage.repositories import SessionRepository, TaskRepository
+from src.infrastructure.storage.repositories import PluginCallRepository, SessionRepository, TaskRepository
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,46 @@ logger = logging.getLogger(__name__)
 class ChatRunRequest(BaseModel):
     task: StandardTask
     system_prompt: str = (
-        "You are Nexus-Lark-Mind, a helpful personal AI agent. "
-        "Be concise, accurate, and tool-aware."
+        "You are Nexus Lark Mind — a personal coding agent with a workbench: local or SSH workspaces, "
+        "plugins (MCP/CLI), web search, Feishu channels, trajectory, and subagents. "
+        "Be concise and accurate. When a workspace is bound, you MUST use workspace tools instead of guessing files. "
+        "Loop: (1) glob/grep/list_dir to locate, (2) read_file with offset/limit, (3) edit_file for existing files "
+        "and write_file only for new files, (4) run_shell to verify. Prefer parallel independent reads/greps. "
+        "## Subagent policy (you decide)\n"
+        "You own whether to use subagents. Do NOT wait for the user to say “use a subagent”. "
+        "Users may explicitly request one; honor that. Otherwise choose based on the task:\n"
+        "- Use `subagent` when a chunk of work is self-contained, multi-step, parallelizable, or would clutter "
+        "this turn (e.g. deep research in one area, a focused refactor, a verify/build pass) while you stay "
+        "on orchestration or another track.\n"
+        "- Use `subagent_fork` when the child needs prior conversation context but a fresh focus for a side task.\n"
+        "- Do NOT use a subagent for trivial one-shot tool calls (single grep/read/edit) — do those yourself.\n"
+        "- After spawning, integrate the child's result into your answer; use `list_agents` / `send_message` / "
+        "`interrupt_agent` only when continuing or steering a child.\n"
+        "Stay inside cwd. Do not dump entire files. After edits, run a focused check when possible. "
+        "You may also use other enabled plugins (web_search, MCP, Feishu) when the task needs them. "
+        "## Diagrams (you choose the format)\n"
+        "Prefer visual explanations over long prose when a figure helps. Pick the format yourself:\n"
+        "- Mermaid (fenced language `mermaid`): default for most diagrams — flow, sequence, class, ER, state, "
+        "gantt, mindmap, C4, architecture, etc. Fast to write, good enough for chat. "
+        "CRITICAL: valid Mermaid only — ASCII punctuation, `-->` / `-.->` (never `-. -->`), "
+        "`A -->|label| B`, matching brackets, diagram type on first line.\n"
+        "- Draw.io XML (fenced language `drawio` or `mxfile`): use when precise layout, swimlanes, "
+        "icon-rich architecture, or multi-page boards matter. Emit a complete `<mxfile>...</mxfile>` "
+        "(or `<mxGraphModel>`). Keep cells few and labels short; stronger models handle Draw.io better — "
+        "if unsure, use Mermaid.\n"
+        "Examples of good moments: architecture/modules, call or data flow, before/after, decision trees, "
+        "entity relationships, state machines. Skip diagrams only when a one-line answer is enough. "
+        "Future UX will expose experience tiers (low→Mermaid / high→Draw.io + stronger models); "
+        "until then, choose format by diagram complexity."
     )
 
 
 class PluginActionRequest(BaseModel):
     plugin_id: str
+
+
+class PluginReloadRequest(BaseModel):
+    plugin_id: Optional[str] = None
 
 
 class LoadPluginRequest(BaseModel):
@@ -89,9 +122,91 @@ def create_kernel_app() -> FastAPI:
         return {"status": "ok", "service": "core-kernel"}
 
     @app.get("/rpc/providers")
-    async def list_providers():
+    async def list_providers(configured_only: bool = True):
         gateway: ModelGateway = state["gateway"]
-        return RpcEnvelope(ok=True, data=gateway.registry.list_providers())
+        return RpcEnvelope(ok=True, data=gateway.registry.catalog(configured_only=configured_only))
+
+    @app.get("/rpc/settings/models")
+    async def settings_models():
+        gateway: ModelGateway = state["gateway"]
+        return RpcEnvelope(ok=True, data=gateway.registry.settings_document())
+
+    @app.post("/rpc/settings/models/providers")
+    async def upsert_custom_provider(body: Dict[str, Any]):
+        gateway: ModelGateway = state["gateway"]
+        data = gateway.registry.upsert_custom(body)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.delete("/rpc/settings/models/providers/{provider_id}")
+    async def delete_custom_provider(provider_id: str):
+        gateway: ModelGateway = state["gateway"]
+        gateway.registry.delete_custom(provider_id)
+        return RpcEnvelope(ok=True, data={"deleted": provider_id})
+
+    @app.put("/rpc/settings/models/default")
+    async def set_default_provider(body: Dict[str, Any]):
+        gateway: ModelGateway = state["gateway"]
+        provider_id = str(body.get("provider_id") or "").strip()
+        data = gateway.registry.set_default_provider(provider_id)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/rpc/settings/models/reload")
+    async def reload_providers():
+        gateway: ModelGateway = state["gateway"]
+        gateway.registry.reload()
+        return RpcEnvelope(ok=True, data=gateway.registry.settings_document())
+
+    @app.post("/rpc/settings/models/discover")
+    async def discover_models(body: Dict[str, Any]):
+        from src.core_kernel.model_gateway.discover import discover_openai_models
+
+        gateway: ModelGateway = state["gateway"]
+        base_url = str(body.get("base_url") or "").strip()
+        api_key = str(body.get("api_key") or "")
+        provider_id = str(body.get("provider_id") or "").strip().lower()
+        if provider_id and not api_key:
+            custom = gateway.registry.store.providers.get(provider_id)
+            if custom:
+                api_key = custom.api_key
+                if not base_url:
+                    base_url = custom.base_url
+        data = await discover_openai_models(base_url=base_url, api_key=api_key)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/rpc/settings/models/test")
+    async def test_models(body: Dict[str, Any]):
+        from src.adapters.channels.probe import test_openai_compat
+
+        gateway: ModelGateway = state["gateway"]
+        base_url = str(body.get("base_url") or "").strip()
+        api_key = str(body.get("api_key") or "")
+        model = str(body.get("model") or "").strip()
+        provider_id = str(body.get("provider_id") or "").strip().lower()
+        if provider_id:
+            custom = gateway.registry.store.providers.get(provider_id)
+            if custom:
+                if not api_key:
+                    api_key = custom.api_key
+                if not base_url:
+                    base_url = custom.base_url
+                if not model:
+                    model = custom.default_model or (custom.models[0] if custom.models else "")
+            else:
+                meta = gateway.registry._meta.get(provider_id) or {}
+                if not base_url:
+                    base_url = str(meta.get("base_url") or "")
+                if not model:
+                    models = meta.get("models") or []
+                    model = str(meta.get("default_model") or (models[0] if models else ""))
+                prov = gateway.registry._providers.get(provider_id)
+                if prov is not None and not api_key:
+                    api_key = getattr(prov, "api_key", "") or ""
+                if meta.get("api") == "anthropic-messages":
+                    from src.common.errors import ValidationAppError
+
+                    raise ValidationAppError("Anthropic builtin: connectivity test not supported yet; use OpenAI-compat providers")
+        data = await test_openai_compat(base_url=base_url, api_key=api_key, model=model)
+        return RpcEnvelope(ok=True, data=data)
 
     @app.get("/rpc/plugins")
     async def list_plugins():
@@ -129,6 +244,24 @@ def create_kernel_app() -> FastAPI:
         plugins: PluginManager = state["plugins"]
         await plugins.disable(body.plugin_id)
         return RpcEnvelope(ok=True, data={"disabled": body.plugin_id})
+
+    @app.post("/rpc/plugins/reload")
+    async def reload_plugins(body: Optional[PluginReloadRequest] = None):
+        plugins: PluginManager = state["plugins"]
+        plugin_id = body.plugin_id if body else None
+        data = await plugins.reload(plugin_id)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/rpc/plugin-calls")
+    async def list_plugin_calls(session_id: Optional[str] = None, limit: int = 40):
+        session_factory = state["session_factory"]
+        async with session_factory() as session:
+            repo = PluginCallRepository(session)
+            if session_id:
+                rows = await repo.list_by_session(session_id, limit=min(limit, 100))
+            else:
+                rows = await repo.list_recent(limit=min(limit, 100))
+            return RpcEnvelope(ok=True, data=[PluginCallRepository.to_dict(r) for r in rows])
 
     @app.post("/rpc/plugins/invoke")
     async def invoke_plugin(body: PluginInvokeRequest):
@@ -224,6 +357,7 @@ def create_kernel_app() -> FastAPI:
     @app.post("/rpc/chat/stream")
     async def chat_stream(body: ChatRunRequest):
         gateway: ModelGateway = state["gateway"]
+        plugins: PluginManager = state["plugins"]
         task = body.task
         session_factory = state["session_factory"]
         messages = _build_messages(task, body.system_prompt)
@@ -245,47 +379,58 @@ def create_kernel_app() -> FastAPI:
             )
             await session.commit()
 
-        req = ModelRequest(
-            provider=task.model_provider,
-            model=task.model_name,
-            messages=messages,
-            stream=True,
-        )
-
         async def event_gen() -> AsyncIterator[bytes]:
+            from src.core_kernel.agent_runner import run_agent_stream
+
             collected = ""
             error: Optional[str] = None
+            saw_done = False
             try:
-                async for chunk in gateway.stream(req, task_id=task.task_id):
-                    if chunk.notice:
-                        payload = {
-                            "task_id": task.task_id,
-                            "session_id": task.session_id,
-                            "delta": "",
-                            "done": False,
-                            "notice": chunk.notice,
-                            "retry_attempt": chunk.retry_attempt,
-                            "retry_wait_seconds": chunk.retry_wait_seconds,
-                        }
-                        yield b"data: " + orjson.dumps(payload) + b"\n\n"
-                        continue
-                    collected += chunk.content or ""
+                async for chunk in run_agent_stream(
+                    gateway=gateway,
+                    plugins=plugins,
+                    messages=messages,
+                    provider=task.model_provider,
+                    model=task.model_name,
+                    tools_enabled=bool(task.tools_enabled),
+                    task_id=task.task_id,
+                    workspace_cwd=(task.metadata or {}).get("cwd") or None,
+                    workspace_meta={
+                        "workspace_kind": (task.metadata or {}).get("workspace_kind") or "local",
+                        "ssh_host_id": (task.metadata or {}).get("ssh_host_id") or "",
+                        "workspace_id": (task.metadata or {}).get("workspace_id") or "",
+                        "workspace_title": (task.metadata or {}).get("workspace_title") or "",
+                        "session_id": task.session_id,
+                        "agent_mode": (task.metadata or {}).get("agent_mode") or "agent",
+                        "auto_accept": bool((task.metadata or {}).get("auto_accept")),
+                        "plan_status": (task.metadata or {}).get("plan_status") or "idle",
+                    },
+                    parent_session_id=task.session_id,
+                ):
+                    if chunk.get("content"):
+                        collected = chunk["content"]
+                    elif chunk.get("delta"):
+                        collected += chunk["delta"]
+                    if chunk.get("done") and chunk.get("error"):
+                        error = chunk["error"]
+                    if chunk.get("done"):
+                        saw_done = True
                     payload = {
                         "task_id": task.task_id,
                         "session_id": task.session_id,
-                        "delta": chunk.content or "",
-                        "done": False,
-                        "finish_reason": chunk.finish_reason,
+                        **chunk,
                     }
                     yield b"data: " + orjson.dumps(payload) + b"\n\n"
-                done_payload = {
-                    "task_id": task.task_id,
-                    "session_id": task.session_id,
-                    "delta": "",
-                    "done": True,
-                    "content": collected,
-                }
-                yield b"data: " + orjson.dumps(done_payload) + b"\n\n"
+                if not saw_done:
+                    yield b"data: " + orjson.dumps(
+                        {
+                            "task_id": task.task_id,
+                            "session_id": task.session_id,
+                            "delta": "",
+                            "done": True,
+                            "content": collected,
+                        }
+                    ) + b"\n\n"
                 yield b"data: [DONE]\n\n"
             except Exception as exc:
                 from src.common.errors import RateLimitError
@@ -351,11 +496,83 @@ def create_kernel_app() -> FastAPI:
                 },
             )
 
+    @app.post("/rpc/gates/resolve")
+    async def gates_resolve(request: Request):
+        from src.core_kernel import user_gate
+
+        body = await request.json()
+        call_id = str(body.get("call_id") or "").strip()
+        if not call_id:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "call_id required"})
+        payload = body.get("payload")
+        if not isinstance(payload, dict):
+            payload = {k: v for k, v in body.items() if k != "call_id"}
+        ok = await user_gate.resolve_gate(call_id, payload)
+        return RpcEnvelope(ok=True, data={"resolved": ok, "call_id": call_id})
+
+    @app.post("/rpc/gates/deny-session")
+    async def gates_deny_session(request: Request):
+        from src.core_kernel import user_gate
+
+        body = await request.json()
+        session_id = str(body.get("session_id") or "").strip()
+        reason = str(body.get("reason") or "cancelled")
+        n = await user_gate.deny_session_gates(session_id, reason=reason)
+        return RpcEnvelope(ok=True, data={"denied": n, "session_id": session_id})
+
     return app
 
 
 def _build_messages(task: StandardTask, system_prompt: str) -> list[ChatMessage]:
-    messages: list[ChatMessage] = [ChatMessage(role=ChatRole.SYSTEM, content=system_prompt)]
+    prompt = system_prompt
+    meta = task.metadata or {}
+    cwd = (meta.get("cwd") or "").strip()
+    if cwd:
+        title = (meta.get("workspace_title") or "").strip()
+        ws_id = (meta.get("workspace_id") or "").strip()
+        kind = (meta.get("workspace_kind") or "local").strip()
+        ssh_id = (meta.get("ssh_host_id") or "").strip()
+        prompt = (
+            f"{system_prompt}\n\n"
+            f"## Active workspace\n"
+            f"- kind: `{kind}`\n"
+            f"- path (cwd): `{cwd}`\n"
+            + (f"- title: {title}\n" if title else "")
+            + (f"- id: {ws_id}\n" if ws_id else "")
+            + (f"- ssh_host_id: {ssh_id}\n" if kind == "ssh" and ssh_id else "")
+            + (
+                "This workspace is on a **remote SSH machine**. "
+                "Use workspace tools; they run over SSH/SFTP.\n"
+                if kind == "ssh"
+                else ""
+            )
+            + "All relative paths for workspace tools are resolved against this cwd. "
+            "Do not access paths outside the workspace.\n"
+            "Workspace tools: glob, grep, list_dir, read_file, edit_file, write_file, run_shell, ask_user. "
+            "Start with glob/grep; do not ask the user to paste files that you can read yourself.\n"
+            "Use `ask_user` when requirements are ambiguous — one form may contain multiple questions "
+            "(single/multi select + optional custom text).\n"
+            "Subagents (`subagent` / `subagent_fork`) are available — decide yourself when a task slice "
+            "warrants delegation; do not ask the user permission unless they asked you not to."
+        )
+    agent_mode = str(meta.get("agent_mode") or "agent").strip().lower()
+    auto_accept = bool(meta.get("auto_accept"))
+    if agent_mode == "plan":
+        prompt += (
+            "\n\n## PLAN MODE (active)\n"
+            "You are planning only. You may use read-only tools: glob, grep, list_dir, read_file, ask_user. "
+            "Do NOT edit files or run shell. "
+            "Clarify unknowns with `ask_user` when needed. "
+            "End with a clear markdown checklist outline of steps to execute after the user accepts the plan "
+            "(use `- [ ]` items). Do not claim you already made changes.\n"
+        )
+    else:
+        prompt += (
+            "\n\n## Interaction mode\n"
+            f"- auto_accept: {'ON (tools run without user confirm)' if auto_accept else 'OFF (shell/write/edit require user allow)'}\n"
+            "When unsure about product choices, call `ask_user` before large edits.\n"
+        )
+    messages: list[ChatMessage] = [ChatMessage(role=ChatRole.SYSTEM, content=prompt)]
     if task.messages:
         messages.extend(task.messages)
     else:
