@@ -1,18 +1,20 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 import {
   decorateMarkdownLinks,
   enhanceCodeBlocks,
   renderDrawioIn,
-  renderMarkdown,
+  renderMarkdownWithMath,
   renderMermaidIn,
+  enhanceChatImages,
 } from "@/utils/markdown";
+import { renderEchartsIn } from "@/utils/echarts";
+import { renderMathIn } from "@/utils/math";
 
 const props = defineProps({
   content: { type: String, default: "" },
   streaming: Boolean,
   plain: Boolean,
-  /** Optional model ids for mermaid repair API */
   modelProvider: { type: String, default: "" },
   modelName: { type: String, default: "" },
 });
@@ -20,10 +22,7 @@ const props = defineProps({
 const emit = defineEmits(["mermaid-fixed"]);
 
 const root = ref(null);
-const html = computed(() => {
-  if (props.plain) return "";
-  return renderMarkdown(props.content, { streaming: props.streaming });
-});
+const html = ref("");
 
 let renderGen = 0;
 let debounceTimer = null;
@@ -56,22 +55,44 @@ function onFixed({ from, to }) {
 }
 
 async function paint() {
-  if (props.plain) return;
+  if (props.plain) {
+    html.value = "";
+    return;
+  }
   const gen = ++renderGen;
+  const nextHtml = await renderMarkdownWithMath(props.content, { streaming: props.streaming });
+  if (gen !== renderGen) return;
+  html.value = nextHtml;
   await nextTick();
   if (gen !== renderGen || !root.value) return;
+
+  root.value.querySelectorAll(".echarts-block").forEach((block) => {
+    if (block._nlmChart) {
+      try {
+        block._nlmChart.dispose();
+      } catch {
+        /* ignore */
+      }
+      block._nlmChart = null;
+    }
+  });
+
   decorateMarkdownLinks(root.value);
   enhanceCodeBlocks(root.value);
-  // Skip diagram engines while streaming to avoid false errors on incomplete fences.
-  if (props.streaming) return;
+  enhanceChatImages(root.value);
+  // Fallback for any unprotected delimiters
+  await renderMathIn(root.value);
   await Promise.all([
     renderMermaidIn(root.value, {
       streaming: false,
-      repair: repairMermaid,
+      repair: props.streaming ? null : repairMermaid,
       onFixed,
     }),
-    renderDrawioIn(root.value, { streaming: false }),
+    renderEchartsIn(root.value, { streaming: props.streaming }),
   ]);
+  if (!props.streaming) {
+    await renderDrawioIn(root.value, { streaming: false });
+  }
 }
 
 watch(
@@ -89,6 +110,13 @@ watch(
 
 onBeforeUnmount(() => {
   if (debounceTimer) clearTimeout(debounceTimer);
+  root.value?.querySelectorAll?.(".echarts-block").forEach((block) => {
+    try {
+      block._nlmChart?.dispose?.();
+    } catch {
+      /* ignore */
+    }
+  });
 });
 </script>
 

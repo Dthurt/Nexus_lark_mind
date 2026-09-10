@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import posixpath
 from contextlib import asynccontextmanager
+from pathlib import Path
+from stat import S_ISDIR, S_ISREG
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
-from pathlib import Path
-
-from src.adapters.workspaces.ssh_config import ssh_config_path
+from src.adapters.workspaces.ssh_config import resolve_config_entry, ssh_config_path
 from src.adapters.workspaces.ssh_store import SshHostRecord, get_ssh_host_store
 from src.common.errors import UpstreamError, ValidationAppError
 
@@ -17,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 def _posix_join(root: str, rel: str) -> str:
-    root = root or "/"
-    rel = (rel or ".").strip() or "."
+    root = (root or "/").replace("\\", "/")
+    rel = ((rel or ".").strip() or ".").replace("\\", "/")
     if rel.startswith("/"):
         candidate = posixpath.normpath(rel)
     else:
@@ -33,18 +34,33 @@ def _posix_join(root: str, rel: str) -> str:
 
 
 async def _connect_options(host: SshHostRecord) -> Dict[str, Any]:
+    # Never hand Windows ~/.ssh/config to asyncssh for IdentityFile parsing —
+    # asyncssh treats backslashes as escapes and corrupts paths like
+    # C:\Users\...\.ssh\id_ed25519 → C:Users....sshid_ed25519.
     if host.source == "ssh_config" and host.ssh_config_alias:
         cfg = ssh_config_path()
         if not cfg.exists():
             raise ValidationAppError(f"ssh config not found: {cfg}")
-        return {
-            "host": host.ssh_config_alias,
-            "config": str(cfg),
+        entry = resolve_config_entry(host.ssh_config_alias)
+        if not entry:
+            raise ValidationAppError(f"ssh config alias not found: {host.ssh_config_alias}")
+        opts: Dict[str, Any] = {
+            "host": entry["hostname"],
+            "port": int(entry.get("port") or 22),
+            "username": entry.get("username")
+            or os.environ.get("USER")
+            or os.environ.get("USERNAME")
+            or "root",
             "known_hosts": None,
             "login_timeout": 20,
         }
+        idfile = (entry.get("identity_file") or "").strip()
+        if idfile:
+            p = Path(idfile).expanduser()
+            opts["client_keys"] = [str(p) if p.exists() else idfile]
+        return opts
 
-    opts: Dict[str, Any] = {
+    opts = {
         "host": host.host,
         "port": int(host.port or 22),
         "username": host.username,
@@ -114,10 +130,10 @@ async def test_ssh_host(host: SshHostRecord) -> Dict[str, Any]:
 
 
 async def expand_remote_path(conn: Any, path: str) -> str:
-    raw = (path or "~").strip() or "~"
+    raw = ((path or "~").strip() or "~").replace("\\", "/")
     if raw == "~" or raw.startswith("~/"):
         result = await conn.run("printf %s \"$HOME\"", check=False)
-        home = (result.stdout or "").strip()
+        home = (result.stdout or "").strip().replace("\\", "/")
         if not home:
             raise UpstreamError("cannot resolve remote HOME")
         if raw == "~":
@@ -143,8 +159,6 @@ async def browse_remote(host: SshHostRecord, path: str = "") -> Dict[str, Any]:
                 is_file = False
                 try:
                     attrs = await sftp.stat(full)
-                    from asyncssh import S_ISDIR, S_ISREG
-
                     mode = attrs.permissions or 0
                     is_dir = bool(S_ISDIR(mode))
                     is_file = bool(S_ISREG(mode))
@@ -179,8 +193,6 @@ async def ensure_remote_dir(host: SshHostRecord, path: str) -> str:
                 attrs = await sftp.stat(root)
             except Exception as exc:
                 raise FileNotFoundError(f"path does not exist: {root}") from exc
-            from asyncssh import S_ISDIR
-
             if not S_ISDIR(attrs.permissions or 0):
                 raise NotADirectoryError(f"not a directory: {root}")
             return root
@@ -210,8 +222,6 @@ class RemoteWorkspaceFs:
                     size = None
                     try:
                         attrs = await sftp.stat(full)
-                        from asyncssh import S_ISDIR
-
                         is_dir = bool(S_ISDIR(attrs.permissions or 0))
                         size = attrs.size if not is_dir else None
                     except Exception:

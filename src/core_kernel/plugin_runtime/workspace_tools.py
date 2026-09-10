@@ -12,7 +12,12 @@ from typing import Any, Dict, List
 
 from src.adapters.workspaces.store import resolve_under_workspace
 from src.common.errors import PluginError, ValidationAppError
-from src.core_kernel.plugin_runtime.invoke_context import get_workspace_cwd, get_workspace_meta
+from src.core_kernel.plugin_runtime.invoke_context import (
+    fs_was_observed,
+    get_workspace_cwd,
+    get_workspace_meta,
+    mark_fs_observed,
+)
 from src.core_kernel.plugin_runtime.lifecycle import BasePlugin, PluginManifest
 
 logger = logging.getLogger(__name__)
@@ -46,7 +51,11 @@ TOOLS: List[Dict[str, Any]] = [
     },
     {
         "name": "read_file",
-        "description": "Read a UTF-8 text file from the session workspace (truncated if large).",
+        "description": (
+            "Read a UTF-8 text file from the workspace. Prefer this over shell cat/type. "
+            "Results include line numbers — use offset/limit to continue large files. "
+            "You must read a file before editing or overwriting it."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -59,7 +68,11 @@ TOOLS: List[Dict[str, Any]] = [
     },
     {
         "name": "write_file",
-        "description": "Create or overwrite a UTF-8 text file inside the workspace.",
+        "description": (
+            "Create a new UTF-8 file, or completely replace an existing file's contents. "
+            "Prefer edit_file for targeted changes. If the file already exists, you must have "
+            "read_file'd it earlier in this turn (unless you just created it)."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -71,7 +84,11 @@ TOOLS: List[Dict[str, Any]] = [
     },
     {
         "name": "edit_file",
-        "description": "Replace an exact substring in a workspace file (old_string must be unique unless replace_all).",
+        "description": (
+            "Apply a targeted edit: replace an exact substring. old_string must appear exactly once "
+            "unless replace_all=true. Prefer edit_file over write_file for existing files. "
+            "Read the file first in this turn. On failure, re-read and use a more unique anchor."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -86,8 +103,9 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "run_shell",
         "description": (
-            "Run a shell command with cwd=session workspace "
-            "(local or remote SSH). Prefer small, non-interactive commands."
+            "Run a shell command with cwd=session workspace (local or remote SSH). "
+            "Prefer small, non-interactive commands. Prefer glob/grep/read_file over find/cat/rg. "
+            "Always inspect the exit/return code before continuing."
         ),
         "inputSchema": {
             "type": "object",
@@ -101,9 +119,11 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "ask_user",
         "description": (
-            "Ask the human clarifying questions via an interactive form. "
-            "Use when requirements are ambiguous (especially in plan mode). "
-            "Supports multiple questions, single/multi select, and optional custom text."
+            "Ask the human a concise question via an interactive form when you need confirmation, "
+            "a choice, or missing information. Prefer inspection for discoverable facts. "
+            "If you recommend an option, put it first and append '(Recommended)' to that label. "
+            "Supports multiple questions, single/multi select, and optional custom text. "
+            "Do NOT use this to present a finished implementation plan — use exit_plan_mode instead."
         ),
         "inputSchema": {
             "type": "object",
@@ -139,10 +159,66 @@ TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "exit_plan_mode",
+        "description": (
+            "Use only in plan mode. Present your plan for the user's review and, on approval, "
+            "leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading "
+            "that names it. The user may approve (carry out the plan from your next step) or "
+            "keep planning — their feedback comes back in the tool result; revise and present again."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "plan": {
+                    "type": "string",
+                    "description": "The complete plan, as markdown, starting with a # heading that names it.",
+                },
+            },
+            "required": ["plan"],
+        },
+    },
+    {
+        "name": "todo_write",
+        "description": (
+            "Record and update a structured task list for the current work. Send the ENTIRE list "
+            "every call — it REPLACES the previous list (no partial updates). Use it to plan "
+            "multi-step work and show progress: add one todo per concrete step before you start. "
+            "Keep AT MOST ONE todo in_progress at a time; while work remains, exactly one should "
+            "be in_progress. Mark a todo completed the moment it is done (do not batch). Skip for "
+            "trivial single-step tasks. Statuses: pending | in_progress | completed | cancelled."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "description": "The COMPLETE task list, replacing any previous list.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "content": {
+                                "type": "string",
+                                "description": "What the task is — a short imperative line.",
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed", "cancelled"],
+                                "description": "pending | in_progress | completed | cancelled",
+                            },
+                        },
+                        "required": ["id", "content", "status"],
+                    },
+                },
+            },
+            "required": ["items"],
+        },
+    },
+    {
         "name": "glob",
         "description": (
-            "Find files in the workspace by glob pattern (e.g. **/*.py, src/**/*.vue). "
-            "Skips node_modules, .git, venv. Use this before blindly listing directories."
+            "Find files by glob (e.g. **/*.py, src/**/*.vue). Prefer this over shell find. "
+            "Skips node_modules, .git, venv."
         ),
         "inputSchema": {
             "type": "object",
@@ -156,8 +232,8 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "grep",
         "description": (
-            "Search file contents in the workspace with a regex. "
-            "Returns path:line:text matches. Prefer grep over reading every file."
+            "Search file contents with a regex. Prefer this over shell grep/rg. "
+            "Returns path:line:text matches."
         ),
         "inputSchema": {
             "type": "object",
@@ -182,6 +258,24 @@ def _require_cwd() -> str:
     return cwd
 
 
+def _edit_miss_hint(text: str, old: str) -> str:
+    """Offer a short recovery hint when old_string is missing."""
+    needle = (old or "").strip().splitlines()
+    if not needle:
+        return ""
+    first = needle[0].strip()
+    if len(first) < 4:
+        return ""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if first[:40] in line or (len(first) > 12 and first[:12] in line):
+            lo = max(0, i - 1)
+            hi = min(len(lines), i + 2)
+            sample = " | ".join(lines[lo:hi])[:180]
+            return f"nearby line {i + 1}: {sample}"
+    return ""
+
+
 def _is_ssh() -> bool:
     meta = get_workspace_meta()
     return (meta.get("workspace_kind") or meta.get("kind") or "") == "ssh"
@@ -199,6 +293,10 @@ class WorkspaceToolsPlugin(BasePlugin):
         self.manifest.tools = list(TOOLS)
 
     async def _on_invoke(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
+        if tool_name == "ask_user":
+            raise PluginError("ask_user is handled by the agent runner, not invoked directly")
+        if tool_name == "exit_plan_mode":
+            raise PluginError("exit_plan_mode is handled by the agent runner, not invoked directly")
         cwd = _require_cwd()
         if _is_ssh():
             return await self._invoke_ssh(tool_name, cwd, arguments)
@@ -229,6 +327,10 @@ class WorkspaceToolsPlugin(BasePlugin):
             )
         if tool_name == "ask_user":
             raise PluginError("ask_user is handled by the agent runner, not invoked directly")
+        if tool_name == "exit_plan_mode":
+            raise PluginError("exit_plan_mode is handled by the agent runner, not invoked directly")
+        if tool_name == "todo_write":
+            return self._todo_write(arguments.get("items") or [])
         if tool_name == "glob":
             return self._glob(
                 cwd,
@@ -255,25 +357,61 @@ class WorkspaceToolsPlugin(BasePlugin):
         if tool_name == "list_dir":
             return await fs.list_dir(str(arguments.get("path") or "."))
         if tool_name == "read_file":
-            return await fs.read_file(
-                str(arguments.get("path") or ""),
+            rel = str(arguments.get("path") or "")
+            out = await fs.read_file(
+                rel,
                 offset=int(arguments.get("offset") or 1),
                 limit=int(arguments.get("limit") or 200),
             )
+            mark_fs_observed(rel)
+            return out
         if tool_name == "write_file":
-            return await fs.write_file(str(arguments.get("path") or ""), str(arguments.get("content") or ""))
+            rel = str(arguments.get("path") or "")
+            # Soft gate on SSH too — existence check via read observation
+            # (create-new is allowed without prior read)
+            try:
+                await fs.read_file(rel, offset=1, limit=1)
+                exists = True
+            except Exception:
+                exists = False
+            if exists and not fs_was_observed(rel):
+                raise ValidationAppError(
+                    f'cannot overwrite "{rel}": file has not been read in this turn — '
+                    "read_file first, or use edit_file for a targeted change"
+                )
+            out = await fs.write_file(rel, str(arguments.get("content") or ""))
+            mark_fs_observed(rel)
+            return out
         if tool_name == "edit_file":
-            return await fs.edit_file(
-                str(arguments.get("path") or ""),
-                str(arguments.get("old_string") or ""),
-                str(arguments.get("new_string") or ""),
-                replace_all=bool(arguments.get("replace_all")),
-            )
+            rel = str(arguments.get("path") or "")
+            if not fs_was_observed(rel):
+                raise ValidationAppError(
+                    f'cannot modify "{rel}": file has not been read in this turn — '
+                    "read_file, then retry the edit"
+                )
+            try:
+                out = await fs.edit_file(
+                    rel,
+                    str(arguments.get("old_string") or ""),
+                    str(arguments.get("new_string") or ""),
+                    replace_all=bool(arguments.get("replace_all")),
+                )
+            except Exception as exc:
+                msg = str(exc)
+                if "not found" in msg.lower() or "old_string" in msg.lower():
+                    raise ValidationAppError(
+                        f'edit failed on "{rel}": {msg}. Re-read the file and use an exact unique anchor.'
+                    ) from exc
+                raise
+            mark_fs_observed(rel)
+            return out
         if tool_name == "run_shell":
             return await fs.run_shell(
                 str(arguments.get("command") or ""),
                 timeout=float(arguments.get("timeout_seconds") or 60),
             )
+        if tool_name == "todo_write":
+            return self._todo_write(arguments.get("items") or [])
         if tool_name == "glob":
             return await fs.glob_files(
                 str(arguments.get("pattern") or ""),
@@ -319,6 +457,7 @@ class WorkspaceToolsPlugin(BasePlugin):
         end = start + max(1, min(limit, 400))
         slice_lines = lines[start:end]
         numbered = "\n".join(f"{i + start + 1:>5}|{line}" for i, line in enumerate(slice_lines))
+        mark_fs_observed(rel)
         return {
             "path": rel,
             "total_lines": len(lines),
@@ -331,9 +470,22 @@ class WorkspaceToolsPlugin(BasePlugin):
 
     def _write_file(self, cwd: str, rel: str, content: str) -> Dict[str, Any]:
         target = resolve_under_workspace(cwd, rel)
+        existed = target.is_file()
+        if existed and not fs_was_observed(rel):
+            raise ValidationAppError(
+                f'cannot overwrite "{rel}": file has not been read in this turn — '
+                "read_file first, or use edit_file for a targeted change"
+            )
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        return {"ok": True, "path": rel, "bytes": len(content.encode("utf-8")), "kind": "local"}
+        mark_fs_observed(rel)
+        return {
+            "ok": True,
+            "path": rel,
+            "bytes": len(content.encode("utf-8")),
+            "created": not existed,
+            "kind": "local",
+        }
 
     def _edit_file(
         self,
@@ -347,15 +499,69 @@ class WorkspaceToolsPlugin(BasePlugin):
         target = resolve_under_workspace(cwd, rel)
         if not target.is_file():
             raise FileNotFoundError(str(target))
+        if not fs_was_observed(rel):
+            raise ValidationAppError(
+                f'cannot modify "{rel}": file has not been read in this turn — '
+                "read_file, then retry the edit"
+            )
         text = target.read_text(encoding="utf-8")
         if old not in text:
-            raise ValidationAppError("old_string not found in file")
+            hint = _edit_miss_hint(text, old)
+            raise ValidationAppError(
+                f'old_string not found in "{rel}". Re-read the file and use an exact unique anchor.'
+                + (f" Hint: {hint}" if hint else "")
+            )
         count = text.count(old)
         if count > 1 and not replace_all:
-            raise ValidationAppError(f"old_string found {count} times; set replace_all or make it unique")
+            raise ValidationAppError(
+                f'old_string found {count} times in "{rel}"; set replace_all=true or provide a more unique old_string'
+            )
         updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
         target.write_text(updated, encoding="utf-8")
+        mark_fs_observed(rel)
         return {"ok": True, "path": rel, "replacements": count if replace_all else 1, "kind": "local"}
+
+    def _todo_write(self, items: Any) -> Dict[str, Any]:
+        rows: List[Dict[str, Any]] = []
+        if not isinstance(items, list):
+            raise ValidationAppError("items must be an array")
+        in_progress = 0
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            status = str(raw.get("status") or "pending").strip().lower()
+            if status not in {"pending", "in_progress", "completed", "cancelled"}:
+                status = "pending"
+            if status == "in_progress":
+                in_progress += 1
+            rows.append(
+                {
+                    "id": str(raw.get("id") or f"t{len(rows)+1}"),
+                    "content": str(raw.get("content") or "").strip(),
+                    "status": status,
+                }
+            )
+        if in_progress > 1:
+            raise ValidationAppError("at most one todo may be in_progress")
+        # Drop empty content rows (DSH-style: content must be meaningful)
+        rows = [r for r in rows if r["content"]]
+        counts = {
+            "pending": sum(1 for r in rows if r["status"] == "pending"),
+            "in_progress": sum(1 for r in rows if r["status"] == "in_progress"),
+            "completed": sum(1 for r in rows if r["status"] == "completed"),
+            "cancelled": sum(1 for r in rows if r["status"] == "cancelled"),
+        }
+        return {
+            "ok": True,
+            "items": rows,
+            "todos": rows,
+            "count": len(rows),
+            "counts": counts,
+            "summary": (
+                f"Updated todo list: {counts['pending']} pending, "
+                f"{counts['in_progress']} in progress, {counts['completed']} completed."
+            ),
+        }
 
     async def _run_shell(self, cwd: str, command: str, *, timeout: float) -> Dict[str, Any]:
         command = (command or "").strip()
@@ -500,6 +706,6 @@ def workspace_tools_manifest() -> PluginManifest:
         name="Workspace",
         kind="inprocess",
         version="1.2.0",
-        description="Session workspace tools (local or SSH): glob/grep/list/read/write/edit/run_shell/ask_user.",
+        description="Session workspace tools (local or SSH): glob/grep/list/read/write/edit/run_shell/ask_user/exit_plan_mode/todo_write.",
         tools=list(TOOLS),
     )

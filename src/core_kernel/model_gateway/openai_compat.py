@@ -26,11 +26,37 @@ logger = logging.getLogger(__name__)
 def _messages_to_openai(messages: List[ChatMessage]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for m in messages:
-        item: Dict[str, Any] = {"role": m.role.value, "content": m.content}
+        item: Dict[str, Any] = {"role": m.role.value, "content": m.content if m.content is not None else ""}
         if m.name:
             item["name"] = m.name
         if m.tool_call_id:
             item["tool_call_id"] = m.tool_call_id
+        # Restore assistant tool_calls so multi-round tool loops stay valid for providers.
+        meta = m.metadata or {}
+        tcs = meta.get("tool_calls")
+        if m.role == ChatRole.ASSISTANT and tcs:
+            cleaned = []
+            for tc in tcs:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function") or {}
+                cleaned.append(
+                    {
+                        "id": tc.get("id") or f"call_{len(cleaned)}",
+                        "type": tc.get("type") or "function",
+                        "function": {
+                            "name": fn.get("name") or tc.get("name") or "",
+                            "arguments": fn.get("arguments")
+                            if isinstance(fn.get("arguments"), str)
+                            else json.dumps(fn.get("arguments") or tc.get("arguments") or {}, ensure_ascii=False),
+                        },
+                    }
+                )
+            if cleaned:
+                item["tool_calls"] = cleaned
+                # Some providers reject null content with tool_calls; empty string is safer.
+                if item.get("content") is None:
+                    item["content"] = ""
         out.append(item)
     return out
 

@@ -1,14 +1,13 @@
 """Plugin manager tests."""
 
 import json
-from pathlib import Path
 
 import pytest
 
 from src.common.errors import PluginError
 from src.common.schemas import PluginInvokeRequest
 from src.core_kernel.plugin_runtime.lifecycle import PluginState
-from src.core_kernel.plugin_runtime.manager import PluginManager, PREFS_PATH, _InProcessEchoManifest
+from src.core_kernel.plugin_runtime.manager import PluginManager, _InProcessEchoManifest
 
 
 @pytest.mark.asyncio
@@ -26,6 +25,11 @@ async def test_inprocess_echo_plugin():
 async def test_enabled_vs_state_and_prefs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
+    prefs_file = tmp_path / "data" / "plugin_prefs.json"
+    monkeypatch.setattr(
+        "src.core_kernel.plugin_runtime.manager.PREFS_PATH",
+        prefs_file,
+    )
     mgr = PluginManager()
     await mgr.load(_InProcessEchoManifest())
     assert mgr.plugins["builtin.echo"].state == PluginState.READY
@@ -40,7 +44,7 @@ async def test_enabled_vs_state_and_prefs(tmp_path, monkeypatch):
     assert listed["state"] == "disabled"
     assert listed["health"]["last_teardown_at"]
 
-    prefs = json.loads(Path("data/plugin_prefs.json").read_text(encoding="utf-8"))
+    prefs = json.loads(prefs_file.read_text(encoding="utf-8"))
     assert prefs["enabled"]["builtin.echo"] is False
 
     await mgr.enable("builtin.echo")
@@ -62,13 +66,20 @@ async def test_reload_blocked_during_inflight(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_web_search_config_hints(monkeypatch):
+async def test_web_search_config_hints(tmp_path, monkeypatch):
+    from src.core_kernel.plugin_runtime import plugin_config_store as pcs
+    from src.core_kernel.plugin_runtime.lifecycle import PluginManifest
+
+    cfg_path = tmp_path / "plugin_config.json"
+    store = pcs.PluginConfigStore(path=cfg_path)
+    monkeypatch.setattr(pcs, "_store", store)
+    monkeypatch.setattr(pcs, "CONFIG_PATH", cfg_path)
+
     mgr = PluginManager()
     monkeypatch.setattr(mgr.settings, "tavily_api_key", "")
     monkeypatch.setattr(mgr.settings, "brave_api_key", "")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     monkeypatch.delenv("BRAVE_API_KEY", raising=False)
-    from src.core_kernel.plugin_runtime.lifecycle import PluginManifest
 
     await mgr.load(
         PluginManifest(
@@ -79,7 +90,6 @@ async def test_web_search_config_hints(monkeypatch):
             config={"script": "python", "tool_name": "web_search"},
         )
     )
-    # disabled by default in load if we set enabled - force ready path
     await mgr.enable("cli.web_search")
     hints = mgr.list_plugins()[0]["config_hints"]
-    assert any("TAVILY" in h for h in hints)
+    assert any("Tavily" in h or "TAVILY" in h for h in hints)

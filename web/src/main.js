@@ -6,6 +6,9 @@ import WebSearchToolCard from "@/components/WebSearchToolCard.vue";
 import WorkspaceToolCard from "@/components/WorkspaceToolCard.vue";
 import { createContext } from "@/runtime/createContext";
 import { applyBuiltinModules } from "@/runtime/modules";
+import { applyTheme, loadStoredTheme } from "@/composables/useTheme";
+
+applyTheme(loadStoredTheme());
 
 const app = createApp(App);
 app.use(NlmUi);

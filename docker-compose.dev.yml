@@ -1,0 +1,32 @@
+# Dev overrides: bind-mount source for faster iteration (still uses Redis).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Prefer local scripts\start_local.bat for day-to-day coding (memory broker).
+
+services:
+  core-kernel:
+    volumes:
+      - ./src:/app/src
+      - ./plugins_volume:/app/plugins_volume
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./web-static:/app/web-static
+    environment:
+      LOG_LEVEL: DEBUG
+
+  orchestrator:
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    environment:
+      LOG_LEVEL: DEBUG
+
+  adapters:
+    volumes:
+      - ./src:/app/src
+      - ./web-static:/app/web-static
+      - ./logs:/app/logs
+    environment:
+      LOG_LEVEL: DEBUG
+      CORS_ORIGINS: "*"

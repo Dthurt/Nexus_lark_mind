@@ -1,12 +1,38 @@
+# Nexus-Lark-Mind — production-ish stack (one image, three app services + Redis)
+#
+#   cp .env.example .env
+#   docker compose up --build -d
+#
+# Crawl4AI image:
+#   docker compose -f docker-compose.yml -f docker-compose.crawl.yml up --build -d
+
+name: nexus-lark-mind
+
+x-nlm-common: &nlm-common
+  image: nexus-lark-mind:latest
+  restart: unless-stopped
+  env_file:
+    - .env
+  networks:
+    - nlm
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "3"
+
 services:
   redis:
     image: redis:7-alpine
     container_name: nlm-redis
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - nlm
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -14,19 +40,26 @@ services:
       retries: 5
 
   core-kernel:
-    build: .
-    image: nexus-lark-mind:latest
+    <<: *nlm-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ENABLE_CRAWL: "0"
     container_name: nlm-core-kernel
-    restart: unless-stopped
     command: ["python", "-m", "src.entry_kernel"]
-    env_file:
-      - .env
     environment:
       HEALTH_PORT: "8001"
       KERNEL_HOST: "0.0.0.0"
       KERNEL_PORT: "8001"
       DATABASE_URL: "sqlite+aiosqlite:///data/nexus.db"
       REDIS_URL: "redis://redis:6379/0"
+      KERNEL_RPC_URL: "http://core-kernel:8001"
+      ORCHESTRATOR_RPC_URL: "http://orchestrator:8002"
+      PLUGINS_DIR: "/app/plugins_volume"
+      WEB_STATIC_DIR: "/app/web-static"
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     volumes:
       - ./data:/app/data
       - ./plugins_volume:/app/plugins_volume
@@ -41,21 +74,21 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 25s
+      start_period: 30s
 
   orchestrator:
-    image: nexus-lark-mind:latest
+    <<: *nlm-common
     container_name: nlm-orchestrator
-    restart: unless-stopped
     command: ["python", "-m", "src.entry_orchestrator"]
-    env_file:
-      - .env
     environment:
       HEALTH_PORT: "8002"
       ORCHESTRATOR_HOST: "0.0.0.0"
       ORCHESTRATOR_PORT: "8002"
       KERNEL_RPC_URL: "http://core-kernel:8001"
+      ORCHESTRATOR_RPC_URL: "http://orchestrator:8002"
       REDIS_URL: "redis://redis:6379/0"
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     volumes:
       - ./logs:/app/logs
     ports:
@@ -70,15 +103,12 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 25s
 
   adapters:
-    image: nexus-lark-mind:latest
+    <<: *nlm-common
     container_name: nlm-adapters
-    restart: unless-stopped
     command: ["python", "-m", "src.entry_adapters"]
-    env_file:
-      - .env
     environment:
       HEALTH_PORT: "8000"
       ADAPTERS_HOST: "0.0.0.0"
@@ -87,6 +117,8 @@ services:
       KERNEL_RPC_URL: "http://core-kernel:8001"
       REDIS_URL: "redis://redis:6379/0"
       WEB_STATIC_DIR: "/app/web-static"
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     volumes:
       - ./web-static:/app/web-static
       - ./logs:/app/logs
@@ -97,12 +129,20 @@ services:
         condition: service_healthy
       orchestrator:
         condition: service_healthy
+      core-kernel:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 25s
+
+networks:
+  nlm:
+    name: nlm-net
+    driver: bridge
 
 volumes:
   redis_data:
+    name: nlm-redis-data

@@ -31,7 +31,7 @@ export function usePlugins() {
       method: "POST",
     });
     const json = await resp.json();
-    if (!json.ok) throw new Error(json.error?.message || "toggle failed");
+    if (!json.ok) throw new Error(json.error?.message || json.error?.detail?.message || "toggle failed");
     await load();
   }
 
@@ -55,5 +55,24 @@ export function usePlugins() {
     }
   }
 
-  return { plugins, tools, loading, reloading, error, load, toggle, reload };
+  async function getConfig(pluginId) {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/config`);
+    const json = await resp.json();
+    if (!json.ok) throw new Error(json.error?.message || "load config failed");
+    return json.data;
+  }
+
+  async function saveConfig(pluginId, values) {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values }),
+    });
+    const json = await resp.json();
+    if (!json.ok) throw new Error(json.error?.message || "save config failed");
+    await load();
+    return json.data;
+  }
+
+  return { plugins, tools, loading, reloading, error, load, toggle, reload, getConfig, saveConfig };
 }

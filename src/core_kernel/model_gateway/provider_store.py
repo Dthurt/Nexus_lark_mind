@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
-STORE_PATH = Path("data") / "model_providers.json"
+# Resolve against repo root so CWD differences (kernel vs local) never split stores.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+STORE_PATH = _REPO_ROOT / "data" / "model_providers.json"
 ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 BUILTIN_IDS = frozenset({"openai", "deepseek", "glm", "anthropic"})
 
@@ -129,6 +131,10 @@ class ProviderStore:
             p.label = p.id
         if not p.default_model and p.models:
             p.default_model = p.models[0]
+        if p.enabled and not p.model_ids():
+            raise ValueError("请至少填写一个模型（默认模型或模型列表），否则 Composer 无法选用")
+        if p.enabled and not (p.api_key or "").strip() and not (existing and existing.api_key):
+            raise ValueError("请填写 API Key")
         self.providers[p.id] = p
         self.save()
         return p

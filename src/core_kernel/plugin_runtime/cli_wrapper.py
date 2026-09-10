@@ -24,12 +24,20 @@ class CliPlugin(BasePlugin):
 
     def _child_env(self) -> Dict[str, str]:
         env = os.environ.copy()
+        # Avoid Windows GBK crashes when CLI tools print Unicode (e.g. Crawl4AI ✓).
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        env.setdefault("PYTHONUTF8", "1")
         extra = self.manifest.config.get("env") or {}
         for k, v in extra.items():
             if v is not None and str(v) != "":
                 env[str(k)] = str(v)
-        # Inject search keys from app settings if not already present
+        # Inject search keys from app settings / UI plugin config if not already present
         settings = get_settings()
+        from src.core_kernel.plugin_runtime.plugin_config_store import get_plugin_config_store
+
+        for k, v in get_plugin_config_store().env_for(self.plugin_id).items():
+            if v and not env.get(k):
+                env[k] = v
         if settings.tavily_api_key and not env.get("TAVILY_API_KEY"):
             env["TAVILY_API_KEY"] = settings.tavily_api_key
         if settings.tavily_search_depth and not env.get("TAVILY_SEARCH_DEPTH"):
@@ -78,6 +86,11 @@ class CliPlugin(BasePlugin):
 
     async def _on_invoke(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
         script = self.manifest.config["script"]
+        # Prefer the kernel interpreter when manifests say bare "python"/"python3".
+        if str(script).lower() in {"python", "python3", "py"}:
+            import sys
+
+            script = sys.executable
         timeout = float(self.manifest.config.get("timeout", 60))
         mode = self.manifest.config.get("input_mode", "stdin_json")
         extra = arguments.get("args") or ""
@@ -113,14 +126,30 @@ class CliPlugin(BasePlugin):
             proc.kill()
             raise PluginError(f"cli plugin timeout: {self.plugin_id}") from exc
 
-        if proc.returncode != 0:
-            raise PluginError(
-                f"cli exited {proc.returncode}: {stderr.decode('utf-8', errors='ignore')}"
-            )
+        err_text = stderr.decode("utf-8", errors="ignore").strip()
         text = stdout.decode("utf-8", errors="ignore").strip()
+        if proc.returncode != 0:
+            # Prefer structured JSON on stdout when tools report failure that way.
+            detail = err_text or text
+            if text:
+                try:
+                    payload = json.loads(text.splitlines()[-1])
+                    if isinstance(payload, dict) and payload.get("error"):
+                        detail = json.dumps(payload, ensure_ascii=False)
+                except json.JSONDecodeError:
+                    pass
+            raise PluginError(f"cli exited {proc.returncode}: {detail}")
         try:
             return json.loads(text)
         except json.JSONDecodeError:
+            # Some CLIs mix banners + JSON on stdout — take the last JSON object line.
+            for line in reversed(text.splitlines()):
+                line = line.strip()
+                if line.startswith("{") and line.endswith("}"):
+                    try:
+                        return json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
             return {"stdout": text}
 
     async def _on_teardown(self) -> None:

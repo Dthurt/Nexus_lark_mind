@@ -29,41 +29,12 @@ from src.infrastructure.storage.repositories import PluginCallRepository, Sessio
 logger = logging.getLogger(__name__)
 
 
+from src.core_kernel.agent_prompts import IDENTITY
+
+
 class ChatRunRequest(BaseModel):
     task: StandardTask
-    system_prompt: str = (
-        "You are Nexus Lark Mind — a personal coding agent with a workbench: local or SSH workspaces, "
-        "plugins (MCP/CLI), web search, Feishu channels, trajectory, and subagents. "
-        "Be concise and accurate. When a workspace is bound, you MUST use workspace tools instead of guessing files. "
-        "Loop: (1) glob/grep/list_dir to locate, (2) read_file with offset/limit, (3) edit_file for existing files "
-        "and write_file only for new files, (4) run_shell to verify. Prefer parallel independent reads/greps. "
-        "## Subagent policy (you decide)\n"
-        "You own whether to use subagents. Do NOT wait for the user to say “use a subagent”. "
-        "Users may explicitly request one; honor that. Otherwise choose based on the task:\n"
-        "- Use `subagent` when a chunk of work is self-contained, multi-step, parallelizable, or would clutter "
-        "this turn (e.g. deep research in one area, a focused refactor, a verify/build pass) while you stay "
-        "on orchestration or another track.\n"
-        "- Use `subagent_fork` when the child needs prior conversation context but a fresh focus for a side task.\n"
-        "- Do NOT use a subagent for trivial one-shot tool calls (single grep/read/edit) — do those yourself.\n"
-        "- After spawning, integrate the child's result into your answer; use `list_agents` / `send_message` / "
-        "`interrupt_agent` only when continuing or steering a child.\n"
-        "Stay inside cwd. Do not dump entire files. After edits, run a focused check when possible. "
-        "You may also use other enabled plugins (web_search, MCP, Feishu) when the task needs them. "
-        "## Diagrams (you choose the format)\n"
-        "Prefer visual explanations over long prose when a figure helps. Pick the format yourself:\n"
-        "- Mermaid (fenced language `mermaid`): default for most diagrams — flow, sequence, class, ER, state, "
-        "gantt, mindmap, C4, architecture, etc. Fast to write, good enough for chat. "
-        "CRITICAL: valid Mermaid only — ASCII punctuation, `-->` / `-.->` (never `-. -->`), "
-        "`A -->|label| B`, matching brackets, diagram type on first line.\n"
-        "- Draw.io XML (fenced language `drawio` or `mxfile`): use when precise layout, swimlanes, "
-        "icon-rich architecture, or multi-page boards matter. Emit a complete `<mxfile>...</mxfile>` "
-        "(or `<mxGraphModel>`). Keep cells few and labels short; stronger models handle Draw.io better — "
-        "if unsure, use Mermaid.\n"
-        "Examples of good moments: architecture/modules, call or data flow, before/after, decision trees, "
-        "entity relationships, state machines. Skip diagrams only when a one-line answer is enough. "
-        "Future UX will expose experience tiers (low→Mermaid / high→Draw.io + stronger models); "
-        "until then, choose format by diagram complexity."
-    )
+    system_prompt: str = IDENTITY
 
 
 class PluginActionRequest(BaseModel):
@@ -252,6 +223,18 @@ def create_kernel_app() -> FastAPI:
         data = await plugins.reload(plugin_id)
         return RpcEnvelope(ok=True, data=data)
 
+    @app.get("/rpc/plugins/{plugin_id}/config")
+    async def get_plugin_config(plugin_id: str):
+        plugins: PluginManager = state["plugins"]
+        return RpcEnvelope(ok=True, data=plugins.get_plugin_config(plugin_id))
+
+    @app.put("/rpc/plugins/{plugin_id}/config")
+    async def put_plugin_config(plugin_id: str, body: Dict[str, Any]):
+        plugins: PluginManager = state["plugins"]
+        values = body.get("values") if isinstance(body.get("values"), dict) else body
+        data = plugins.set_plugin_config(plugin_id, values or {})
+        return RpcEnvelope(ok=True, data=data)
+
     @app.get("/rpc/plugin-calls")
     async def list_plugin_calls(session_id: Optional[str] = None, limit: int = 40):
         session_factory = state["session_factory"]
@@ -293,7 +276,7 @@ def create_kernel_app() -> FastAPI:
         task = body.task
         session_factory = state["session_factory"]
 
-        messages = _build_messages(task, body.system_prompt)
+        messages = await _build_messages_compacted(task, body.system_prompt, gateway=gateway)
         async with session_factory() as session:
             tasks = TaskRepository(session)
             sessions = SessionRepository(session)
@@ -360,7 +343,7 @@ def create_kernel_app() -> FastAPI:
         plugins: PluginManager = state["plugins"]
         task = body.task
         session_factory = state["session_factory"]
-        messages = _build_messages(task, body.system_prompt)
+        messages = await _build_messages_compacted(task, body.system_prompt, gateway=gateway)
 
         async with session_factory() as session:
             tasks = TaskRepository(session)
@@ -404,7 +387,9 @@ def create_kernel_app() -> FastAPI:
                         "agent_mode": (task.metadata or {}).get("agent_mode") or "agent",
                         "auto_accept": bool((task.metadata or {}).get("auto_accept")),
                         "plan_status": (task.metadata or {}).get("plan_status") or "idle",
+                        "multitask": bool((task.metadata or {}).get("multitask", True)),
                     },
+                    allow_subagents=bool((task.metadata or {}).get("multitask", True)),
                     parent_session_id=task.session_id,
                 ):
                     if chunk.get("content"):
@@ -524,57 +509,32 @@ def create_kernel_app() -> FastAPI:
 
 
 def _build_messages(task: StandardTask, system_prompt: str) -> list[ChatMessage]:
-    prompt = system_prompt
-    meta = task.metadata or {}
-    cwd = (meta.get("cwd") or "").strip()
-    if cwd:
-        title = (meta.get("workspace_title") or "").strip()
-        ws_id = (meta.get("workspace_id") or "").strip()
-        kind = (meta.get("workspace_kind") or "local").strip()
-        ssh_id = (meta.get("ssh_host_id") or "").strip()
-        prompt = (
-            f"{system_prompt}\n\n"
-            f"## Active workspace\n"
-            f"- kind: `{kind}`\n"
-            f"- path (cwd): `{cwd}`\n"
-            + (f"- title: {title}\n" if title else "")
-            + (f"- id: {ws_id}\n" if ws_id else "")
-            + (f"- ssh_host_id: {ssh_id}\n" if kind == "ssh" and ssh_id else "")
-            + (
-                "This workspace is on a **remote SSH machine**. "
-                "Use workspace tools; they run over SSH/SFTP.\n"
-                if kind == "ssh"
-                else ""
-            )
-            + "All relative paths for workspace tools are resolved against this cwd. "
-            "Do not access paths outside the workspace.\n"
-            "Workspace tools: glob, grep, list_dir, read_file, edit_file, write_file, run_shell, ask_user. "
-            "Start with glob/grep; do not ask the user to paste files that you can read yourself.\n"
-            "Use `ask_user` when requirements are ambiguous — one form may contain multiple questions "
-            "(single/multi select + optional custom text).\n"
-            "Subagents (`subagent` / `subagent_fork`) are available — decide yourself when a task slice "
-            "warrants delegation; do not ask the user permission unless they asked you not to."
-        )
-    agent_mode = str(meta.get("agent_mode") or "agent").strip().lower()
-    auto_accept = bool(meta.get("auto_accept"))
-    if agent_mode == "plan":
-        prompt += (
-            "\n\n## PLAN MODE (active)\n"
-            "You are planning only. You may use read-only tools: glob, grep, list_dir, read_file, ask_user. "
-            "Do NOT edit files or run shell. "
-            "Clarify unknowns with `ask_user` when needed. "
-            "End with a clear markdown checklist outline of steps to execute after the user accepts the plan "
-            "(use `- [ ]` items). Do not claim you already made changes.\n"
-        )
-    else:
-        prompt += (
-            "\n\n## Interaction mode\n"
-            f"- auto_accept: {'ON (tools run without user confirm)' if auto_accept else 'OFF (shell/write/edit require user allow)'}\n"
-            "When unsure about product choices, call `ask_user` before large edits.\n"
-        )
+    from src.core_kernel.agent_prompts import build_system_prompt
+
+    prompt = build_system_prompt(base_prompt=system_prompt, metadata=task.metadata or {})
     messages: list[ChatMessage] = [ChatMessage(role=ChatRole.SYSTEM, content=prompt)]
     if task.messages:
         messages.extend(task.messages)
     else:
         messages.append(ChatMessage(role=ChatRole.USER, content=task.content))
     return messages
+
+
+async def _build_messages_compacted(
+    task: StandardTask,
+    system_prompt: str,
+    *,
+    gateway: Optional[ModelGateway] = None,
+) -> list[ChatMessage]:
+    from src.core_kernel.compaction_summarizer import compact_messages_async
+
+    messages = _build_messages(task, system_prompt)
+    compacted, _info = await compact_messages_async(
+        messages,
+        model_name=task.model_name,
+        gateway=gateway,
+        provider=task.model_provider,
+        task_id=task.task_id,
+        use_llm=True,
+    )
+    return compacted

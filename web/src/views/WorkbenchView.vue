@@ -22,6 +22,9 @@ const emit = defineEmits(["open-settings"]);
 const status = ref("ready");
 const busy = ref(false);
 const input = ref("");
+const gitBranch = ref("");
+const gitInsertions = ref(0);
+const gitDeletions = ref(0);
 const toolsEnabled = ref(true);
 const agentMode = ref(
   typeof localStorage !== "undefined" && localStorage.getItem("nlm_agent_mode") === "plan"
@@ -30,6 +33,9 @@ const agentMode = ref(
 );
 const autoAccept = ref(
   typeof localStorage !== "undefined" && localStorage.getItem("nlm_auto_accept") === "1"
+);
+const multitask = ref(
+  typeof localStorage === "undefined" || localStorage.getItem("nlm_multitask") !== "0"
 );
 const centerView = ref("chat");
 const currentTaskId = ref(null);
@@ -62,6 +68,7 @@ const {
   load: loadPlugins,
   toggle: togglePlugin,
   reload: reloadPlugins,
+  saveConfig: savePluginConfig,
 } = usePlugins();
 
 const {
@@ -109,6 +116,9 @@ const {
   resolveApprovalLocal,
   renderAskUser,
   resolveAskLocal,
+  renderTodos,
+  renderPlanReview,
+  resolvePlanReviewLocal,
   markPlanReady,
   clearPlanReadyFlags,
   loadFromHistory,
@@ -138,6 +148,39 @@ function setStatus(text) {
 function setBusy(v) {
   busy.value = v;
 }
+
+async function refreshGitBranch() {
+  const path = (cwd.value || "").trim();
+  if (!path || workspaceKind.value === "ssh") {
+    gitBranch.value = "";
+    gitInsertions.value = 0;
+    gitDeletions.value = 0;
+    return;
+  }
+  try {
+    const resp = await fetch(
+      `/api/workspace/git-info?cwd=${encodeURIComponent(path)}&workspace_kind=${encodeURIComponent(workspaceKind.value || "local")}`
+    );
+    const json = await resp.json();
+    if (json?.ok) {
+      gitBranch.value = json.data?.branch || "";
+      gitInsertions.value = Number(json.data?.insertions || 0);
+      gitDeletions.value = Number(json.data?.deletions || 0);
+    } else {
+      gitBranch.value = "";
+      gitInsertions.value = 0;
+      gitDeletions.value = 0;
+    }
+  } catch {
+    gitBranch.value = "";
+    gitInsertions.value = 0;
+    gitDeletions.value = 0;
+  }
+}
+
+watch([cwd, workspaceKind], () => {
+  refreshGitBranch();
+});
 
 function shortToolName(name) {
   const raw = String(name || "tool");
@@ -216,6 +259,27 @@ function ensureSSE() {
         trajectory.addStatus("ask_user");
         setStatus("waiting ask…");
         setActivity("tool", "等待你回答…", payload.title || "");
+      } else if (type === "task.plan_review") {
+        clearRetry();
+        const actId = pushActivity("PLAN", payload);
+        renderPlanReview(payload, actId);
+        trajectory.addStatus("plan_review");
+        setStatus("waiting plan review…");
+        setActivity("tool", "等待审阅计划…", "");
+      } else if (type === "task.plan_mode") {
+        if (payload.active === false) {
+          agentMode.value = "agent";
+          localStorage.setItem("nlm_agent_mode", "agent");
+          syncInteraction({ agent_mode: "agent", plan_status: "accepted" });
+          clearPlanReadyFlags();
+          setActivity("model", "计划已批准，开始执行…", "");
+        }
+      } else if (type === "task.todos") {
+        clearRetry();
+        const actId = pushActivity("TODOS", payload);
+        renderTodos(payload, actId);
+        trajectory.addStatus("todos");
+        setStatus("todos…");
       } else if (type === "task.plan_ready") {
         markPlanReady(payload.content || "");
         setActivity("model", "计划已就绪，可接受并执行", "");
@@ -265,6 +329,7 @@ function ensureSSE() {
         setBusy(false);
         syncServerList();
         loadActivityFromServer();
+        refreshGitBranch();
       } else if (type === "task.failed") {
         clearRetry();
         const err = payload.error || "unknown";
@@ -542,6 +607,14 @@ watch(autoAccept, (v) => {
   syncInteraction({ auto_accept: !!v });
 });
 
+watch(multitask, (v) => {
+  try {
+    localStorage.setItem("nlm_multitask", v ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+});
+
 async function onResolveApproval({ item, action }) {
   if (!item?.callId) return;
   const act = action || "allow";
@@ -581,6 +654,35 @@ async function onResolveAsk({ item, action, answers }) {
     setActivity("model", "正在调用模型…", modelName.value || "");
   } catch (err) {
     appendMessage("assistant", `提交回答失败：${err}`, { rich: false });
+  }
+}
+
+async function onResolvePlanReview({ item, action, feedback }) {
+  if (!item?.callId) return;
+  const act = (action || "deny").toLowerCase();
+  try {
+    await fetch(`/api/sessions/${encodeURIComponent(sessionId.value)}/ask-answers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        call_id: item.callId,
+        action: act === "approve" ? "approve" : act === "keep_planning" ? "keep_planning" : "deny",
+        feedback: feedback || "",
+        reason: feedback || "",
+      }),
+    });
+    const status =
+      act === "approve" ? "approved" : act === "keep_planning" ? "keep_planning" : "dismissed";
+    resolvePlanReviewLocal(item.callId, status);
+    if (act === "approve") {
+      agentMode.value = "agent";
+      localStorage.setItem("nlm_agent_mode", "agent");
+      setActivity("model", "计划已批准，开始执行…", modelName.value || "");
+    } else {
+      setActivity("model", "正在调用模型…", modelName.value || "");
+    }
+  } catch (err) {
+    appendMessage("assistant", `计划审阅提交失败：${err}`, { rich: false });
   }
 }
 
@@ -672,6 +774,7 @@ async function sendMessage() {
         tools_enabled: !!toolsEnabled.value,
         agent_mode: agentMode.value || "agent",
         auto_accept: !!autoAccept.value,
+        multitask: !!multitask.value,
         model_provider: providerId.value || undefined,
         model_name: modelName.value || undefined,
         workspace_id: workspaceId.value || undefined,
@@ -715,6 +818,16 @@ async function onTogglePlugin(pluginId, enabled) {
   } catch (err) {
     setStatus(String(err));
     await loadPlugins();
+  }
+}
+
+async function onSavePluginConfig(pluginId, values) {
+  try {
+    await savePluginConfig(pluginId, values);
+    setStatus(`已保存 ${pluginId} 配置`);
+  } catch (err) {
+    setStatus(String(err));
+    throw err;
   }
 }
 
@@ -764,6 +877,7 @@ onMounted(async () => {
   ensureSSE();
   await Promise.all([loadProviders(), loadPlugins(), syncServerList(), loadWorkspaces()]);
   await refreshFromServer();
+  await refreshGitBranch();
 });
 
 watch(
@@ -806,7 +920,6 @@ onBeforeUnmount(() => {
         @toggle-sidebar="toggleSidebar"
         @toggle-rail="toggleRail"
         @clear="clearSession"
-        @open-settings="emit('open-settings')"
       />
 
       <section class="chat-panel" aria-label="对话">
@@ -820,6 +933,7 @@ onBeforeUnmount(() => {
           @pick-workspace="onPickWorkspace"
           @resolve-approval="onResolveApproval"
           @resolve-ask="onResolveAsk"
+          @resolve-plan-review="onResolvePlanReview"
           @accept-plan="onAcceptPlan"
         />
         <TrajectoryView
@@ -842,11 +956,16 @@ onBeforeUnmount(() => {
           v-model:tools-enabled="toolsEnabled"
           v-model:agent-mode="agentMode"
           v-model:auto-accept="autoAccept"
+          v-model:multitask="multitask"
           :session-usage="sessionUsage"
           :items="items"
           :tools="tools"
           :cwd="cwd"
           :workspace-title="workspaceTitle"
+          :workspace-kind="workspaceKind"
+          :git-branch="gitBranch"
+          :git-insertions="gitInsertions"
+          :git-deletions="gitDeletions"
           :busy="busy"
           @update:provider-id="onProviderChange"
           @update:model-name="onModelChange"
@@ -870,6 +989,7 @@ onBeforeUnmount(() => {
       @reload="onReloadAll"
       @reload-one="onReloadOne"
       @retry-plugin="onRetryPlugin"
+      @save-plugin-config="onSavePluginConfig"
     />
   </div>
 </template>

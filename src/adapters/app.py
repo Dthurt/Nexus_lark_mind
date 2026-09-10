@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -46,12 +47,14 @@ class WebChatRequest(BaseModel):
     ssh_host_id: Optional[str] = None
     agent_mode: Optional[str] = None
     auto_accept: Optional[bool] = None
+    multitask: Optional[bool] = None
 
 
 class GateResolveRequest(BaseModel):
     call_id: str
     action: str = "allow"
     reason: Optional[str] = None
+    feedback: Optional[str] = None
     answers: Optional[Any] = None
     auto_accept: Optional[bool] = None
 
@@ -694,6 +697,91 @@ def create_adapters_app() -> FastAPI:
         data = await kernel.call("POST", "/rpc/plugins/reload", json={"plugin_id": plugin_id})
         return RpcEnvelope(ok=True, data=data)
 
+    @app.get("/api/plugins/{plugin_id}/config")
+    async def get_plugin_config(plugin_id: str):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call("GET", f"/rpc/plugins/{plugin_id}/config")
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.put("/api/plugins/{plugin_id}/config")
+    async def put_plugin_config(plugin_id: str, request: Request):
+        kernel: RpcClient = state["kernel"]
+        body = await request.json()
+        data = await kernel.call("PUT", f"/rpc/plugins/{plugin_id}/config", json=body)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/generated-images/{name}")
+    async def get_generated_image(name: str):
+        from fastapi.responses import FileResponse
+
+        safe = Path(name).name
+        if not safe.endswith(".png") and not safe.endswith(".jpg") and not safe.endswith(".webp"):
+            raise ValidationAppError("invalid image name")
+        root = Path(__file__).resolve().parents[2] / "data" / "generated_images"
+        path = root / safe
+        if not path.exists():
+            raise NotFoundError("image not found")
+        return FileResponse(path)
+
+    @app.get("/api/workspace/git-info")
+    async def workspace_git_info(cwd: str = "", workspace_kind: str = "local"):
+        """Return git branch + working-tree line stats vs HEAD (best-effort)."""
+        path = (cwd or "").strip()
+        empty = {
+            "branch": "",
+            "is_repo": False,
+            "cwd": path,
+            "insertions": 0,
+            "deletions": 0,
+        }
+        if not path or workspace_kind == "ssh":
+            return RpcEnvelope(ok=True, data=empty)
+        root = Path(path)
+        if not root.exists():
+            return RpcEnvelope(ok=True, data=empty)
+
+        async def _git(*args: str) -> tuple[int, str]:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                *args,
+                cwd=str(root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=4.0)
+            text = out.decode("utf-8", errors="ignore").strip() if out else ""
+            return int(proc.returncode or 0), text
+
+        try:
+            code, branch = await _git("rev-parse", "--abbrev-ref", "HEAD")
+            if code != 0 or not branch:
+                return RpcEnvelope(ok=True, data=empty)
+
+            insertions = 0
+            deletions = 0
+            # Tracked changes vs HEAD (staged + unstaged)
+            sc, short = await _git("diff", "--shortstat", "HEAD")
+            if sc == 0 and short:
+                m_ins = re.search(r"(\d+)\s+insertion", short)
+                m_del = re.search(r"(\d+)\s+deletion", short)
+                if m_ins:
+                    insertions += int(m_ins.group(1))
+                if m_del:
+                    deletions += int(m_del.group(1))
+
+            return RpcEnvelope(
+                ok=True,
+                data={
+                    "branch": branch,
+                    "is_repo": True,
+                    "cwd": path,
+                    "insertions": insertions,
+                    "deletions": deletions,
+                },
+            )
+        except Exception:
+            return RpcEnvelope(ok=True, data=empty)
+
     @app.get("/api/sessions/{session_id}")
     async def get_session(session_id: str):
         orch: RpcClient = state["orchestrator"]
@@ -741,6 +829,7 @@ def create_adapters_app() -> FastAPI:
             "action": action,
             "answers": body.answers if body.answers is not None else {},
             "reason": body.reason,
+            "feedback": body.feedback or body.reason,
         }
         data = await kernel.call(
             "POST",

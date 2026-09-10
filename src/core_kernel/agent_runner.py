@@ -17,8 +17,24 @@ SUBAGENT_STREAM_TOOLS = {"subagent", "subagent_fork", "send_message"}
 SUBAGENT_CONTROL_TOOLS = {"interrupt_agent", "list_agents"}
 SUBAGENT_ALL = SUBAGENT_STREAM_TOOLS | SUBAGENT_CONTROL_TOOLS
 ASK_USER_TOOL = "ask_user"
+TODO_WRITE_TOOL = "todo_write"
+EXIT_PLAN_MODE_TOOL = "exit_plan_mode"
 APPROVAL_TOOLS = {"run_shell", "write_file", "edit_file"}
-PLAN_ALLOWED_TOOLS = {"glob", "grep", "list_dir", "read_file", "ask_user"}
+PLAN_ALLOWED_TOOLS = {
+    "glob",
+    "grep",
+    "list_dir",
+    "read_file",
+    "ask_user",
+    "exit_plan_mode",
+    "kb_search",
+    "kb_get",
+    "kb_list",
+    "web_search",
+    "literature_search",
+    "image_search",
+    "web_crawl",
+}
 
 
 def _merge_tool_call_deltas(
@@ -53,11 +69,17 @@ def _trim_tool_payload(obj: Any, limit: int = 24000) -> Any:
 def _resolve_plugin_tool(plugins: PluginManager, tool_map: Dict[str, Any], name: str):
     plugin_id, tool_name = tool_map.get(name, (None, name))
     if plugin_id:
-        return plugin_id, tool_name
-    for pid, tools in ((p.plugin_id, p.manifest.tools) for p in plugins.plugins.values()):
-        for t in tools:
+        p = plugins.plugins.get(plugin_id)
+        if p is not None and p.state.value == "ready":
+            return plugin_id, tool_name
+        return None, name
+    # Only resolve against READY plugins — disabled tools must not linger.
+    for p in plugins.plugins.values():
+        if p.state.value != "ready":
+            continue
+        for t in p.manifest.tools or []:
             if t.get("name") == name:
-                return pid, name
+                return p.plugin_id, name
     return None, name
 
 
@@ -162,12 +184,16 @@ def _tool_short_name(name: str) -> str:
     n = (name or "").strip()
     if "." in n:
         n = n.rsplit(".", 1)[-1]
-    if "_" in n and n not in (
-        SUBAGENT_ALL | APPROVAL_TOOLS | PLAN_ALLOWED_TOOLS | {ASK_USER_TOOL}
-    ):
-        # builtin.workspace_run_shell style uncommon; prefer last segment after plugin prefix
-        pass
     return n
+
+
+def _known_short_tools() -> set:
+    return (
+        SUBAGENT_ALL
+        | APPROVAL_TOOLS
+        | PLAN_ALLOWED_TOOLS
+        | {ASK_USER_TOOL, TODO_WRITE_TOOL, EXIT_PLAN_MODE_TOOL}
+    )
 
 
 def _filter_openai_tools(
@@ -192,12 +218,12 @@ def _filter_openai_tools(
 def _base_tool_name(name: str) -> str:
     # Accept both short and prefixed forms
     raw = name or ""
-    if raw in SUBAGENT_ALL or raw == ASK_USER_TOOL or raw in APPROVAL_TOOLS or raw in PLAN_ALLOWED_TOOLS:
+    known = _known_short_tools()
+    if raw in known:
         return raw
-    for short in SUBAGENT_ALL | {ASK_USER_TOOL} | APPROVAL_TOOLS | PLAN_ALLOWED_TOOLS:
+    for short in known:
         if raw.endswith("_" + short) or raw.endswith("." + short) or raw == short:
             return short
-    # strip plugin prefix "builtin.workspace_xxx" unlikely; try last token
     if "." in raw:
         return raw.rsplit(".", 1)[-1]
     return raw
@@ -289,6 +315,17 @@ async def _run_agent_stream_inner(
         out["duration_ms"] = (time.perf_counter() - turn_started) * 1000
         return out
 
+    def _refresh_tools() -> None:
+        nonlocal openai_tools, tool_map
+        if not tools_enabled:
+            openai_tools = []
+            tool_map = {}
+            return
+        openai_tools = _filter_openai_tools(
+            plugins.as_openai_tools(), allow_subagents, agent_mode=agent_mode
+        )
+        tool_map = plugins.tool_name_map()
+
     for round_i in range(max_rounds):
         if cancel_event and cancel_event.is_set():
             yield {
@@ -301,6 +338,29 @@ async def _run_agent_stream_inner(
             }
             return
 
+        _refresh_tools()
+        from src.core_kernel.compaction_summarizer import compact_messages_async
+
+        working, compact_info = await compact_messages_async(
+            working,
+            model_name=model,
+            gateway=gateway,
+            provider=provider,
+            task_id=task_id,
+            use_llm=True,
+        )
+        if compact_info.get("compacted_via") == "llm":
+            yield {
+                "delta": "",
+                "done": False,
+                "notice": "上下文已压缩（LLM checkpoint）",
+            }
+        elif compact_info.get("compacted_via") == "heuristic":
+            yield {
+                "delta": "",
+                "done": False,
+                "notice": "上下文已压缩",
+            }
         req = ModelRequest(
             provider=provider,
             model=model,
@@ -351,6 +411,19 @@ async def _run_agent_stream_inner(
 
         finalized = [tool_acc[i] for i in sorted(tool_acc.keys())] if tool_acc else []
         if not finalized:
+            # Weak models often print "web_search\n{...}" instead of API tool_calls — recover.
+            from src.core_kernel.pseudo_tools import extract_pseudo_tool_calls, strip_pseudo_tool_text
+
+            recovered = extract_pseudo_tool_calls(collected)
+            if recovered:
+                finalized = recovered
+                collected = strip_pseudo_tool_text(collected)
+                yield {
+                    "delta": "",
+                    "done": False,
+                    "notice": "已将正文中的伪工具调用转为真实调用",
+                }
+        if not finalized:
             out = {
                 "delta": "",
                 "done": True,
@@ -390,13 +463,22 @@ async def _run_agent_stream_inner(
                 )
             if base == ASK_USER_TOOL:
                 tool_payload["kind"] = "ask_user"
+            if base == TODO_WRITE_TOOL:
+                tool_payload["kind"] = "todo"
+            if base == EXIT_PLAN_MODE_TOOL:
+                tool_payload["kind"] = "plan_review"
             yield {"delta": "", "done": False, "tool_call": tool_payload}
             pending.append({"call_id": call_id, "name": name, "base": base, "args": args})
 
         stream_items = [p for p in pending if p["base"] in SUBAGENT_STREAM_TOOLS]
         ask_items = [p for p in pending if p["base"] == ASK_USER_TOOL]
+        exit_plan_items = [p for p in pending if p["base"] == EXIT_PLAN_MODE_TOOL]
         other_items = [
-            p for p in pending if p["base"] not in SUBAGENT_STREAM_TOOLS and p["base"] != ASK_USER_TOOL
+            p
+            for p in pending
+            if p["base"] not in SUBAGENT_STREAM_TOOLS
+            and p["base"] != ASK_USER_TOOL
+            and p["base"] != EXIT_PLAN_MODE_TOOL
         ]
 
         def _append_tool_result(payload: Dict[str, Any]) -> None:
@@ -484,7 +566,17 @@ async def _run_agent_stream_inner(
 
         if safe_items:
             payloads = await asyncio.gather(*[_invoke_tool(item) for item in safe_items])
-            for payload in payloads:
+            for payload, item in zip(payloads, safe_items):
+                if item["base"] == TODO_WRITE_TOOL and payload.get("success"):
+                    payload = {**payload, "kind": "todo"}
+                    items = ((payload.get("result") or {}) if isinstance(payload.get("result"), dict) else {}).get(
+                        "items"
+                    ) or []
+                    yield {
+                        "delta": "",
+                        "done": False,
+                        "todos": {"items": items, "call_id": payload.get("id")},
+                    }
                 yield {"delta": "", "done": False, "tool_result": payload}
                 _append_tool_result(payload)
 
@@ -608,6 +700,132 @@ async def _run_agent_stream_inner(
             yield {"delta": "", "done": False, "tool_result": payload}
             _append_tool_result(payload)
 
+        for item in exit_plan_items:
+            if cancel_event and cancel_event.is_set():
+                break
+            args = dict(item["args"])
+            plan_text = str(args.get("plan") or "").strip()
+            if agent_mode != "plan":
+                payload = {
+                    "id": item["call_id"],
+                    "name": item["name"],
+                    "plugin_id": "builtin.workspace",
+                    "success": False,
+                    "result": None,
+                    "error": "exit_plan_mode is only available in plan mode",
+                    "duration_ms": 0,
+                    "kind": "plan_review",
+                }
+                yield {"delta": "", "done": False, "tool_result": payload}
+                _append_tool_result(payload)
+                continue
+            if not plan_text or not plan_text.lstrip().startswith("#"):
+                payload = {
+                    "id": item["call_id"],
+                    "name": item["name"],
+                    "plugin_id": "builtin.workspace",
+                    "success": False,
+                    "result": None,
+                    "error": (
+                        "exit_plan_mode requires a non-empty markdown plan starting with a # heading"
+                    ),
+                    "duration_ms": 0,
+                    "kind": "plan_review",
+                }
+                yield {"delta": "", "done": False, "tool_result": payload}
+                _append_tool_result(payload)
+                continue
+
+            review_payload = {
+                "id": item["call_id"],
+                "name": item["name"],
+                "title": "Plan review",
+                "plan": plan_text,
+                "session_id": parent_session_id,
+                "kind": "plan_review",
+            }
+            yield {"delta": "", "done": False, "plan_review": review_payload}
+            await user_gate.open_gate(
+                item["call_id"],
+                session_id=parent_session_id,
+                kind="plan_review",
+                meta=review_payload,
+            )
+            decision = await user_gate.await_gate(item["call_id"], timeout=900.0)
+            action = str((decision or {}).get("action") or "deny").lower()
+            feedback = str((decision or {}).get("feedback") or (decision or {}).get("reason") or "").strip()
+
+            if action in ("approve", "allow", "accept"):
+                # Leave plan mode for subsequent rounds in this turn
+                agent_mode = "agent"
+                meta0["agent_mode"] = "agent"
+                # Refresh system prompt so PLAN MODE section is gone
+                try:
+                    from src.core_kernel.agent_prompts import build_system_prompt
+
+                    new_sys = build_system_prompt(metadata=meta0)
+                    for i, m in enumerate(working):
+                        if m.role == ChatRole.SYSTEM:
+                            working[i] = ChatMessage(role=ChatRole.SYSTEM, content=new_sys)
+                            break
+                except Exception:
+                    pass
+                yield {
+                    "delta": "",
+                    "done": False,
+                    "plan_mode": {"active": False, "reason": "approved"},
+                }
+                payload = {
+                    "id": item["call_id"],
+                    "name": item["name"],
+                    "plugin_id": "builtin.workspace",
+                    "success": True,
+                    "result": {
+                        "approved": True,
+                        "message": (
+                            "Plan approved — plan mode exited; carry out the plan "
+                            "starting with your next step."
+                        ),
+                    },
+                    "error": None,
+                    "duration_ms": 0,
+                    "kind": "plan_review",
+                }
+            elif action == "deny" and not feedback:
+                # User dismissed to speak instead
+                payload = {
+                    "id": item["call_id"],
+                    "name": item["name"],
+                    "plugin_id": "builtin.workspace",
+                    "success": False,
+                    "result": None,
+                    "error": (
+                        "The user dismissed the plan review to speak instead; "
+                        "stay in plan mode, stop here, and wait for their message."
+                    ),
+                    "duration_ms": 0,
+                    "kind": "plan_review",
+                }
+            else:
+                # Keep planning
+                err = (
+                    f"The user chose to keep planning; their feedback: {feedback}"
+                    if feedback
+                    else "The user chose to keep planning; revise the plan and present it again."
+                )
+                payload = {
+                    "id": item["call_id"],
+                    "name": item["name"],
+                    "plugin_id": "builtin.workspace",
+                    "success": False,
+                    "result": None,
+                    "error": err,
+                    "duration_ms": 0,
+                    "kind": "plan_review",
+                }
+            yield {"delta": "", "done": False, "tool_result": payload}
+            _append_tool_result(payload)
+
         for item in stream_items:
             async for ev in _execute_subagent_tool(
                 gateway=gateway,
@@ -630,10 +848,10 @@ async def _run_agent_stream_inner(
                     yield ev
 
     # budget exceeded
-    req = ModelRequest(
-        provider=provider,
-        model=model,
-        messages=working
+    from src.core_kernel.context_compact import compact_messages
+
+    final_msgs = compact_messages(
+        working
         + [
             ChatMessage(
                 role=ChatRole.USER,
@@ -643,6 +861,12 @@ async def _run_agent_stream_inner(
                 ),
             )
         ],
+        model_name=model,
+    )
+    req = ModelRequest(
+        provider=provider,
+        model=model,
+        messages=final_msgs,
         tools=openai_tools or None,
         stream=True,
     )

@@ -22,19 +22,16 @@ Adapters (飞书/Web)  →  Orchestrator (队列/会话/事件)  →  Core Kerne
 ## 一键启动
 
 ```bash
-# Windows
-scripts\start.bat
+# Windows（本机三进程 + memory broker，无需 Docker/Redis）
+scripts\start_local.bat
 
-# Linux / macOS
-bash scripts/start.sh
-```
-
-或手动：
-
-```bash
+# Docker Compose（推荐生产/联调）
 cp .env.example .env
 mkdir -p data logs
 docker compose up --build -d
+
+# 需要 Crawl4AI 网页抓取时（更大镜像）
+docker compose -f docker-compose.yml -f docker-compose.crawl.yml up --build -d
 ```
 
 启动后：
@@ -45,6 +42,15 @@ docker compose up --build -d
 
 未配置模型密钥时进入 **demo mode**（回声回复），保证 compose 可直接跑通。
 
+镜像说明：
+
+| 文件 | 用途 |
+|------|------|
+| `Dockerfile` | 默认多阶段构建（Vue → Python），不含 Playwright |
+| `Dockerfile.crawl` | 含 Crawl4AI + Chromium |
+| `docker-compose.yml` | redis + kernel + orchestrator + adapters |
+| `docker-compose.dev.yml` | 挂载 `src/` 便于改代码热重启 |
+| `docker-compose.crawl.yml` | 切换 crawl 镜像 |
 ## 配置
 
 编辑 `.env`：
@@ -77,6 +83,15 @@ python -m src.entry_adapters
 ```bash
 pytest -q
 ```
+
+可选网页抓取依赖：
+
+```bash
+pip install -r requirements-crawl.txt
+crawl4ai-setup   # 安装 Playwright Chromium
+```
+
+GitHub Actions：`.github/workflows/ci.yml`（pytest + Vue build + compose config），`.github/workflows/docker-image.yml`（构建并推送 GHCR）。
 
 ## 目录
 

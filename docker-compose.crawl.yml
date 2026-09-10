@@ -1,0 +1,16 @@
+# Override: rebuild services with Crawl4AI + Playwright Chromium.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.crawl.yml up --build -d
+
+services:
+  core-kernel:
+    build:
+      context: .
+      dockerfile: Dockerfile.crawl
+    image: nexus-lark-mind:crawl
+
+  orchestrator:
+    image: nexus-lark-mind:crawl
+
+  adapters:
+    image: nexus-lark-mind:crawl

@@ -20,12 +20,40 @@ const emit = defineEmits([
   "reload-one",
   "retry-plugin",
   "view-schema",
+  "save-plugin-config",
 ]);
 
 const schemaTool = ref(null);
 const expanded = ref({});
 const toggling = ref({});
 const dragging = ref(false);
+const configDraft = ref({});
+const configSaving = ref({});
+const configHint = ref({});
+
+function openPlugin(id) {
+  expanded.value[id] = !expanded.value[id];
+  if (!expanded.value[id]) return;
+  const p = props.plugins.find((x) => x.plugin_id === id);
+  if (!p?.config_schema?.fields?.length || configDraft.value[id]) return;
+  const draft = {};
+  for (const f of p.config_schema.fields) draft[f.key] = f.secret ? "" : f.value || "";
+  configDraft.value[id] = draft;
+}
+
+async function onSaveConfig(plugin) {
+  const id = plugin.plugin_id;
+  configSaving.value[id] = true;
+  configHint.value[id] = "";
+  try {
+    emit("save-plugin-config", id, { ...(configDraft.value[id] || {}) });
+    configHint.value[id] = "已保存";
+  } catch (err) {
+    configHint.value[id] = String(err.message || err);
+  } finally {
+    configSaving.value[id] = false;
+  }
+}
 
 const state = computed(() => props.dock.state);
 const panes = computed(() => {
@@ -149,7 +177,7 @@ function startDrag(e) {
                 :class="{ 'is-error': p.state === 'error' }"
               >
                 <div class="plugin-card-head">
-                  <button type="button" class="meta-btn" @click="expanded[p.plugin_id] = !expanded[p.plugin_id]">
+                  <button type="button" class="meta-btn" @click="openPlugin(p.plugin_id)">
                     <div class="meta">
                       <div class="name-row">
                         <span class="name">{{ p.name || p.plugin_id }}</span>
@@ -174,16 +202,42 @@ function startDrag(e) {
                 <div v-if="(p.config_hints || []).length" class="hints">
                   <div v-for="(h, i) in p.config_hints" :key="i" class="hint">{{ h }}</div>
                 </div>
-                <div v-if="expanded[p.plugin_id]" class="tools">
-                  <button
-                    v-for="t in p.tools || []"
-                    :key="t.name"
-                    type="button"
-                    class="tool-chip-btn"
-                    @click="showSchema(t)"
-                  >
-                    <NlmChip :active="p.state === 'ready'">{{ t.name }}</NlmChip>
-                  </button>
+                <div v-if="expanded[p.plugin_id]" class="plugin-detail">
+                  <div v-if="p.config_schema?.has_schema" class="plugin-config">
+                    <div class="config-title">插件配置</div>
+                    <label v-for="f in p.config_schema.fields" :key="f.key" class="config-field">
+                      <span>{{ f.label }}<template v-if="f.set && f.secret"> · 已设置 {{ f.preview }}</template></span>
+                      <select v-if="f.type === 'select'" v-model="configDraft[p.plugin_id][f.key]">
+                        <option v-for="opt in f.options || []" :key="opt" :value="opt">{{ opt }}</option>
+                      </select>
+                      <input
+                        v-else
+                        v-model="configDraft[p.plugin_id][f.key]"
+                        :type="f.secret || f.type === 'password' ? 'password' : 'text'"
+                        :placeholder="f.secret ? (f.set ? '留空则保留原值' : '填写 API Key') : ''"
+                        autocomplete="off"
+                      />
+                      <small v-if="f.hint">{{ f.hint }}</small>
+                    </label>
+                    <div class="config-actions">
+                      <NlmButton variant="primary" :disabled="!!configSaving[p.plugin_id]" @click="onSaveConfig(p)">
+                        {{ configSaving[p.plugin_id] ? '保存中…' : '保存配置' }}
+                      </NlmButton>
+                      <span v-if="configHint[p.plugin_id]" class="hint">{{ configHint[p.plugin_id] }}</span>
+                    </div>
+                  </div>
+                  <div class="tools">
+                    <button
+                      v-for="t in p.tools || []"
+                      :key="t.name"
+                      type="button"
+                      class="tool-chip-btn"
+                      @click="showSchema(t)"
+                    >
+                      <NlmChip :active="p.state === 'ready'">{{ t.name }}</NlmChip>
+                    </button>
+                    <NlmChip v-if="!(p.tools || []).length">{{ p.enabled ? 'no tools' : '已禁用' }}</NlmChip>
+                  </div>
                 </div>
               </div>
             </div>
@@ -512,4 +566,23 @@ function startDrag(e) {
   font-size: var(--fs-xs);
   white-space: pre-wrap;
 }
+
+.plugin-config {
+  margin: 8px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft, rgba(255,255,255,0.03));
+}
+.config-title { font-size: var(--fs-xs); color: var(--muted); margin-bottom: 6px; }
+.config-field { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; font-size: var(--fs-xs); color: var(--muted); }
+.config-field input, .config-field select {
+  border: 1px solid var(--line);
+  background: var(--panel-solid);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+.config-actions { display: flex; gap: 8px; align-items: center; }
 </style>

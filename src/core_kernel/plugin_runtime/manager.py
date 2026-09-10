@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,11 +21,18 @@ from src.core_kernel.plugin_runtime.mcp_http import McpHttpPlugin
 from src.core_kernel.plugin_runtime.mcp_stdio import McpStdioPlugin
 from src.core_kernel.plugin_runtime.workspace_tools import WorkspaceToolsPlugin, workspace_tools_manifest
 from src.core_kernel.plugin_runtime.subagent_tools import SubagentToolsPlugin, subagent_tools_manifest
+from src.core_kernel.plugin_runtime.knowledge_tools import KnowledgeToolsPlugin, knowledge_tools_manifest
+from src.core_kernel.plugin_runtime.image_gen import ImageGenPlugin, image_gen_manifest
+from src.core_kernel.plugin_runtime.plugin_config_store import (
+    PLUGIN_CONFIG_SCHEMAS,
+    get_plugin_config_store,
+)
 from src.infrastructure.storage.repositories import PluginCallRepository
 
 logger = logging.getLogger(__name__)
 
-PREFS_PATH = Path("data") / "plugin_prefs.json"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+PREFS_PATH = _REPO_ROOT / "data" / "plugin_prefs.json"
 
 
 class PluginManager:
@@ -43,7 +51,15 @@ class PluginManager:
     @staticmethod
     def openai_tool_name(plugin_id: str, tool_name: str) -> str:
         # Coding-agent models match DSH-style short names; keep prefixed names for other plugins.
-        if plugin_id in {"builtin.workspace", "builtin.subagent"}:
+        if plugin_id in {"builtin.workspace", "builtin.subagent", "builtin.knowledge", "builtin.image_gen"}:
+            return tool_name
+        # Well-known CLI search tools: short names reduce "cli.web_search" prose hallucinations.
+        if plugin_id.startswith("cli.") and tool_name in {
+            "web_search",
+            "literature_search",
+            "image_search",
+            "web_crawl",
+        }:
             return tool_name
         return f"{plugin_id}.{tool_name}".replace(".", "_")
 
@@ -110,6 +126,10 @@ class PluginManager:
             await self.load(self._apply_prefs(workspace_tools_manifest()))
         if "builtin.subagent" not in self.plugins:
             await self.load(self._apply_prefs(subagent_tools_manifest()))
+        if "builtin.knowledge" not in self.plugins:
+            await self.load(self._apply_prefs(knowledge_tools_manifest()))
+        if "builtin.image_gen" not in self.plugins:
+            await self.load(self._apply_prefs(image_gen_manifest()))
 
     async def scan_cli_directory(self, cli_dir: Path) -> None:
         if not cli_dir.exists():
@@ -124,58 +144,9 @@ class PluginManager:
             plugin_id = f"cli.{path.stem}"
             if plugin_id in self.plugins:
                 continue
-            script: str
-            tools: List[Dict[str, Any]] = []
-            description = f"Auto-registered CLI tool from {path.name}"
-            if path.stem == "web_search":
-                description = (
-                    "Search the live internet and return titles, URLs, and snippets. "
-                    "Use for current events, facts, docs, or anything needing up-to-date web info."
-                )
-                tools = [
-                    {
-                        "name": "web_search",
-                        "description": description,
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "Search query in natural language",
-                                },
-                                "max_results": {
-                                    "type": "integer",
-                                    "description": "Number of results (1-10, default 5)",
-                                },
-                            },
-                            "required": ["query"],
-                        },
-                    }
-                ]
-            if path.suffix.lower() == ".py":
-                script = str(path.resolve())
-                # Prefer explicit python invocation for portability
-                config = {
-                    "script": "python",
-                    "tool_name": path.stem,
-                    "input_mode": "stdin_json",
-                    "timeout": 45 if path.stem == "web_search" else 60,
-                    "_args_prefix": [script],
-                }
-            else:
-                config = {
-                    "script": str(path.resolve()),
-                    "tool_name": path.stem,
-                    "input_mode": "stdin_json",
-                }
-            manifest = PluginManifest(
-                plugin_id=plugin_id,
-                name=path.stem,
-                kind="cli",
-                description=description,
-                tools=tools,
-                config=config,
-            )
+            manifest = self._discover_manifest(plugin_id)
+            if manifest is None:
+                continue
             await self.load(self._apply_prefs(manifest))
 
     async def load(self, manifest: PluginManifest) -> PluginManifest:
@@ -209,6 +180,10 @@ class PluginManager:
                 return WorkspaceToolsPlugin(manifest)
             if manifest.plugin_id == "builtin.subagent":
                 return SubagentToolsPlugin(manifest)
+            if manifest.plugin_id == "builtin.knowledge":
+                return KnowledgeToolsPlugin(manifest)
+            if manifest.plugin_id == "builtin.image_gen":
+                return ImageGenPlugin(manifest)
             return InProcessEchoPlugin(manifest)
         raise PluginError(f"unknown plugin kind: {manifest.kind}")
 
@@ -257,10 +232,15 @@ class PluginManager:
                     "description": p.manifest.description or "",
                     "state": p.state.value,
                     "enabled": bool(p.manifest.enabled),
-                    "tools": tools,
+                    "active": p.state == PluginState.READY,
+                    "tools": tools if p.state == PluginState.READY else [],
+                    "tool_count": len(p.manifest.tools or []),
                     "last_error": p.last_error,
                     "health": p.health_summary(),
                     "config_hints": self._config_hints(p),
+                    "config_schema": get_plugin_config_store().public_view(p.plugin_id)
+                    if p.plugin_id in PLUGIN_CONFIG_SCHEMAS
+                    else None,
                 }
             )
         return out
@@ -269,14 +249,54 @@ class PluginManager:
         hints: List[str] = []
         import os
 
+        store = get_plugin_config_store()
+        cfg = store.get(plugin.plugin_id)
         if plugin.plugin_id in ("cli.web_search",) or any(
             (t.get("name") == "web_search") for t in (plugin.manifest.tools or [])
         ):
-            if not (os.environ.get("TAVILY_API_KEY") or self.settings.tavily_api_key):
-                hints.append("未配置 TAVILY_API_KEY：免费搜索可能超时，建议在 .env 设置。")
-            if not (os.environ.get("BRAVE_API_KEY") or self.settings.brave_api_key):
-                hints.append("可选：配置 BRAVE_API_KEY 作为备用搜索源。")
+            tavily = cfg.get("TAVILY_API_KEY") or os.environ.get("TAVILY_API_KEY") or self.settings.tavily_api_key
+            brave = cfg.get("BRAVE_API_KEY") or os.environ.get("BRAVE_API_KEY") or getattr(
+                self.settings, "brave_api_key", ""
+            )
+            if not tavily:
+                hints.append("未配置 Tavily Key：可在插件卡片里填写，不必改 .env。")
+            if not brave:
+                hints.append("可选：配置 Brave Search Key 作为备用。")
+        if plugin.plugin_id == "builtin.image_gen":
+            if not (cfg.get("IMAGE_MODEL") or cfg.get("IMAGE_PROVIDER")):
+                hints.append("启用后请在插件配置中填写生图 Provider / 模型。")
+        if plugin.plugin_id == "cli.literature_search":
+            hints.append("默认使用 OpenAlex 免费检索；可选填 Semantic Scholar Key。")
+        if plugin.plugin_id == "cli.image_search":
+            has_any = any(
+                cfg.get(k) or os.environ.get(k)
+                for k in (
+                    "SERPAPI_API_KEY",
+                    "BING_SEARCH_API_KEY",
+                    "AZURE_BING_SEARCH_KEY",
+                    "BRAVE_API_KEY",
+                    "UNSPLASH_ACCESS_KEY",
+                    "PEXELS_API_KEY",
+                )
+            )
+            if not has_any:
+                hints.append(
+                    "未配置搜图 Key：建议填 SerpAPI（Google 图）或 Bing / Unsplash / Pexels；"
+                    "也可复用 Brave Key。无 Key 时尝试免费 DuckDuckGo。"
+                )
+        if plugin.plugin_id == "cli.web_crawl":
+            hints.append(
+                "基于 Crawl4AI（Playwright 无头浏览器）。首次需: pip install crawl4ai && crawl4ai-setup"
+            )
         return hints
+
+    def get_plugin_config(self, plugin_id: str) -> Dict[str, Any]:
+        self._require(plugin_id)
+        return get_plugin_config_store().public_view(plugin_id)
+
+    def set_plugin_config(self, plugin_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
+        self._require(plugin_id)
+        return get_plugin_config_store().upsert(plugin_id, values)
 
     def list_tools(self) -> List[Dict[str, Any]]:
         tools: List[Dict[str, Any]] = []
@@ -344,6 +364,10 @@ class PluginManager:
             return workspace_tools_manifest()
         if plugin_id == "builtin.subagent":
             return subagent_tools_manifest()
+        if plugin_id == "builtin.knowledge":
+            return knowledge_tools_manifest()
+        if plugin_id == "builtin.image_gen":
+            return image_gen_manifest()
 
         root = Path(self.settings.plugins_dir)
         for manifest_path in (root / "mcp").glob("*.json"):
@@ -359,13 +383,13 @@ class PluginManager:
             cli_dir = root / "cli"
             for path in cli_dir.iterdir() if cli_dir.exists() else []:
                 if path.is_file() and path.stem == stem:
-                    # Reuse scan logic by building the same shape
                     description = f"Auto-registered CLI tool from {path.name}"
                     tools: List[Dict[str, Any]] = []
                     if path.stem == "web_search":
                         description = (
                             "Search the live internet and return titles, URLs, and snippets. "
-                            "Use for current events, facts, docs, or anything needing up-to-date web info."
+                            "Use for current events, facts, docs, or anything needing up-to-date web info. "
+                            "When citing findings, list source URLs as references at the end of your reply."
                         )
                         tools = [
                             {
@@ -387,13 +411,103 @@ class PluginManager:
                                 },
                             }
                         ]
+                    elif path.stem == "literature_search":
+                        description = (
+                            "Search academic literature / papers (OpenAlex). Returns titles, authors, years, "
+                            "DOI/URLs and a ready-to-paste References markdown block. "
+                            "Prefer this over web_search for papers, inhibitors, PubMed/DOI topics. "
+                            "Always include references_md (or equivalent citation list with URLs) in your reply. "
+                            "Do NOT ask the user for a year cutoff unless they care — omit year_from to search broadly."
+                        )
+                        tools = [
+                            {
+                                "name": "literature_search",
+                                "description": description,
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "query": {"type": "string", "description": "Paper / topic query"},
+                                        "max_results": {"type": "integer", "description": "1-10, default 5"},
+                                        "year_from": {
+                                            "type": "integer",
+                                            "description": "Optional earliest publication year",
+                                        },
+                                    },
+                                    "required": ["query"],
+                                },
+                            }
+                        ]
+                    elif path.stem == "image_search":
+                        description = (
+                            "Search the web for images (SerpAPI Google Images / Bing / Brave / Unsplash / Pexels). "
+                            "Returns image URLs and a `markdown` gallery. "
+                            "ALWAYS paste the returned markdown into your assistant reply so images render in chat."
+                        )
+                        tools = [
+                            {
+                                "name": "image_search",
+                                "description": description,
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "query": {
+                                            "type": "string",
+                                            "description": "Image search query (natural language)",
+                                        },
+                                        "max_results": {
+                                            "type": "integer",
+                                            "description": "Number of images (1-12, default 6)",
+                                        },
+                                    },
+                                    "required": ["query"],
+                                },
+                            }
+                        ]
+                    elif path.stem == "web_crawl":
+                        description = (
+                            "Crawl a specific URL with Crawl4AI (headless browser) and return clean Markdown "
+                            "suitable for LLM reading. Use when you already have a URL and need the full page "
+                            "content (docs, blogs, papers landing pages) — not for open-ended search "
+                            "(use web_search / literature_search for that). "
+                            "Summarize the markdown; do not dump the entire page into chat unless asked."
+                        )
+                        tools = [
+                            {
+                                "name": "web_crawl",
+                                "description": description,
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "url": {
+                                            "type": "string",
+                                            "description": "Absolute http(s) URL to crawl",
+                                        },
+                                        "max_chars": {
+                                            "type": "integer",
+                                            "description": "Max markdown chars to return (default 40000)",
+                                        },
+                                        "wait_for": {
+                                            "type": "string",
+                                            "description": "Optional CSS selector to wait for before extract",
+                                        },
+                                    },
+                                    "required": ["url"],
+                                },
+                            }
+                        ]
                     if path.suffix.lower() == ".py":
                         script = str(path.resolve())
+                        timeout = 45
+                        if path.stem in {"web_search", "literature_search", "image_search"}:
+                            timeout = 55
+                        if path.stem == "web_crawl":
+                            timeout = 120
                         config = {
-                            "script": "python",
+                            # Same interpreter as the kernel (project .venv), not bare PATH "python".
+                            "script": sys.executable,
                             "tool_name": path.stem,
                             "input_mode": "stdin_json",
-                            "timeout": 45 if path.stem == "web_search" else 60,
+                            "timeout": timeout,
                             "_args_prefix": [script],
                         }
                     else:

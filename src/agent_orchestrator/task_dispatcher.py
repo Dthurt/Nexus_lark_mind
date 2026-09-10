@@ -49,12 +49,27 @@ class TaskDispatcher:
                 continue
             try:
                 await self.dispatch(task)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Dispatch failed for task %s", task.task_id)
+                detail = str(exc).strip() or exc.__class__.__name__
+                nested = getattr(exc, "detail", None)
+                if isinstance(nested, dict):
+                    err_obj = nested.get("error")
+                    if isinstance(err_obj, dict) and err_obj.get("message"):
+                        detail = str(err_obj["message"]).strip() or detail
+                    elif nested.get("message"):
+                        detail = str(nested["message"]).strip() or detail
+                elif isinstance(nested, str) and nested.strip():
+                    detail = nested.strip()
+                if len(detail) > 500:
+                    detail = detail[:500] + "…"
                 await self._publish(
                     task,
                     EventType.TASK_FAILED,
-                    {"error": "dispatch failure"},
+                    {
+                        "error": detail,
+                        "error_type": exc.__class__.__name__,
+                    },
                 )
 
     def stop(self) -> None:
@@ -115,10 +130,14 @@ class TaskDispatcher:
         auto_accept = (task.metadata or {}).get("auto_accept")
         if auto_accept is None:
             auto_accept = bool(session.get("auto_accept"))
+        multitask = (task.metadata or {}).get("multitask")
+        if multitask is None:
+            multitask = True
         task.metadata = {
             **(task.metadata or {}),
             "agent_mode": str(agent_mode).strip().lower() if agent_mode else "agent",
             "auto_accept": bool(auto_accept),
+            "multitask": bool(multitask),
             "plan_status": session.get("plan_status") or "idle",
         }
         if cwd:
@@ -269,6 +288,21 @@ class TaskDispatcher:
             ask_user = chunk.get("ask_user")
             if ask_user:
                 await self._publish(task, EventType.TASK_ASK_USER, ask_user)
+                continue
+
+            plan_review = chunk.get("plan_review")
+            if plan_review:
+                await self._publish(task, EventType.TASK_PLAN_REVIEW, plan_review)
+                continue
+
+            plan_mode = chunk.get("plan_mode")
+            if plan_mode:
+                await self._publish(task, EventType.TASK_PLAN_MODE, plan_mode)
+                continue
+
+            todos = chunk.get("todos")
+            if todos:
+                await self._publish(task, EventType.TASK_TODOS, todos)
                 continue
 
             subagent = chunk.get("subagent")

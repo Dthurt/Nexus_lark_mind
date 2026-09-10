@@ -32,7 +32,7 @@ function onChange(e) {
 <style scoped>
 .nlm-select {
   appearance: none;
-  color-scheme: dark;
+  color-scheme: inherit;
   border: 1px solid var(--line);
   background-color: var(--panel-solid, #0f1b2a);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%237f93a8' d='M3 4.5L6 8l3-3.5'/%3E%3C/svg%3E");
@@ -49,8 +49,8 @@ function onChange(e) {
 }
 .nlm-select option,
 .nlm-select optgroup {
-  background-color: #0f1b2a;
-  color: #d7e2ef;
+  background-color: var(--panel-solid, #0f1b2a);
+  color: var(--ink, #d7e2ef);
 }
 .nlm-select:focus {
   border-color: rgba(58, 156, 240, 0.5);

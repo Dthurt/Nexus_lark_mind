@@ -19,6 +19,7 @@ const emit = defineEmits([
   "reload-one",
   "retry-plugin",
   "view-schema",
+  "save-plugin-config",
 ]);
 
 const panel = computed({
@@ -36,6 +37,9 @@ const expanded = ref({});
 const schemaTool = ref(null);
 const toggling = ref({});
 const activityRefs = ref({});
+const configDraft = ref({});
+const configSaving = ref({});
+const configHint = ref({});
 
 watch(
   () => props.highlightActivityId,
@@ -59,6 +63,38 @@ function onToggle(plugin, enabled) {
 
 function toggleExpand(id) {
   expanded.value[id] = !expanded.value[id];
+  if (expanded.value[id]) ensureConfigDraft(id);
+}
+
+function ensureConfigDraft(pluginId) {
+  const p = props.plugins.find((x) => x.plugin_id === pluginId);
+  const schema = p?.config_schema;
+  if (!schema?.fields?.length) return;
+  if (configDraft.value[pluginId]) return;
+  const draft = {};
+  for (const f of schema.fields) {
+    draft[f.key] = f.secret ? "" : f.value || "";
+  }
+  configDraft.value[pluginId] = draft;
+}
+
+async function onSaveConfig(plugin) {
+  const id = plugin.plugin_id;
+  configSaving.value[id] = true;
+  configHint.value[id] = "";
+  try {
+    emit("save-plugin-config", id, { ...(configDraft.value[id] || {}) });
+    configHint.value[id] = "已保存";
+    // clear secret fields after save
+    const draft = configDraft.value[id] || {};
+    for (const f of plugin.config_schema?.fields || []) {
+      if (f.secret) draft[f.key] = "";
+    }
+  } catch (err) {
+    configHint.value[id] = String(err.message || err);
+  } finally {
+    configSaving.value[id] = false;
+  }
 }
 
 function showSchema(tool) {
@@ -92,7 +128,7 @@ function isHighlighted(item) {
     </div>
     <div class="rail-body">
       <div v-show="panel === 'plugins'" class="rail-panel active">
-        <div class="rail-hint">启停写入 prefs；仅 ready 的工具会进入下一轮模型调用</div>
+        <div class="rail-hint">启停写入 prefs；仅 ready 的工具会进入模型调用（随插随用 / 随关随走）</div>
         <div class="plugin-list">
           <div v-if="pluginError" class="rail-hint">{{ pluginError }}</div>
           <div v-else-if="!plugins.length" class="rail-hint">暂无插件</div>
@@ -100,7 +136,7 @@ function isHighlighted(item) {
             v-for="p in plugins"
             :key="p.plugin_id"
             class="plugin-card"
-            :class="[stateClass(p), { 'is-error': p.state === 'error' }]"
+            :class="[stateClass(p), { 'is-error': p.state === 'error', 'is-off': !p.enabled || p.state !== 'ready' }]"
           >
             <div class="plugin-card-head">
               <button type="button" class="meta-btn" @click="toggleExpand(p.plugin_id)">
@@ -112,6 +148,7 @@ function isHighlighted(item) {
                   <div class="id">
                     {{ p.plugin_id }} · {{ p.kind || "" }}
                     <template v-if="p.version"> · v{{ p.version }}</template>
+                    <template v-if="!p.active && p.tool_count"> · {{ p.tool_count }} 工具已卸载</template>
                   </div>
                 </div>
               </button>
@@ -139,6 +176,40 @@ function isHighlighted(item) {
             </div>
             <div v-if="expanded[p.plugin_id]" class="plugin-detail">
               <div v-if="p.description" class="desc">{{ p.description }}</div>
+              <div v-if="p.config_schema?.has_schema" class="plugin-config">
+                <div class="config-title">插件配置</div>
+                <label
+                  v-for="f in p.config_schema.fields"
+                  :key="f.key"
+                  class="config-field"
+                >
+                  <span>{{ f.label }}<template v-if="f.set && f.secret"> · 已设置 {{ f.preview }}</template></span>
+                  <select
+                    v-if="f.type === 'select'"
+                    v-model="configDraft[p.plugin_id][f.key]"
+                  >
+                    <option v-for="opt in f.options || []" :key="opt" :value="opt">{{ opt }}</option>
+                  </select>
+                  <input
+                    v-else
+                    v-model="configDraft[p.plugin_id][f.key]"
+                    :type="f.secret || f.type === 'password' ? 'password' : 'text'"
+                    :placeholder="f.secret ? (f.set ? '留空则保留原值' : '填写 API Key') : ''"
+                    autocomplete="off"
+                  />
+                  <small v-if="f.hint">{{ f.hint }}</small>
+                </label>
+                <div class="config-actions">
+                  <NlmButton
+                    variant="primary"
+                    :disabled="!!configSaving[p.plugin_id]"
+                    @click="onSaveConfig(p)"
+                  >
+                    {{ configSaving[p.plugin_id] ? "保存中…" : "保存配置" }}
+                  </NlmButton>
+                  <span v-if="configHint[p.plugin_id]" class="hint">{{ configHint[p.plugin_id] }}</span>
+                </div>
+              </div>
               <div v-if="p.health" class="health">
                 health: {{ p.health.status }}
                 <template v-if="p.health.last_teardown_at">
@@ -156,7 +227,9 @@ function isHighlighted(item) {
                 >
                   <NlmChip :active="p.state === 'ready'">{{ t.name || "?" }}</NlmChip>
                 </button>
-                <NlmChip v-if="!(p.tools || []).length">no tools</NlmChip>
+                <NlmChip v-if="!(p.tools || []).length">
+                  {{ p.enabled ? "no tools" : "已禁用 · 工具已卸载" }}
+                </NlmChip>
               </div>
             </div>
             <div v-else class="tools compact">
@@ -166,6 +239,7 @@ function isHighlighted(item) {
                 :active="p.state === 'ready'"
               >{{ t.name || "?" }}</NlmChip>
               <span v-if="(p.tools || []).length > 4" class="more">+{{ p.tools.length - 4 }}</span>
+              <span v-if="!(p.tools || []).length && !p.enabled" class="more">已禁用</span>
             </div>
           </div>
         </div>
@@ -337,6 +411,40 @@ function isHighlighted(item) {
   font-size: var(--fs-xs);
   color: #c9a227;
   line-height: 1.35;
+}
+.plugin-config {
+  margin: 8px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft, rgba(255, 255, 255, 0.03));
+}
+.config-title {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.config-field input,
+.config-field select {
+  border: 1px solid var(--line);
+  background: var(--panel-solid);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+.config-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 .health {
   font-family: var(--mono);

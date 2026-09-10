@@ -6,6 +6,8 @@ import ToolCallGroup from "./ToolCallGroup.vue";
 import SubagentCard from "./SubagentCard.vue";
 import ToolApprovalCard from "./ToolApprovalCard.vue";
 import AskUserForm from "./AskUserForm.vue";
+import PlanReviewCard from "./PlanReviewCard.vue";
+import TodoListCard from "./TodoListCard.vue";
 import WorkspacePicker from "./WorkspacePicker.vue";
 
 const props = defineProps({
@@ -19,6 +21,7 @@ const emit = defineEmits([
   "pick-workspace",
   "resolve-approval",
   "resolve-ask",
+  "resolve-plan-review",
   "accept-plan",
 ]);
 
@@ -31,6 +34,13 @@ function onAskSubmit(item, ev) {
 function onAskDismiss(item) {
   emit("resolve-ask", { item, action: "deny" });
 }
+function onPlanReview(item, ev) {
+  emit("resolve-plan-review", {
+    item,
+    action: ev?.action || "deny",
+    feedback: ev?.feedback || "",
+  });
+}
 
 const scroller = ref(null);
 /** When false, user scrolled up — do not yank them back during streaming. */
@@ -40,7 +50,7 @@ const followTail = ref(true);
 const blocks = computed(() => {
   const out = [];
   for (const item of props.items || []) {
-    if (item.kind === "approval" || item.kind === "ask") {
+    if (item.kind === "approval" || item.kind === "ask" || item.kind === "todos" || item.kind === "plan_review") {
       out.push({ kind: item.kind, id: item.id, item });
       continue;
     }
@@ -157,6 +167,17 @@ defineExpose({
         :item="block.item"
         @submit="onAskSubmit(block.item, $event)"
         @dismiss="onAskDismiss(block.item)"
+      />
+      <PlanReviewCard
+        v-else-if="block.kind === 'plan_review'"
+        :item="block.item"
+        :model-provider="modelProvider"
+        :model-name="modelName"
+        @resolve="onPlanReview(block.item, $event)"
+      />
+      <TodoListCard
+        v-else-if="block.kind === 'todos'"
+        :item="block.item"
       />
       <SubagentCard
         v-else-if="block.kind === 'subagent'"

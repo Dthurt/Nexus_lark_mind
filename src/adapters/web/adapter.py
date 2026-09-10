@@ -66,6 +66,8 @@ class WebAdapter(BaseAdapter):
             meta["agent_mode"] = str(payload.get("agent_mode") or "agent").strip().lower()
         if payload.get("auto_accept") is not None:
             meta["auto_accept"] = bool(payload.get("auto_accept"))
+        if payload.get("multitask") is not None:
+            meta["multitask"] = bool(payload.get("multitask"))
         task = StandardTask(
             session_id=session_id,
             channel=ChannelType.WEB,

@@ -2,6 +2,11 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { openMermaidFullscreen } from "./mermaidFullscreen.js";
 import { drawioMarkdownHtml, isDrawioLang, looksLikeDrawioXml, renderDrawioIn } from "./drawio.js";
+import { echartsMarkdownHtml, isEchartsLang, looksLikeEchartsOption, normalizeEchartsMarkdown } from "./echarts.js";
+import { applyMathPlaceholders, protectMath } from "./math.js";
+import { enhanceChatImages } from "./chatImages.js";
+
+export { enhanceChatImages } from "./chatImages.js";
 
 function escapeHtml(s) {
   return String(s)
@@ -33,6 +38,9 @@ renderer.code = function codeToken(token, infoOrLang, escaped) {
   if (langKey === "mermaid") {
     return `<div class="mermaid-block" data-mermaid-host="1"><pre class="mermaid">${escapeHtml(text)}</pre></div>`;
   }
+  if (isEchartsLang(langKey) || ((langKey === "json" || langKey === "javascript" || langKey === "js") && looksLikeEchartsOption(text))) {
+    return echartsMarkdownHtml(text);
+  }
   if (isDrawioLang(langKey) || (langKey === "xml" && looksLikeDrawioXml(text))) {
     return drawioMarkdownHtml(text);
   }
@@ -54,18 +62,20 @@ marked.setOptions({
   renderer,
 });
 
-export function renderMarkdown(text, { streaming = false } = {}) {
-  const raw = text || "";
-  let html = marked.parse(raw);
-  html = DOMPurify.sanitize(html, {
+function sanitizeHtml(html) {
+  return DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true },
     ADD_ATTR: [
       "target",
       "rel",
       "class",
+      "style",
       "data-mermaid-host",
       "data-mermaid-zoom",
       "data-mermaid-action",
+      "data-echarts-host",
+      "data-echarts-zoom",
+      "data-echarts-action",
       "data-drawio-host",
       "data-drawio-action",
       "data-code-action",
@@ -75,6 +85,7 @@ export function renderMarkdown(text, { streaming = false } = {}) {
       "title",
       "aria-label",
       "aria-expanded",
+      "aria-hidden",
       "type",
       "hidden",
       "viewBox",
@@ -94,9 +105,61 @@ export function renderMarkdown(text, { streaming = false } = {}) {
       "y2",
       "points",
       "d",
+      "xmlns",
     ],
-    ADD_TAGS: ["div", "button", "span", "pre", "svg", "path", "rect", "polyline", "line"],
+    ADD_TAGS: [
+      "div",
+      "button",
+      "span",
+      "pre",
+      "svg",
+      "path",
+      "rect",
+      "polyline",
+      "line",
+      "figure",
+      "figcaption",
+      "a",
+      "math",
+      "semantics",
+      "mrow",
+      "mi",
+      "mo",
+      "mn",
+      "msup",
+      "msub",
+      "msubsup",
+      "mfrac",
+      "msqrt",
+      "mroot",
+      "mtable",
+      "mtr",
+      "mtd",
+      "mtext",
+      "annotation",
+    ],
   });
+}
+
+/** Sync markdown → HTML (math left as %%NLM_MATH_n%% placeholders). */
+export function renderMarkdown(text, { streaming = false } = {}) {
+  const normalized = normalizeEchartsMarkdown(text || "");
+  const { text: protectedMd } = protectMath(normalized);
+  let html = marked.parse(protectedMd);
+  html = sanitizeHtml(html);
+  if (streaming) html += '<span class="streaming-caret" aria-hidden="true"></span>';
+  return html;
+}
+
+/** Full pipeline including KaTeX (preferred for chat body). */
+export async function renderMarkdownWithMath(text, { streaming = false } = {}) {
+  const normalized = normalizeEchartsMarkdown(text || "");
+  const { text: protectedMd, slots } = protectMath(normalized);
+  let html = marked.parse(protectedMd);
+  html = sanitizeHtml(html);
+  html = await applyMathPlaceholders(html, slots);
+  // Sanitize again after KaTeX injects spans
+  html = sanitizeHtml(html);
   if (streaming) html += '<span class="streaming-caret" aria-hidden="true"></span>';
   return html;
 }
@@ -241,7 +304,8 @@ function ensureMermaidChrome(block, source) {
       <span class="mermaid-status-inline" hidden></span>
       <span class="mermaid-toolbar-spacer"></span>
       <button type="button" class="mermaid-tool-btn icon-btn" data-mermaid-action="copy" title="复制源码" aria-label="复制">${iconSvg("copy")}</button>
-      <button type="button" class="mermaid-tool-btn icon-btn" data-mermaid-action="download" title="下载图片 (SVG)" aria-label="下载">${iconSvg("download")}</button>
+      <button type="button" class="mermaid-tool-btn icon-btn" data-mermaid-action="download-svg" title="下载 SVG" aria-label="下载 SVG">${iconSvg("download")}</button>
+      <button type="button" class="mermaid-tool-btn icon-btn" data-mermaid-action="download-png" title="下载 PNG" aria-label="下载 PNG">${iconSvg("download")}</button>
       <button type="button" class="mermaid-tool-btn icon-btn" data-mermaid-action="fullscreen" title="全屏" aria-label="全屏">${iconSvg("fullscreen")}</button>
       <button type="button" class="mermaid-zoom-btn icon-btn" data-mermaid-zoom="out" title="缩小" aria-label="缩小">${iconSvg("minus")}</button>
       <button type="button" class="mermaid-zoom-btn icon-btn" data-mermaid-zoom="in" title="放大" aria-label="放大">${iconSvg("plus")}</button>
@@ -415,23 +479,65 @@ function triggerBlobDownload(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-async function downloadMermaidImage(block) {
+async function downloadMermaidImage(block, format = "svg") {
   const svg = block.querySelector(".mermaid-stage svg");
   if (!svg) {
     setMermaidStatus(block, "暂无可下载的图", true);
     return;
   }
   try {
-    // Mermaid uses <foreignObject> for labels; canvas PNG export taints in Chrome.
-    // SVG keeps full fidelity and never hits that security restriction.
-    const { clone } = prepareMermaidSvgClone(svg);
+    const { clone, w, h } = prepareMermaidSvgClone(svg);
+    // Strip foreignObject so canvas rasterization is not tainted.
+    clone.querySelectorAll("foreignObject").forEach((fo) => {
+      const text = (fo.textContent || "").trim();
+      const x = fo.getAttribute("x") || "0";
+      const y = fo.getAttribute("y") || "0";
+      const tw = fo.getAttribute("width") || "80";
+      const replacement = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      replacement.setAttribute("x", String(Number(x) + Number(tw) / 2));
+      replacement.setAttribute("y", String(Number(y) + 14));
+      replacement.setAttribute("text-anchor", "middle");
+      replacement.setAttribute("fill", "#e8eef6");
+      replacement.setAttribute("font-size", "12");
+      replacement.setAttribute("font-family", "sans-serif");
+      replacement.textContent = text.slice(0, 80);
+      fo.replaceWith(replacement);
+    });
     let xml = new XMLSerializer().serializeToString(clone);
     if (!xml.includes("xmlns=")) {
       xml = xml.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"');
     }
-    const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
-    triggerBlobDownload(svgBlob, `mermaid-${Date.now()}.svg`);
-    setMermaidStatus(block, "已下载", false);
+    if (format === "svg") {
+      const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
+      triggerBlobDownload(svgBlob, `mermaid-${Date.now()}.svg`);
+      setMermaidStatus(block, "已下载 SVG", false);
+    } else {
+      const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(svgBlob);
+      try {
+        const img = await new Promise((resolve, reject) => {
+          const el = new Image();
+          el.onload = () => resolve(el);
+          el.onerror = () => reject(new Error("SVG rasterize failed"));
+          el.src = url;
+        });
+        const scale = 2;
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.ceil((w || img.width || 800) * scale));
+        canvas.height = Math.max(1, Math.ceil((h || img.height || 600) * scale));
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#0d1520";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const pngBlob = await new Promise((resolve, reject) => {
+          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("PNG encode failed"))), "image/png");
+        });
+        triggerBlobDownload(pngBlob, `mermaid-${Date.now()}.png`);
+        setMermaidStatus(block, "已下载 PNG", false);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
     setTimeout(() => {
       if (block.getAttribute("data-processed") === "ok") setMermaidStatus(block, "");
     }, 1200);
@@ -482,7 +588,8 @@ function bindMermaidControls(root) {
       return;
     }
     if (action === "copy") copyMermaidSource(block);
-    else if (action === "download") downloadMermaidImage(block);
+    else if (action === "download" || action === "download-svg") downloadMermaidImage(block, "svg");
+    else if (action === "download-png") downloadMermaidImage(block, "png");
     else if (action === "fullscreen") openMermaidFullscreen(block);
   });
 }
@@ -523,8 +630,22 @@ export function enhanceCodeBlocks(root) {
 
   root.querySelectorAll("pre > code").forEach((codeEl) => {
     const pre = codeEl.parentElement;
-    if (!pre || pre.closest(".mermaid-block") || pre.closest(".code-block")) return;
-    if (pre.classList.contains("mermaid") || pre.classList.contains("mermaid-source")) return;
+    if (
+      !pre ||
+      pre.closest(".mermaid-block") ||
+      pre.closest(".echarts-block") ||
+      pre.closest(".drawio-block") ||
+      pre.closest(".code-block")
+    ) {
+      return;
+    }
+    if (
+      pre.classList.contains("mermaid") ||
+      pre.classList.contains("mermaid-source") ||
+      pre.classList.contains("echarts-source")
+    ) {
+      return;
+    }
 
     const wrap = document.createElement("div");
     wrap.className = "code-block";
@@ -595,7 +716,8 @@ export async function renderMermaidIn(
 ) {
   if (!root) return;
   bindMermaidControls(root);
-  if (streaming) return;
+  // `streaming` only disables expensive repair — closed fences still paint as SVG.
+  void streaming;
 
   const blocks = [...root.querySelectorAll(".mermaid-block")];
   if (!blocks.length) return;

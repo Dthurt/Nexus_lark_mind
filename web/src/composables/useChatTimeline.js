@@ -244,6 +244,11 @@ export function useChatTimeline() {
     ensureLiveAssistantAtEnd();
   }
 
+  /** Alias used by ask/approval/todos — same seal-then-continue behavior. */
+  function sealLiveAssistantBeforeTools() {
+    afterToolOrSubagentInserted();
+  }
+
   function renderToolCall(payload, activityId = null) {
     const id = payload.id || payload.name || mid();
     const short =
@@ -252,6 +257,13 @@ export function useChatTimeline() {
         .pop() || "";
     if (short === "ask_user" || payload.kind === "ask_user") {
       // Dedicated AskUserForm arrives via task.ask_user
+      return null;
+    }
+    if (short === "todo_write" || payload.kind === "todo") {
+      // Dedicated TodoListCard arrives via task.todos
+      return null;
+    }
+    if (short === "exit_plan_mode" || payload.kind === "plan_review") {
       return null;
     }
     const isSub =
@@ -323,6 +335,14 @@ export function useChatTimeline() {
   }
 
   function renderToolResult(payload, activityId = null) {
+    const short =
+      String(payload.name || "")
+        .split(".")
+        .pop() || "";
+    if (short === "todo_write" || payload.kind === "todo") {
+      // Surface via task.todos event; skip duplicate tool card.
+      return null;
+    }
     const isSub =
       payload.kind === "subagent" ||
       (payload.result && payload.result.subagent_id) ||
@@ -543,6 +563,64 @@ export function useChatTimeline() {
     }
   }
 
+  function renderTodos(payload, activityId = null) {
+    sealLiveAssistantBeforeTools();
+    const rows = Array.isArray(payload?.items) ? payload.items : [];
+    // Replace previous todo card in this turn (last-write-wins, like DSH).
+    let item = null;
+    for (let i = items.value.length - 1; i >= 0; i -= 1) {
+      if (items.value[i].kind === "todos") {
+        item = items.value[i];
+        break;
+      }
+    }
+    if (!item) {
+      item = {
+        id: mid(),
+        kind: "todos",
+        callId: payload?.call_id || mid(),
+        items: rows,
+        activityId,
+      };
+      items.value.push(item);
+    } else {
+      item.items = rows;
+      item.callId = payload?.call_id || item.callId;
+      if (activityId) item.activityId = activityId;
+    }
+    afterToolOrSubagentInserted();
+    return item;
+  }
+
+  function renderPlanReview(payload, activityId = null) {
+    sealLiveAssistantBeforeTools();
+    const callId = payload?.id || mid();
+    let item = items.value.find((x) => x.kind === "plan_review" && x.callId === callId);
+    if (!item) {
+      item = {
+        id: mid(),
+        kind: "plan_review",
+        callId,
+        name: payload?.name || "exit_plan_mode",
+        title: payload?.title || "计划审阅",
+        plan: payload?.plan || "",
+        status: "pending",
+        activityId,
+      };
+      items.value.push(item);
+    } else if (item.status === "pending") {
+      item.plan = payload?.plan || item.plan;
+      item.title = payload?.title || item.title;
+    }
+    afterToolOrSubagentInserted();
+    return item;
+  }
+
+  function resolvePlanReviewLocal(callId, status) {
+    const item = items.value.find((x) => x.kind === "plan_review" && x.callId === callId);
+    if (item) item.status = status;
+  }
+
   function markPlanReady(content) {
     // Mark the latest assistant message (or live) as offering accept-plan.
     for (let i = items.value.length - 1; i >= 0; i -= 1) {
@@ -629,6 +707,9 @@ export function useChatTimeline() {
     resolveApprovalLocal,
     renderAskUser,
     resolveAskLocal,
+    renderTodos,
+    renderPlanReview,
+    resolvePlanReviewLocal,
     markPlanReady,
     clearPlanReadyFlags,
     loadFromHistory,

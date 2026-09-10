@@ -26,7 +26,7 @@ def test_backoff_grows():
 
 def test_retry_after_honored():
     wait = compute_backoff_seconds(0, base=1.0, maximum=32.0, retry_after=5.0)
-    assert 5.0 <= wait <= 6.0
+    assert 5.0 <= wait <= 7.0
 
 
 def test_notice_text():

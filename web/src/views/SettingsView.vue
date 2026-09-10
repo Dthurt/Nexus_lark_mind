@@ -160,22 +160,46 @@ async function runModelTest(providerId) {
 }
 
 async function onSave() {
+  const id = form.id.trim();
+  const base_url = form.base_url.trim();
+  const models = form.models
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const default_model = form.default_model.trim() || models[0] || "";
+  if (!id) {
+    error.value = "请填写 Provider ID";
+    return;
+  }
+  if (!base_url) {
+    error.value = "请填写 Base URL";
+    return;
+  }
+  if (!default_model && !models.length) {
+    error.value = "请填写默认模型，或先「拉取可用模型」";
+    return;
+  }
+  if (editingId.value === "__new__" && !form.api_key.trim()) {
+    error.value = "新增时必须填写 API Key";
+    return;
+  }
   const payload = {
-    id: form.id.trim(),
-    label: form.label.trim() || form.id.trim(),
+    id,
+    label: form.label.trim() || id,
     api: form.api,
-    base_url: form.base_url.trim(),
+    base_url,
     api_key: form.api_key,
-    default_model: form.default_model.trim(),
-    models: form.models
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean),
+    default_model,
+    models: models.length ? models : default_model ? [default_model] : [],
     enabled: !!form.enabled,
   };
-  await saveProvider(payload);
-  resetForm();
-  emit("changed");
+  try {
+    await saveProvider(payload);
+    resetForm();
+    emit("changed");
+  } catch {
+    /* error banner already set */
+  }
 }
 
 async function onDelete(id) {
@@ -327,74 +351,91 @@ onMounted(async () => {
           <p v-if="modelTestHint && !editingId" class="discover-hint">{{ modelTestHint }}</p>
         </div>
 
-        <div v-if="editingId" class="settings-block editor">
-          <h2>{{ editingId === "__new__" ? "新增自定义 Provider" : `编辑 ${editingId}` }}</h2>
-          <div class="form-grid">
-            <label>
-              <span>ID（小写短横线）</span>
-              <input v-model="form.id" :disabled="editingId !== '__new__'" placeholder="my-proxy" />
-            </label>
-            <label>
-              <span>显示名</span>
-              <input v-model="form.label" placeholder="My Proxy" />
-            </label>
-            <label>
-              <span>协议</span>
-              <select v-model="form.api">
-                <option value="openai-completions">openai-completions</option>
-              </select>
-            </label>
-            <label class="span2">
-              <span>Base URL</span>
-              <input
-                v-model="form.base_url"
-                placeholder="https://api.example.com/v1"
-                @change="scheduleDiscover"
-              />
-            </label>
-            <label class="span2">
-              <span>API Key{{ editingId !== "__new__" ? "（留空则保留原值）" : "" }}</span>
-              <input
-                v-model="form.api_key"
-                type="password"
-                placeholder="sk-..."
-                autocomplete="off"
-                @change="scheduleDiscover"
-              />
-            </label>
-            <label>
-              <span>默认模型</span>
-              <input v-model="form.default_model" placeholder="gpt-4o-mini" list="discovered-models" />
-            </label>
-            <label>
-              <span>模型列表（自动拉取 / 可改）</span>
-              <input v-model="form.models" placeholder="拉取后自动填入，也可手改" />
-            </label>
-            <datalist id="discovered-models">
-              <option
-                v-for="m in form.models.split(',').map((x) => x.trim()).filter(Boolean)"
-                :key="m"
-                :value="m"
-              />
-            </datalist>
-            <label class="check">
-              <input v-model="form.enabled" type="checkbox" />
-              启用
-            </label>
+        <Teleport to="body">
+          <div
+            v-if="editingId"
+            class="provider-modal-mask"
+            role="dialog"
+            aria-modal="true"
+            @click.self="resetForm"
+          >
+            <div class="provider-modal">
+              <header class="provider-modal-head">
+                <h2>{{ editingId === "__new__" ? "新增 Provider" : `编辑 ${editingId}` }}</h2>
+                <button type="button" class="modal-close" aria-label="关闭" @click="resetForm">×</button>
+              </header>
+              <p v-if="error" class="settings-error modal-error">{{ error }}</p>
+              <div class="form-grid">
+                <label>
+                  <span>ID（小写短横线）</span>
+                  <input v-model="form.id" :disabled="editingId !== '__new__'" placeholder="my-proxy" />
+                </label>
+                <label>
+                  <span>显示名</span>
+                  <input v-model="form.label" placeholder="My Proxy" />
+                </label>
+                <label>
+                  <span>协议</span>
+                  <select v-model="form.api">
+                    <option value="openai-completions">openai-completions</option>
+                  </select>
+                </label>
+                <label class="span2">
+                  <span>Base URL</span>
+                  <input
+                    v-model="form.base_url"
+                    placeholder="https://api.example.com/v1"
+                    @change="scheduleDiscover"
+                  />
+                </label>
+                <label class="span2">
+                  <span>API Key{{ editingId !== "__new__" ? "（留空则保留原值）" : "" }}</span>
+                  <input
+                    v-model="form.api_key"
+                    type="password"
+                    placeholder="sk-..."
+                    autocomplete="off"
+                    @change="scheduleDiscover"
+                  />
+                </label>
+                <label>
+                  <span>默认模型</span>
+                  <input v-model="form.default_model" placeholder="gpt-4o-mini" list="discovered-models" />
+                </label>
+                <label>
+                  <span>模型列表（自动拉取 / 可改）</span>
+                  <input v-model="form.models" placeholder="拉取后自动填入，也可手改" />
+                </label>
+                <datalist id="discovered-models">
+                  <option
+                    v-for="m in form.models.split(',').map((x) => x.trim()).filter(Boolean)"
+                    :key="m"
+                    :value="m"
+                  />
+                </datalist>
+                <label class="check">
+                  <input v-model="form.enabled" type="checkbox" />
+                  启用
+                </label>
+              </div>
+              <p v-if="discoverHint" class="discover-hint">{{ discoverHint }}</p>
+              <p v-if="modelTestHint" class="discover-hint">{{ modelTestHint }}</p>
+              <div class="form-actions">
+                <NlmButton variant="ghost" :disabled="discovering || saving" @click="fetchAvailableModels()">
+                  {{ discovering ? "拉取中…" : "拉取可用模型" }}
+                </NlmButton>
+                <NlmButton variant="ghost" :disabled="testingModel || saving" @click="runModelTest()">
+                  {{ testingModel ? "测试中…" : "测试连通性" }}
+                </NlmButton>
+                <span class="modal-spacer" />
+                <NlmButton variant="ghost" @click="resetForm">取消</NlmButton>
+                <NlmButton variant="primary" :disabled="saving" @click="onSave">
+                  {{ saving ? "保存中…" : "保存" }}
+                </NlmButton>
+              </div>
+            </div>
           </div>
-          <p v-if="discoverHint" class="discover-hint">{{ discoverHint }}</p>
-          <p v-if="modelTestHint" class="discover-hint">{{ modelTestHint }}</p>
-          <div class="form-actions">
-            <NlmButton variant="ghost" :disabled="discovering || saving" @click="fetchAvailableModels()">
-              {{ discovering ? "拉取中…" : "拉取可用模型" }}
-            </NlmButton>
-            <NlmButton variant="ghost" :disabled="testingModel || saving" @click="runModelTest()">
-              {{ testingModel ? "测试中…" : "测试连通性" }}
-            </NlmButton>
-            <NlmButton variant="primary" :disabled="saving" @click="onSave">保存</NlmButton>
-            <NlmButton variant="ghost" @click="resetForm">取消</NlmButton>
-          </div>
-        </div>
+        </Teleport>
       </section>
 
       <section v-else class="settings-main">
@@ -492,7 +533,7 @@ onMounted(async () => {
   gap: 16px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--line);
-  background: rgba(8, 16, 24, 0.72);
+  background: var(--sidebar-bg);
   backdrop-filter: blur(10px);
   flex-shrink: 0;
 }
@@ -666,6 +707,59 @@ onMounted(async () => {
   max-width: none;
   width: 100%;
 }
+
+.provider-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+.provider-modal {
+  width: min(560px, 100%);
+  max-height: min(860px, 92vh);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-solid);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  padding: 16px 18px 18px;
+  color: var(--ink);
+}
+.provider-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.provider-modal-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.modal-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 8px;
+}
+.modal-close:hover {
+  color: var(--ink);
+}
+.modal-error {
+  margin: 0 0 10px;
+}
+.modal-spacer {
+  flex: 1;
+}
+
 @media (max-width: 820px) {
   .settings-body {
     grid-template-columns: 1fr;

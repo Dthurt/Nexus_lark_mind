@@ -1,0 +1,5 @@
+# Optional Crawl4AI stack (heavy: Playwright + Chromium).
+# Local:  pip install -r requirements-crawl.txt && crawl4ai-setup
+# Docker: build with --build-arg ENABLE_CRAWL=1  or use compose profile "crawl"
+-r requirements.txt
+crawl4ai>=0.6.0

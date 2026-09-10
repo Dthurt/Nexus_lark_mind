@@ -1,5 +1,14 @@
 import { ref } from "vue";
 
+function apiErrorMessage(json, fallback = "request failed") {
+  const err = json?.error;
+  if (!err) return fallback;
+  if (typeof err.detail === "object" && err.detail?.message) return String(err.detail.message);
+  if (typeof err.detail === "string" && err.detail.trim()) return err.detail;
+  if (err.message) return String(err.message);
+  return fallback;
+}
+
 export function useModelSettings() {
   const doc = ref({ default_provider: "", builtins: [], customs: [] });
   const loading = ref(false);
@@ -12,10 +21,10 @@ export function useModelSettings() {
     try {
       const resp = await fetch("/api/settings/models");
       const json = await resp.json();
-      if (!json.ok) throw new Error(json.error?.message || "load failed");
+      if (!json.ok) throw new Error(apiErrorMessage(json, "load failed"));
       doc.value = json.data || { default_provider: "", builtins: [], customs: [] };
     } catch (err) {
-      error.value = String(err);
+      error.value = String(err.message || err);
     } finally {
       loading.value = false;
     }
@@ -31,11 +40,11 @@ export function useModelSettings() {
         body: JSON.stringify(form),
       });
       const json = await resp.json();
-      if (!json.ok) throw new Error(json.error?.message || "save failed");
+      if (!json.ok) throw new Error(apiErrorMessage(json, "save failed"));
       await load();
       return json.data;
     } catch (err) {
-      error.value = String(err);
+      error.value = String(err.message || err);
       throw err;
     } finally {
       saving.value = false;
@@ -50,10 +59,10 @@ export function useModelSettings() {
         method: "DELETE",
       });
       const json = await resp.json();
-      if (!json.ok) throw new Error(json.error?.message || "delete failed");
+      if (!json.ok) throw new Error(apiErrorMessage(json, "delete failed"));
       await load();
     } catch (err) {
-      error.value = String(err);
+      error.value = String(err.message || err);
       throw err;
     } finally {
       saving.value = false;
@@ -69,10 +78,10 @@ export function useModelSettings() {
         body: JSON.stringify({ provider_id: providerId }),
       });
       const json = await resp.json();
-      if (!json.ok) throw new Error(json.error?.message || "set default failed");
+      if (!json.ok) throw new Error(apiErrorMessage(json, "set default failed"));
       doc.value.default_provider = providerId;
     } catch (err) {
-      error.value = String(err);
+      error.value = String(err.message || err);
       throw err;
     } finally {
       saving.value = false;
@@ -86,7 +95,7 @@ export function useModelSettings() {
       body: JSON.stringify({ base_url, api_key, provider_id }),
     });
     const json = await resp.json();
-    if (!json.ok) throw new Error(json.error?.message || "discover failed");
+    if (!json.ok) throw new Error(apiErrorMessage(json, "discover failed"));
     return json.data;
   }
 
@@ -97,7 +106,7 @@ export function useModelSettings() {
       body: JSON.stringify({ base_url, api_key, model, provider_id }),
     });
     const json = await resp.json();
-    if (!json.ok) throw new Error(json.error?.message || "test failed");
+    if (!json.ok) throw new Error(apiErrorMessage(json, "test failed"));
     return json.data;
   }
 

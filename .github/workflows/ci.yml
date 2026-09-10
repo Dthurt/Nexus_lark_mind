@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-python:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Pytest
+        env:
+          PYTHONPATH: .
+          REDIS_URL: memory://local
+          DATABASE_URL: sqlite+aiosqlite:///data/test_ci.db
+        run: |
+          mkdir -p data logs
+          pytest -q --tb=short
+
+  build-web:
+    name: Build Vue UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci && build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload web-static artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-static
+          path: web-static
+          retention-days: 7
+
+  compose-config:
+    name: Compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker compose files
+        run: |
+          cp -n .env.example .env
+          docker compose -f docker-compose.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.crawl.yml config >/dev/null

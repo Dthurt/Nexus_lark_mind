@@ -51,6 +51,11 @@ class RpcClient:
                 body = response.json()
             except Exception:
                 body = {"message": response.text}
+            inner = body.get("error") if isinstance(body, dict) else None
+            if isinstance(inner, dict) and inner.get("message"):
+                raise RpcError(str(inner["message"]), detail=body)
+            if isinstance(body, dict) and body.get("message"):
+                raise RpcError(str(body["message"]), detail=body)
             raise RpcError(
                 f"RPC {method} {path} failed ({response.status_code})",
                 detail=body,
@@ -59,7 +64,9 @@ class RpcClient:
         payload = response.json()
         envelope = RpcEnvelope.model_validate(payload)
         if not envelope.ok:
-            raise RpcError("RPC logical failure", detail=envelope.error)
+            err = envelope.error or {}
+            msg = err.get("message") if isinstance(err, dict) else str(err or "")
+            raise RpcError(msg or "RPC logical failure", detail=err)
         return envelope.data
 
     async def stream_post(
