@@ -1,0 +1,119 @@
+.trajectory {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.traj-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 2px;
+}
+
+.traj-label {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.traj-follow {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  cursor: pointer;
+}
+
+.traj-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 0 8px;
+}
+
+.traj-empty {
+  margin: auto;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  padding: 40px 16px;
+  text-align: center;
+}
+
+.traj-row {
+  display: grid;
+  grid-template-columns: 40px 72px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid transparent;
+  background: hsl(var(--foreground) / 0.02);
+  color: inherit;
+  border-radius: 7px;
+  padding: 6px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.traj-row:hover {
+  background: hsl(var(--foreground) / 0.04);
+}
+
+.traj-row.selected {
+  border-color: hsl(var(--primary) / 0.4);
+  background: hsl(var(--primary) / 0.1);
+}
+
+.traj-idx {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.traj-kind {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.tr-tool .traj-kind {
+  color: var(--tool);
+}
+
+.tr-user .traj-kind {
+  color: hsl(var(--teal));
+}
+
+.tr-system .traj-kind {
+  color: var(--muted);
+}
+
+.tr-error .traj-kind {
+  color: var(--danger);
+}
+
+.tr-turn .traj-sum {
+  font-weight: 600;
+}
+
+.traj-sum {
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.traj-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}

@@ -38,7 +38,7 @@ jobs:
           pytest -q --tb=short
 
   build-web:
-    name: Build Vue UI
+    name: Build React UI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,10 +49,11 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: npm ci && build
+      - name: npm ci, test, build
         working-directory: web
         run: |
           npm ci
+          npm test
           npm run build
 
       - name: Upload web-static artifact

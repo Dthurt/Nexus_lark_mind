@@ -46,7 +46,7 @@ docker compose -f docker-compose.yml -f docker-compose.crawl.yml up --build -d
 
 | 文件 | 用途 |
 |------|------|
-| `Dockerfile` | 默认多阶段构建（Vue → Python），不含 Playwright |
+| `Dockerfile` | 默认多阶段构建（React/shadcn → Python），不含 Playwright |
 | `Dockerfile.crawl` | 含 Crawl4AI + Chromium |
 | `docker-compose.yml` | redis + kernel + orchestrator + adapters |
 | `docker-compose.dev.yml` | 挂载 `src/` 便于改代码热重启 |
@@ -78,10 +78,23 @@ python -m src.entry_orchestrator
 python -m src.entry_adapters
 ```
 
+## 前端（React）
+
+```bash
+cd web
+npm install
+npm run dev      # Vite :5173，代理 /api → :8000
+npm run build    # 输出到 ../web-static
+npm test
+```
+
+主题：`day` / `gray` / `night` / `ocean` / `rose`（Topbar 循环，localStorage `nlm-theme`）。
+
 ## 测试
 
 ```bash
 pytest -q
+cd web && npm test
 ```
 
 可选网页抓取依赖：

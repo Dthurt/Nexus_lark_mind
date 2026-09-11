@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Nexus-Lark-Mind — multi-stage image (Vue UI + Python services)
+# Nexus-Lark-Mind — multi-stage image (React UI + Python services)
 # Build:  docker build -t nexus-lark-mind:latest .
 # Crawl:  docker build --build-arg ENABLE_CRAWL=1 -t nexus-lark-mind:crawl .
 

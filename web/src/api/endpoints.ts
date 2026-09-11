@@ -1,0 +1,331 @@
+import {
+  apiDelete,
+  apiGet,
+  apiPatch,
+  apiPost,
+  apiPut,
+} from "@/api/client";
+import type {
+  AcceptPlanBody,
+  AskAnswersBody,
+  BrowseResult,
+  ChannelDoc,
+  ChatQueued,
+  ChatSendBody,
+  CreateSessionBody,
+  GitInfo,
+  InteractionPatchBody,
+  MermaidRepairBody,
+  MermaidRepairResult,
+  Plugin,
+  PluginCallRow,
+  PluginConfigSchema,
+  ProviderCatalog,
+  ProviderDoc,
+  ProviderEntry,
+  SessionDetail,
+  SessionSummary,
+  SshConfigHostsData,
+  SshHost,
+  SshHostsListData,
+  Tool,
+  Workspace,
+  WorkspacePatchBody,
+  WorkspacesListData,
+} from "@/types/api";
+
+// ----- chat -----
+
+export function postChat(body: ChatSendBody): Promise<ChatQueued> {
+  return apiPost<ChatQueued>("/api/chat", body);
+}
+
+export function cancelChatTask(taskId: string): Promise<unknown> {
+  return apiPost(`/api/chat/${encodeURIComponent(taskId)}/cancel`);
+}
+
+export function repairMermaid(body: MermaidRepairBody): Promise<MermaidRepairResult> {
+  return apiPost<MermaidRepairResult>("/api/mermaid/repair", body);
+}
+
+export function openChatStream(sessionId: string): EventSource {
+  return new EventSource(
+    `/api/chat/stream?session_id=${encodeURIComponent(sessionId)}`,
+  );
+}
+
+// ----- sessions -----
+
+export function listSessions(): Promise<SessionSummary[]> {
+  return apiGet<SessionSummary[]>("/api/sessions");
+}
+
+export function getSession(sessionId: string): Promise<SessionDetail | null> {
+  return apiGet<SessionDetail | null>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+  );
+}
+
+export function createSession(body: CreateSessionBody): Promise<SessionDetail> {
+  return apiPost<SessionDetail>("/api/sessions", body);
+}
+
+export function deleteSession(sessionId: string): Promise<unknown> {
+  return apiDelete(`/api/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export function patchWorkspace(
+  sessionId: string,
+  body: WorkspacePatchBody,
+): Promise<SessionDetail> {
+  return apiPatch<SessionDetail>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/workspace`,
+    body,
+  );
+}
+
+export function patchInteraction(
+  sessionId: string,
+  body: InteractionPatchBody,
+): Promise<SessionDetail> {
+  return apiPatch<SessionDetail>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/interaction`,
+    body,
+  );
+}
+
+export function cancelSession(sessionId: string): Promise<unknown> {
+  return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`);
+}
+
+export function getPluginCalls(
+  sessionId: string,
+  limit = 40,
+): Promise<PluginCallRow[]> {
+  return apiGet<PluginCallRow[]>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/plugin-calls?limit=${limit}`,
+  );
+}
+
+export function postApprovals(
+  sessionId: string,
+  body: { call_id: string; action: string; reason?: string },
+): Promise<unknown> {
+  return apiPost(
+    `/api/sessions/${encodeURIComponent(sessionId)}/approvals`,
+    body,
+  );
+}
+
+export function postAskAnswers(
+  sessionId: string,
+  body: AskAnswersBody,
+): Promise<unknown> {
+  return apiPost(
+    `/api/sessions/${encodeURIComponent(sessionId)}/ask-answers`,
+    body,
+  );
+}
+
+export function acceptPlan(
+  sessionId: string,
+  body: AcceptPlanBody,
+): Promise<ChatQueued> {
+  return apiPost<ChatQueued>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/accept-plan`,
+    body,
+  );
+}
+
+// ----- workspaces -----
+
+export function listWorkspaces(): Promise<WorkspacesListData> {
+  return apiGet<WorkspacesListData>("/api/workspaces");
+}
+
+export function createWorkspace(body: {
+  path: string;
+  title?: string;
+  kind?: "local" | "ssh" | string;
+  ssh_host_id?: string;
+}): Promise<Workspace> {
+  return apiPost<Workspace>("/api/workspaces", body);
+}
+
+export function deleteWorkspace(id: string): Promise<{ deleted: string }> {
+  return apiDelete<{ deleted: string }>(
+    `/api/workspaces/${encodeURIComponent(id)}`,
+  );
+}
+
+export function browseWorkspace(path = ""): Promise<BrowseResult> {
+  const q = path ? `?path=${encodeURIComponent(path)}` : "";
+  return apiGet<BrowseResult>(`/api/workspaces/browse${q}`);
+}
+
+// ----- git -----
+
+export function gitInfo(
+  cwd: string,
+  workspaceKind = "local",
+): Promise<GitInfo> {
+  return apiGet<GitInfo>(
+    `/api/workspace/git-info?cwd=${encodeURIComponent(cwd)}&workspace_kind=${encodeURIComponent(workspaceKind)}`,
+  );
+}
+
+// ----- ssh -----
+
+export function listHosts(): Promise<SshHostsListData> {
+  return apiGet<SshHostsListData>("/api/ssh/hosts");
+}
+
+export function upsertHost(form: Partial<SshHost> & {
+  host?: string;
+  username?: string;
+  password?: string;
+  private_key?: string;
+  private_key_passphrase?: string;
+}): Promise<SshHost> {
+  return apiPost<SshHost>("/api/ssh/hosts", form);
+}
+
+export function testHost(hostId: string): Promise<Record<string, unknown>> {
+  return apiPost<Record<string, unknown>>(
+    `/api/ssh/hosts/${encodeURIComponent(hostId)}/test`,
+  );
+}
+
+export function browseSsh(hostId: string, path = ""): Promise<BrowseResult> {
+  const q = path ? `?path=${encodeURIComponent(path)}` : "";
+  return apiGet<BrowseResult>(
+    `/api/ssh/hosts/${encodeURIComponent(hostId)}/browse${q}`,
+  );
+}
+
+export function listSshConfigHosts(): Promise<SshConfigHostsData> {
+  return apiGet<SshConfigHostsData>("/api/ssh/config/hosts");
+}
+
+export function importSshHost(body: {
+  alias: string;
+  label?: string;
+  default_path?: string;
+}): Promise<SshHost> {
+  return apiPost<SshHost>("/api/ssh/hosts/import", body);
+}
+
+// ----- plugins -----
+
+export function listPlugins(): Promise<Plugin[]> {
+  return apiGet<Plugin[]>("/api/plugins");
+}
+
+export function listTools(): Promise<Tool[]> {
+  return apiGet<Tool[]>("/api/tools");
+}
+
+export function enablePlugin(pluginId: string): Promise<unknown> {
+  return apiPost(`/api/plugins/${encodeURIComponent(pluginId)}/enable`);
+}
+
+export function disablePlugin(pluginId: string): Promise<unknown> {
+  return apiPost(`/api/plugins/${encodeURIComponent(pluginId)}/disable`);
+}
+
+export function reloadPlugins(): Promise<Plugin[]> {
+  return apiPost<Plugin[]>("/api/plugins/reload");
+}
+
+export function reloadPlugin(pluginId: string): Promise<Plugin[]> {
+  return apiPost<Plugin[]>(
+    `/api/plugins/${encodeURIComponent(pluginId)}/reload`,
+  );
+}
+
+export function getPluginConfig(pluginId: string): Promise<PluginConfigSchema> {
+  return apiGet<PluginConfigSchema>(
+    `/api/plugins/${encodeURIComponent(pluginId)}/config`,
+  );
+}
+
+export function putPluginConfig(
+  pluginId: string,
+  values: Record<string, unknown>,
+): Promise<PluginConfigSchema> {
+  return apiPut<PluginConfigSchema>(
+    `/api/plugins/${encodeURIComponent(pluginId)}/config`,
+    { values },
+  );
+}
+
+// ----- providers -----
+
+export function listProviders(
+  configuredOnly = true,
+): Promise<ProviderCatalog> {
+  return apiGet<ProviderCatalog>(
+    `/api/providers?configured_only=${configuredOnly ? "true" : "false"}`,
+  );
+}
+
+// ----- settings: models -----
+
+export function getModelSettings(): Promise<ProviderDoc> {
+  return apiGet<ProviderDoc>("/api/settings/models");
+}
+
+export function saveProvider(form: Partial<ProviderEntry> & { id: string }): Promise<ProviderEntry> {
+  return apiPost<ProviderEntry>("/api/settings/models/providers", form);
+}
+
+export function removeProvider(id: string): Promise<unknown> {
+  return apiDelete(`/api/settings/models/providers/${encodeURIComponent(id)}`);
+}
+
+export function setDefaultProvider(providerId: string): Promise<unknown> {
+  return apiPut("/api/settings/models/default", { provider_id: providerId });
+}
+
+export function discoverModels(body: {
+  base_url?: string;
+  api_key?: string;
+  provider_id?: string;
+}): Promise<{ models?: string[]; default_model?: string; [key: string]: unknown }> {
+  return apiPost("/api/settings/models/discover", body);
+}
+
+export function testModel(body: {
+  base_url?: string;
+  api_key?: string;
+  model?: string;
+  provider_id?: string;
+}): Promise<{
+  models_count?: number;
+  chat_ok?: boolean;
+  chat_error?: string;
+  [key: string]: unknown;
+}> {
+  return apiPost("/api/settings/models/test", body);
+}
+
+// ----- settings: channels -----
+
+export function getChannels(): Promise<ChannelDoc> {
+  return apiGet<ChannelDoc>("/api/settings/channels");
+}
+
+export function saveFeishu(form: Record<string, unknown>): Promise<ChannelDoc> {
+  return apiPut<ChannelDoc>("/api/settings/channels/feishu", form);
+}
+
+export function testFeishu(body: {
+  app_id?: string;
+  app_secret?: string;
+} = {}): Promise<{ message?: string; [key: string]: unknown }> {
+  return apiPost("/api/settings/channels/feishu/test", body);
+}
+
+export function reloadFeishu(): Promise<ChannelDoc> {
+  return apiPost<ChannelDoc>("/api/settings/channels/feishu/reload");
+}

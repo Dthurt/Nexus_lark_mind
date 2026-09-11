@@ -1,0 +1,187 @@
+import { memo, useEffect, useMemo, useState } from "react";
+
+import { ActivityHint } from "@/components/chat/ActivityHint";
+import { MarkdownBody } from "@/components/chat/MarkdownBody";
+import { Button } from "@/components/ui/button";
+import {
+  cacheHitRate,
+  estimateCostCny,
+  formatCacheHit,
+  formatCny,
+  formatDurationMs,
+  formatTokenCount,
+  formatUsageLine,
+  resolveModelRate,
+} from "@/lib/pricing";
+import { cn } from "@/lib/utils";
+
+export type MessageBubbleItem = {
+  role: string;
+  content?: string;
+  rich?: boolean;
+  streaming?: boolean;
+  live?: boolean;
+  usage?: any;
+  activity?: {
+    phase?: string;
+    label?: string;
+    detail?: string;
+    startedAt?: number;
+  } | null;
+  planReady?: boolean;
+};
+
+export type MessageBubbleProps = {
+  item: MessageBubbleItem;
+  modelProvider?: string;
+  modelName?: string;
+  onAcceptPlan?: (item: MessageBubbleItem) => void;
+  className?: string;
+};
+
+export const MessageBubble = memo(function MessageBubble({
+  item,
+  modelProvider = "",
+  modelName = "",
+  onAcceptPlan,
+  className,
+}: MessageBubbleProps) {
+  const [openUsage, setOpenUsage] = useState(false);
+  const [content, setContent] = useState(item.content || "");
+
+  useEffect(() => {
+    setContent(item.content || "");
+  }, [item.content]);
+
+  const showCaret = useMemo(() => {
+    if (!item.streaming) return false;
+    const phase = item.activity?.phase;
+    return !phase || phase === "stream";
+  }, [item.streaming, item.activity?.phase]);
+
+  const usageSummary = useMemo(() => {
+    if (!item.usage) return "";
+    return formatUsageLine(item.usage, { modelName, providerId: modelProvider });
+  }, [item.usage, modelName, modelProvider]);
+
+  const usageDetail = useMemo(() => {
+    const u = item.usage;
+    if (!u) return null;
+    const cost = estimateCostCny(u, { modelName, providerId: modelProvider });
+    const cache = formatCacheHit(u);
+    const rate = resolveModelRate(modelName, modelProvider);
+    return {
+      prompt: Number(u.prompt_tokens || 0),
+      completion: Number(u.completion_tokens || 0),
+      total: Number(u.total_tokens || (u.prompt_tokens || 0) + (u.completion_tokens || 0)),
+      duration: formatDurationMs(u.duration_ms) || "—",
+      cacheText:
+        cache.cached > 0
+          ? `${formatTokenCount(cache.cached)} · ${cacheHitRate(u).toFixed(1)}%`
+          : "0",
+      costText: formatCny(cost.yuan),
+      rateText: `输入 ¥${rate.input}/M · 输出 ¥${rate.output}/M · 缓存 ¥${rate.cache}/M`,
+      estimated: !!u.estimated,
+    };
+  }, [item.usage, modelName, modelProvider]);
+
+  function onMermaidFixed({ from, to }: { from: string; to: string }) {
+    if (!from || !to || from === to) return;
+    if (!content.includes(from)) return;
+    const next = content.replace(from, to);
+    item.content = next;
+    setContent(next);
+  }
+
+  const isUser = item.role === "user";
+
+  return (
+    <div
+      className={cn(
+        "msg w-fit max-w-full animate-in fade-in duration-150 rounded-xl border px-3.5 py-2.5",
+        isUser
+          ? "ml-auto max-w-[min(92%,720px)] self-end rounded-br-sm border-primary/25 bg-primary/10"
+          : "w-full self-start rounded-bl-sm border-border bg-card/40",
+        (item.live || item.streaming) && "live",
+        className,
+      )}
+    >
+      {content ? (
+        <MarkdownBody
+          className={cn(
+            "body",
+            isUser && "max-h-[10.5em] overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+          )}
+          content={content}
+          streaming={showCaret}
+          plain={!item.rich}
+          modelProvider={modelProvider}
+          modelName={modelName}
+          onMermaidFixed={onMermaidFixed}
+        />
+      ) : null}
+
+      {item.activity && (item.streaming || item.live) ? (
+        <ActivityHint
+          embedded
+          active
+          phase={item.activity.phase}
+          label={item.activity.label}
+          detail={item.activity.detail}
+          startedAt={item.activity.startedAt}
+        />
+      ) : null}
+
+      {item.planReady && item.role === "assistant" && !item.streaming && !item.live ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-2 h-7 border-primary/45 bg-primary/10 px-3 text-xs text-primary hover:bg-primary/15"
+          onClick={() => onAcceptPlan?.(item)}
+        >
+          接受计划并执行
+        </Button>
+      ) : null}
+
+      {item.usage ? (
+        <button
+          type="button"
+          className="token-badge mt-1 max-w-full cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-[11px] leading-snug text-muted-foreground hover:text-foreground"
+          title="点击查看明细"
+          onClick={() => setOpenUsage((v) => !v)}
+        >
+          {usageSummary}
+        </button>
+      ) : null}
+
+      {openUsage && usageDetail ? (
+        <div className="mt-1.5 max-w-[280px] rounded-md border border-border bg-background/50 px-2 py-1.5">
+          {(
+            [
+              ["输入", usageDetail.prompt],
+              ["输出", usageDetail.completion],
+              ["合计", usageDetail.total],
+              ["耗时", usageDetail.duration],
+              ["缓存命中", usageDetail.cacheText],
+              ["估算费用", usageDetail.costText],
+            ] as const
+          ).map(([label, val]) => (
+            <div key={label} className="flex justify-between gap-3 py-0.5 text-[11px]">
+              <span className="text-muted-foreground">{label}</span>
+              <strong className="font-mono font-medium">{val}</strong>
+            </div>
+          ))}
+          <p className="mt-1 text-[10px] leading-snug text-muted-foreground">{usageDetail.rateText}</p>
+          {usageDetail.estimated ? (
+            <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+              含估算 token（接口未返回 usage）
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+export default MessageBubble;
