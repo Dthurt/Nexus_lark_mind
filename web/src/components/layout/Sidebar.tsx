@@ -1,8 +1,12 @@
+import { useMemo, useState } from "react";
 import { Plus, Settings, X } from "lucide-react";
+import { motion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { LocalConversation } from "@/hooks/useSessions";
+import { usePrefersReducedMotion } from "@/lib/motion";
 import type { Workspace } from "@/types/api";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +44,18 @@ export function Sidebar({
   onOpenSettings,
   className,
 }: SidebarProps) {
+  const [query, setQuery] = useState("");
+  const reduced = usePrefersReducedMotion();
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return conversations;
+    return conversations.filter((c) => {
+      const hay = `${c.title || ""} ${c.preview || ""} ${c.cwd || ""} ${c.workspaceTitle || ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [conversations, query]);
+
   return (
     <aside
       className={cn(
@@ -93,18 +109,29 @@ export function Sidebar({
       <div className="mt-1 shrink-0 text-[10.5px] tracking-wide text-muted-foreground">
         历史记录
       </div>
+      <Input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="搜索会话…"
+        className="h-7 shrink-0 bg-background/50 text-[11px]"
+      />
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-1 pr-1">
-          {conversations.length === 0 ? (
-            <div className="px-2 py-2 text-[11px] text-muted-foreground">暂无历史</div>
+          {filtered.length === 0 ? (
+            <div className="px-2 py-2 text-[11px] text-muted-foreground">
+              {query.trim() ? "无匹配会话" : "暂无历史"}
+            </div>
           ) : (
-            conversations.map((c) => {
+            filtered.map((c, i) => {
               const active = c.id === activeId;
               const preview = c.cwd ? c.workspaceTitle || c.cwd : c.preview || "";
               return (
-                <button
+                <motion.button
                   key={c.id}
                   type="button"
+                  initial={reduced ? false : { opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: reduced ? 0 : Math.min(i, 8) * 0.02, duration: 0.15 }}
                   className={cn(
                     "group grid w-full grid-cols-[1fr_auto] gap-x-1.5 gap-y-1 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors",
                     "hover:bg-foreground/[0.04]",
@@ -137,7 +164,7 @@ export function Sidebar({
                       {preview}
                     </span>
                   ) : null}
-                </button>
+                </motion.button>
               );
             })
           )}

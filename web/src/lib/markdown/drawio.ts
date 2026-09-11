@@ -156,7 +156,14 @@ function postLoad(iframe: HTMLIFrameElement, xml: string) {
   }
 }
 
-function mountFrame(block: HTMLElement, iframe: any, xml: string) {
+function mountFrame(
+  block: HTMLElement,
+  iframe: any,
+  xml: string,
+  {
+    onError = null,
+  }: { onError?: ((message: string) => void) | null } = {}
+) {
   if (iframe._nlmDrawioCleanup) iframe._nlmDrawioCleanup();
   setStatus(block, "加载 Draw.io…");
 
@@ -181,8 +188,10 @@ function mountFrame(block: HTMLElement, iframe: any, xml: string) {
       setStatus(block, "");
       block.setAttribute("data-processed", "ok");
     } else if (data.event === "error") {
-      setStatus(block, data.message || "Draw.io 渲染失败", true);
+      const msg = data.message || "Draw.io 渲染失败";
       block.setAttribute("data-processed", "error");
+      if (typeof onError === "function") onError(msg);
+      else setStatus(block, msg, true);
     }
   };
 
@@ -190,7 +199,6 @@ function mountFrame(block: HTMLElement, iframe: any, xml: string) {
   iframe._nlmDrawioCleanup = () => window.removeEventListener("message", onMessage);
 
   iframe.onload = () => {
-    // Fallback if ready event was missed
     setTimeout(() => postLoad(iframe, xml), 400);
   };
   iframe.src = EMBED_URL;
@@ -301,27 +309,111 @@ function bindControls(root: any) {
   });
 }
 
-export async function renderDrawioIn(root: HTMLElement | null, { streaming = false }: { streaming?: boolean } = {}) {
+function extractDrawioSource(raw: string) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  const fenced = text.match(/```(?:drawio|diagrams|mxfile|xml)\s*([\s\S]*?)```/i);
+  if (fenced) return normalizeDrawioXml(fenced[1]);
+  return normalizeDrawioXml(text);
+}
+
+export async function renderDrawioIn(
+  root: HTMLElement | null,
+  {
+    streaming = false,
+    repair = null,
+    onFixed = null,
+  }: {
+    streaming?: boolean;
+    repair?: ((source: string, error: string) => Promise<string>) | null;
+    onFixed?: ((args: { from: string; to: string }) => void) | null;
+  } = {}
+) {
   if (!root) return;
   bindControls(root);
   if (streaming) return;
 
-  const blocks = [...root.querySelectorAll(".drawio-block")] as HTMLElement[];
+  const blocks = [...root.querySelectorAll(".drawio-block")] as any[];
   for (const block of blocks) {
-    if (block.getAttribute("data-processed") === "ok" && (block.querySelector("iframe.drawio-frame") as HTMLIFrameElement)?.src) {
+    if (
+      block.getAttribute("data-processed") === "ok" &&
+      (block.querySelector("iframe.drawio-frame") as HTMLIFrameElement)?.src
+    ) {
       continue;
     }
     const pre = block.querySelector("pre.drawio-source");
-    const xml = normalizeDrawioXml(block.dataset.drawioSource || pre?.textContent || "");
+    const original = block.dataset.drawioSource || pre?.textContent || "";
+
+    const mountOk = (xml: string) => {
+      const iframe = ensureChrome(block, xml);
+      applyMode(block, "view");
+      mountFrame(block, iframe, xml, {
+        onError: (msg) => {
+          void (async () => {
+            if (block._nlmDrawioRepaired || typeof repair !== "function") {
+              setStatus(block, msg, true);
+              applyMode(block, "source");
+              return;
+            }
+            block._nlmDrawioRepaired = true;
+            setStatus(block, "渲染失败，正在重新生成…", true);
+            try {
+              const fixedRaw = await repair(xml, msg);
+              const fixed = extractDrawioSource(fixedRaw || "");
+              if (!fixed || !looksLikeDrawioXml(fixed)) {
+                setStatus(block, msg, true);
+                applyMode(block, "source");
+                return;
+              }
+              if (fixed !== original && typeof onFixed === "function") {
+                onFixed({ from: original, to: fixed });
+              }
+              const nextFrame = ensureChrome(block, fixed);
+              applyMode(block, "view");
+              mountFrame(block, nextFrame, fixed, {
+                onError: (m2) => {
+                  setStatus(block, m2, true);
+                  applyMode(block, "source");
+                },
+              });
+            } catch (err: any) {
+              setStatus(block, `修复失败：${err?.message || err}`, true);
+              applyMode(block, "source");
+            }
+          })();
+        },
+      });
+    };
+
+    let xml = normalizeDrawioXml(original);
     if (!xml || !looksLikeDrawioXml(xml)) {
-      ensureChrome(block, xml || (pre?.textContent || ""));
+      if (typeof repair === "function") {
+        setStatus(block, "XML 无效，正在重新生成…", true);
+        ensureChrome(block, original);
+        applyMode(block, "source");
+        try {
+          const fixedRaw = await repair(original || xml, "不是有效的 Draw.io / mxfile XML");
+          const fixed = extractDrawioSource(fixedRaw || "");
+          if (fixed && looksLikeDrawioXml(fixed)) {
+            if (fixed !== original && typeof onFixed === "function") {
+              onFixed({ from: original, to: fixed });
+            }
+            block._nlmDrawioRepaired = true;
+            mountOk(fixed);
+            continue;
+          }
+        } catch (err: any) {
+          setStatus(block, `修复失败：${err?.message || err}`, true);
+          block.setAttribute("data-processed", "error");
+          continue;
+        }
+      }
+      ensureChrome(block, xml || original);
       setStatus(block, "不是有效的 Draw.io / mxfile XML", true);
       applyMode(block, "source");
       block.setAttribute("data-processed", "error");
       continue;
     }
-    const iframe = ensureChrome(block, xml);
-    applyMode(block, "view");
-    mountFrame(block, iframe, xml);
+    mountOk(xml);
   }
 }

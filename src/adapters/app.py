@@ -84,12 +84,41 @@ class MermaidRepairRequest(BaseModel):
     model_name: Optional[str] = None
 
 
+class EchartsRepairRequest(BaseModel):
+    source: str
+    error: str = ""
+    model_provider: Optional[str] = None
+    model_name: Optional[str] = None
+
+
+class DrawioRepairRequest(BaseModel):
+    source: str
+    error: str = ""
+    model_provider: Optional[str] = None
+    model_name: Optional[str] = None
+
+
 _MERMAID_REPAIR_SYSTEM = (
-    "You repair invalid Mermaid diagram source. "
-    "Return ONLY a single fenced mermaid code block with corrected syntax. "
-    "No prose, no explanation. Preserve the author's intent and diagram type. "
-    "Use ASCII punctuation. Prefer flowchart/sequenceDiagram/classDiagram/erDiagram/"
-    "stateDiagram-v2/gantt/timeline/mindmap/pie when unsure."
+    "You fix ONLY Mermaid syntax errors. "
+    "Return ONLY one fenced ```mermaid block. No prose. "
+    "Rules: change the minimum needed for Mermaid v11 to parse; "
+    "do NOT redesign the diagram, rename nodes, add/remove edges, or change labels/structure "
+    "except to fix invalid punctuation/arrows/keywords. Prefer ASCII punctuation."
+)
+
+_ECHARTS_REPAIR_SYSTEM = (
+    "You fix ONLY invalid Apache ECharts option JSON syntax/shape. "
+    "Return ONLY one fenced ```echarts JSON object. No prose, no comments. "
+    "Rules: minimal edits so setOption works — fix trailing commas, quotes, "
+    "series must be an array with string type, data must be arrays; "
+    "do NOT change chart meaning, titles, categories, or numeric values unless required for valid JSON."
+)
+
+_DRAWIO_REPAIR_SYSTEM = (
+    "You fix ONLY invalid Draw.io / diagrams.net mxfile XML syntax. "
+    "Return ONLY one fenced ```drawio XML document (mxfile or mxGraphModel wrapped in mxfile). "
+    "No prose. Minimal edits: close tags, escape attributes, wrap mxGraphModel in mxfile if needed. "
+    "Do NOT redesign the diagram or change cell labels/geometry beyond what syntax requires."
 )
 
 
@@ -247,10 +276,9 @@ def create_adapters_app() -> FastAPI:
             return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "source required"})
         kernel: RpcClient = state["kernel"]
         user = (
-            "Fix this Mermaid diagram so it parses in Mermaid v11.\n"
-            "Common fixes: use `-.->` not `-. -->`; use `-->` not `->` or `→`; "
-            "edge labels as `A -->|label| B` or `A -.->|label| B`; "
-            "ASCII punctuation only; keep diagram type on first line.\n\n"
+            "Fix ONLY Mermaid syntax so it parses in Mermaid v11. Minimal changes; "
+            "do not redesign. Common syntax fixes: `-.->` not `-. -->`; `-->` not `->`/`→`; "
+            "edge labels `A -->|label| B`; ASCII punctuation; keep diagram type on first line.\n\n"
             f"Parse error:\n{body.error or '(unknown)'}\n\n"
             f"Broken source:\n```mermaid\n{source}\n```\n"
         )
@@ -271,6 +299,97 @@ def create_adapters_app() -> FastAPI:
             )
         except Exception as exc:
             logger.exception("mermaid repair RPC failed")
+            return RpcEnvelope(
+                ok=False,
+                error={"code": "REPAIR_RPC", "message": str(exc)},
+            )
+        content = ""
+        if isinstance(data, dict):
+            content = str(data.get("content") or "")
+        if not content.strip():
+            return RpcEnvelope(
+                ok=False,
+                error={"code": "EMPTY_FIX", "message": "model returned empty repair"},
+            )
+        return RpcEnvelope(ok=True, data={"source": content, "raw": data})
+
+    @app.post("/api/echarts/repair")
+    async def echarts_repair(body: EchartsRepairRequest):
+        """Quiet one-shot model call to regenerate invalid ECharts option JSON (not a chat turn)."""
+        source = (body.source or "").strip()
+        if not source:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "source required"})
+        kernel: RpcClient = state["kernel"]
+        user = (
+            "Fix ONLY ECharts option JSON syntax/shape so setOption works. Minimal changes; "
+            "do not redesign the chart or alter data values unless required for valid JSON. "
+            "Common fixes: series as array; each series needs type; data must be arrays; "
+            "no trailing commas; double-quoted keys.\n\n"
+            f"Render error:\n{body.error or '(unknown)'}\n\n"
+            f"Broken source:\n```echarts\n{source}\n```\n"
+        )
+        try:
+            data = await kernel.call(
+                "POST",
+                "/rpc/model/complete",
+                json={
+                    "provider": body.model_provider,
+                    "model": body.model_name,
+                    "stream": False,
+                    "temperature": 0.1,
+                    "messages": [
+                        {"role": "system", "content": _ECHARTS_REPAIR_SYSTEM},
+                        {"role": "user", "content": user},
+                    ],
+                },
+            )
+        except Exception as exc:
+            logger.exception("echarts repair RPC failed")
+            return RpcEnvelope(
+                ok=False,
+                error={"code": "REPAIR_RPC", "message": str(exc)},
+            )
+        content = ""
+        if isinstance(data, dict):
+            content = str(data.get("content") or "")
+        if not content.strip():
+            return RpcEnvelope(
+                ok=False,
+                error={"code": "EMPTY_FIX", "message": "model returned empty repair"},
+            )
+        return RpcEnvelope(ok=True, data={"source": content, "raw": data})
+
+    @app.post("/api/drawio/repair")
+    async def drawio_repair(body: DrawioRepairRequest):
+        """Quiet one-shot model call to fix invalid Draw.io mxfile XML (syntax only)."""
+        source = (body.source or "").strip()
+        if not source:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "source required"})
+        kernel: RpcClient = state["kernel"]
+        user = (
+            "Fix ONLY Draw.io / mxfile XML syntax so diagrams.net can load it. "
+            "Minimal changes; do not redesign. Wrap bare mxGraphModel in mxfile if needed; "
+            "close tags; keep cell ids/labels/geometry.\n\n"
+            f"Error:\n{body.error or '(unknown)'}\n\n"
+            f"Broken source:\n```drawio\n{source}\n```\n"
+        )
+        try:
+            data = await kernel.call(
+                "POST",
+                "/rpc/model/complete",
+                json={
+                    "provider": body.model_provider,
+                    "model": body.model_name,
+                    "stream": False,
+                    "temperature": 0.1,
+                    "messages": [
+                        {"role": "system", "content": _DRAWIO_REPAIR_SYSTEM},
+                        {"role": "user", "content": user},
+                    ],
+                },
+            )
+        except Exception as exc:
+            logger.exception("drawio repair RPC failed")
             return RpcEnvelope(
                 ok=False,
                 error={"code": "REPAIR_RPC", "message": str(exc)},

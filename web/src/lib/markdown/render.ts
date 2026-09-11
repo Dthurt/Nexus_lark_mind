@@ -10,6 +10,7 @@ import {
 } from "./echarts";
 import { applyMathPlaceholders, protectMath } from "./math";
 import { enhanceChatImages } from "./chatImages";
+import { diagramInk, diagramPanelBg, mermaidThemeName } from "./diagramTheme";
 
 export { enhanceChatImages } from "./chatImages";
 
@@ -186,22 +187,58 @@ export function decorateMarkdownLinks(root: HTMLElement | null) {
 
 let mermaidReady: Promise<any> | null = null;
 let mermaidRenderSeq = 0;
+let mermaidThemeApplied: string | null = null;
+
+function cleanupMermaidArtifacts(id: string) {
+  const candidates = [id, `d${id}`, `${id}-svg`, `d${id}-svg`];
+  for (const cid of candidates) {
+    try {
+      document.getElementById(cid)?.remove();
+    } catch {
+      /* ignore */
+    }
+  }
+  // Mermaid sometimes leaves error SVGs / temp nodes on body
+  document.querySelectorAll(`[id^="d${id}"], [id^="${id}"]`).forEach((el) => {
+    if ((el as HTMLElement).closest?.(".mermaid-stage, .mermaid-block, .mermaid-fs-overlay")) {
+      return;
+    }
+    try {
+      el.remove();
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+function isMermaidErrorSvg(svg: string) {
+  return /Syntax error in text|mermaid version\s*\d|aria-roledescription=["']error["']|class=["'][^"']*error-icon/i.test(
+    svg || ""
+  );
+}
 
 async function ensureMermaid() {
   if (!mermaidReady) {
     mermaidReady = import("mermaid").then((mod) => {
       const mermaid = (mod as any).default || mod;
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: "dark",
-        securityLevel: "loose",
-        fontFamily: "IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif",
-        flowchart: { htmlLabels: true, curve: "basis" },
-      });
       return mermaid;
     });
   }
-  return mermaidReady;
+  const mermaid = await mermaidReady;
+  const theme = mermaidThemeName();
+  if (mermaidThemeApplied !== theme) {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme,
+      securityLevel: "loose",
+      // Throw instead of injecting the giant "Syntax error in text" SVG
+      suppressErrorRendering: true,
+      fontFamily: "IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif",
+      flowchart: { htmlLabels: true, curve: "basis" },
+    });
+    mermaidThemeApplied = theme;
+  }
+  return mermaid;
 }
 
 function decodeEntities(s: string) {
@@ -485,7 +522,7 @@ function prepareMermaidSvgClone(svg: SVGSVGElement) {
   bg.setAttribute("y", "0");
   bg.setAttribute("width", "100%");
   bg.setAttribute("height", "100%");
-  bg.setAttribute("fill", "#0d1520");
+  bg.setAttribute("fill", diagramPanelBg());
   clone.insertBefore(bg, clone.firstChild);
   return { clone, w, h };
 }
@@ -519,7 +556,7 @@ async function downloadMermaidImage(block: HTMLElement, format: "svg" | "png" = 
       replacement.setAttribute("x", String(Number(x) + Number(tw) / 2));
       replacement.setAttribute("y", String(Number(y) + 14));
       replacement.setAttribute("text-anchor", "middle");
-      replacement.setAttribute("fill", "#e8eef6");
+      replacement.setAttribute("fill", diagramInk());
       replacement.setAttribute("font-size", "12");
       replacement.setAttribute("font-family", "sans-serif");
       replacement.textContent = text.slice(0, 80);
@@ -548,7 +585,7 @@ async function downloadMermaidImage(block: HTMLElement, format: "svg" | "png" = 
         canvas.width = Math.max(1, Math.ceil((w || img.width || 800) * scale));
         canvas.height = Math.max(1, Math.ceil((h || img.height || 600) * scale));
         const ctx = canvas.getContext("2d")!;
-        ctx.fillStyle = "#0d1520";
+        ctx.fillStyle = diagramPanelBg();
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const pngBlob = await new Promise<Blob>((resolve, reject) => {
@@ -722,15 +759,22 @@ async function renderOneMermaid(mermaid: any, block: HTMLElement, source: string
   if (!stage) return;
   setMermaidStatus(block, "渲染中…");
   const id = `nlm-mmd-${Date.now()}-${++mermaidRenderSeq}`;
-  const result = await mermaid.render(id, source);
-  const svg = typeof result === "string" ? result : result?.svg;
-  if (!svg) throw new Error("mermaid.render 未返回 SVG");
-  stage.innerHTML = svg;
-  if (typeof result?.bindFunctions === "function") result.bindFunctions(stage);
-  delete block.dataset.mermaidError;
-  setMermaidStatus(block, "");
-  block.setAttribute("data-processed", "ok");
-  applyMermaidMode(block, "view");
+  try {
+    const result = await mermaid.render(id, source);
+    const svg = typeof result === "string" ? result : result?.svg;
+    if (!svg) throw new Error("mermaid.render 未返回 SVG");
+    if (isMermaidErrorSvg(svg)) {
+      throw new Error("Syntax error in text (mermaid error diagram)");
+    }
+    stage.innerHTML = svg;
+    if (typeof result?.bindFunctions === "function") result.bindFunctions(stage);
+    delete block.dataset.mermaidError;
+    setMermaidStatus(block, "");
+    block.setAttribute("data-processed", "ok");
+    applyMermaidMode(block, "view");
+  } finally {
+    cleanupMermaidArtifacts(id);
+  }
 }
 
 export { renderDrawioIn };
@@ -749,17 +793,36 @@ export async function renderMermaidIn(
 ) {
   if (!root) return;
   bindMermaidControls(root);
-  // `streaming` only disables expensive repair — closed fences still paint as SVG.
-  void streaming;
 
   const blocks = [...root.querySelectorAll(".mermaid-block")] as any[];
   if (!blocks.length) return;
+
+  // During streaming, never call Mermaid — incomplete fences flood error SVGs.
+  if (streaming) {
+    for (const block of blocks) {
+      if (block.getAttribute("data-processed") === "ok") continue;
+      const pre = block.querySelector("pre.mermaid, pre.mermaid-source");
+      const original = sanitizeMermaidSource(
+        block.dataset.mermaidSource || pre?.textContent || ""
+      );
+      if (!original) continue;
+      ensureMermaidChrome(block, original);
+      const stage = block.querySelector(".mermaid-stage");
+      if (stage) stage.innerHTML = "";
+      applyMermaidMode(block, "source");
+      setMermaidStatus(block, "生成中…");
+      block.setAttribute("data-processed", "pending");
+    }
+    return;
+  }
 
   const mermaid = await ensureMermaid();
 
   for (const block of blocks) {
     if (block.getAttribute("data-processed") === "ok" && block.querySelector(".mermaid-stage svg")) {
-      continue;
+      const svgEl = block.querySelector(".mermaid-stage svg");
+      if (svgEl && !isMermaidErrorSvg(svgEl.outerHTML)) continue;
+      block.removeAttribute("data-processed");
     }
 
     const pre = block.querySelector("pre.mermaid, pre.mermaid-source");
@@ -806,9 +869,10 @@ export async function renderMermaidIn(
         lastErr = parsed.error;
       }
 
-      if (allowRepair && !parsed.ok && typeof repair === "function") {
+      // Any display failure → LLM regenerate (not only parse failures)
+      if (allowRepair && typeof repair === "function") {
         const reason = formatMermaidError(lastErr);
-        setMermaidStatus(block, `语法错误，正在重新生成…`, true, reason);
+        setMermaidStatus(block, `渲染失败，正在重新生成…`, true, reason);
         try {
           const fixedRaw = await repair(source, reason);
           const fixed = extractMermaidSource(fixedRaw || "");
@@ -841,7 +905,7 @@ export async function renderMermaidIn(
       block.removeAttribute("data-processed");
       delete block.dataset.mermaidError;
       setMermaidStatus(block, "重试中…");
-      await attemptRender(block.dataset.mermaidSource || original, { allowRepair: false });
+      await attemptRender(block.dataset.mermaidSource || original, { allowRepair: true });
     };
 
     await attemptRender(original, { allowRepair: true });

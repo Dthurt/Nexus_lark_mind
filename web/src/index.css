@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "./styles/diagrams.css";
 
 @custom-variant dark (&:is([data-theme="night"] *, [data-theme="gray"] *, [data-theme="ocean"] *, [data-theme="rose"] *));
 
@@ -171,6 +173,9 @@
   body,
   #root {
     height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
   body {
@@ -180,7 +185,30 @@
     margin: 0;
   }
 
+  /* Hide scrollbars; wheel/trackpad still scroll inner panels */
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+
   ::selection {
     background: hsl(var(--primary) / 0.28);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }

@@ -8,6 +8,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Progress } from "@/components/ui/progress";
 import { pretty } from "@/lib/pretty";
 import { cn } from "@/lib/utils";
 
@@ -106,6 +107,7 @@ export function SubagentCard({ item, onInspect, onOpenChange, className }: Subag
       </CollapsibleTrigger>
 
       <CollapsibleContent className="grid gap-2 px-2.5 pb-2.5 pt-0.5">
+        {item.status === "running" ? <Progress value={58} className="h-0.5" /> : null}
         {item.prompt ? (
           <div>
             <div className="mb-1 text-[10px] uppercase tracking-wide text-violet-300/75">Input</div>

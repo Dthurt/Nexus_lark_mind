@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   acceptPlan,
   cancelChatTask,
@@ -384,6 +385,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
         onBusyChange?.(false);
         stream.setBusy(false);
         stream.setStatus("error");
+        toast.error(String(err?.message || err || "发送失败"));
       }
     },
     [

@@ -38,6 +38,11 @@ export function applyTheme(theme: string | null | undefined): Theme {
   } catch {
     /* ignore */
   }
+  try {
+    window.dispatchEvent(new CustomEvent("nlm-theme-change", { detail: next }));
+  } catch {
+    /* ignore */
+  }
   return next;
 }
 

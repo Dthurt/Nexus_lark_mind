@@ -5,11 +5,21 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { estimateContextOccupancy, formatCompactTokens } from "@/lib/contextEstimate";
+import {
+  estimateContextOccupancy,
+  formatCompactTokens,
+  formatSharePercent,
+} from "@/lib/contextEstimate";
 import { cn } from "@/lib/utils";
 
 const RADIUS = 5.5;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+
+const COMPOSITION = [
+  { key: "system", label: "系统提示", tokenKey: "systemTokens", shareKey: "system", stroke: "#7aa2c8", swatch: "bg-[#7aa2c8]" },
+  { key: "tools", label: "工具定义", tokenKey: "toolsTokens", shareKey: "tools", stroke: "#a78bfa", swatch: "bg-[#a78bfa]" },
+  { key: "messages", label: "对话消息", tokenKey: "messageTokens", shareKey: "messages", stroke: "#3a9cf0", swatch: "bg-[#3a9cf0]" },
+] as const;
 
 export type ContextMeterProps = {
   items?: any[];
@@ -49,31 +59,69 @@ export function ContextMeter({
   );
 
   const percent = occupancy.percent;
-  const dash = (CIRCUMFERENCE * percent) / 100;
 
-  const fillClass =
-    percent >= 90
-      ? "stroke-[rgba(224,112,112,0.95)]"
-      : percent >= 75
-        ? "stroke-[rgba(232,176,72,0.95)]"
-        : "stroke-muted-foreground/90";
+  /** Full-window segments for the ring (includes free gap as empty track). */
+  const ringArcs = useMemo(() => {
+    const parts = COMPOSITION.map((row) => {
+      const tokens = occupancy.breakdown[row.tokenKey];
+      const frac = occupancy.windowShares[row.shareKey];
+      return {
+        key: row.key,
+        stroke: row.stroke,
+        length: CIRCUMFERENCE * Math.max(0, frac),
+        tokens,
+      };
+    }).filter((p) => p.length > 0.01);
+    let offset = 0;
+    return parts.map((p) => {
+      const dashoffset = -offset;
+      offset += p.length;
+      return { ...p, dashoffset };
+    });
+  }, [occupancy]);
 
+  /** Used-portion bar (DSH-style): composition fills `percent` of the track. */
   const barSegments = useMemo(() => {
-    const b = occupancy.breakdown;
-    const total = occupancy.contextWindow || 1;
-    const rows = [
-      { key: "system", label: "系统提示", tokens: b.systemTokens, color: "bg-[#7aa2c8]" },
-      { key: "tools", label: "工具定义", tokens: b.toolsTokens, color: "bg-[#a78bfa]" },
-      { key: "messages", label: "对话消息", tokens: b.messageTokens, color: "bg-[#3a9cf0]" },
-      { key: "free", label: "剩余可用", tokens: b.freeTokens, color: "bg-foreground/15" },
+    return COMPOSITION.map((row) => {
+      const tokens = occupancy.breakdown[row.tokenKey];
+      const usedShare = occupancy.usedShares[row.shareKey];
+      const width = percent * usedShare;
+      return {
+        key: row.key,
+        label: row.label,
+        tokens,
+        width,
+        display: formatCompactTokens(tokens),
+        shareLabel: formatSharePercent(occupancy.windowShares[row.shareKey]),
+        usedLabel: formatSharePercent(usedShare),
+        swatch: row.swatch,
+      };
+    }).filter((r) => r.tokens > 0 || r.width > 0.05);
+  }, [occupancy, percent]);
+
+  const legendRows = useMemo(() => {
+    const usedRows = COMPOSITION.map((row) => {
+      const tokens = occupancy.breakdown[row.tokenKey];
+      return {
+        key: row.key,
+        label: row.label,
+        tokens,
+        display: formatCompactTokens(tokens),
+        shareLabel: formatSharePercent(occupancy.windowShares[row.shareKey]),
+        swatch: row.swatch,
+      };
+    });
+    return [
+      ...usedRows,
+      {
+        key: "free",
+        label: "剩余可用",
+        tokens: occupancy.freeTokens,
+        display: formatCompactTokens(occupancy.freeTokens),
+        shareLabel: formatSharePercent(occupancy.windowShares.free),
+        swatch: "bg-foreground/15",
+      },
     ];
-    return rows
-      .map((r) => ({
-        ...r,
-        width: Math.max(0, (r.tokens / total) * 100),
-        display: formatCompactTokens(r.tokens),
-      }))
-      .filter((r) => r.tokens > 0 || r.key === "free");
   }, [occupancy]);
 
   return (
@@ -92,29 +140,34 @@ export function ContextMeter({
         >
           <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden>
             <circle
-              className="fill-none stroke-foreground/20"
+              className="fill-none stroke-foreground/15"
               cx="7"
               cy="7"
               r={RADIUS}
               strokeWidth={2}
             />
-            <circle
-              className={cn("fill-none transition-all duration-180", fillClass)}
-              cx="7"
-              cy="7"
-              r={RADIUS}
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeDasharray={`${dash} ${CIRCUMFERENCE}`}
-              transform="rotate(-90 7 7)"
-            />
+            {ringArcs.map((arc) => (
+              <circle
+                key={arc.key}
+                className="fill-none transition-all duration-180"
+                cx="7"
+                cy="7"
+                r={RADIUS}
+                stroke={arc.stroke}
+                strokeWidth={2}
+                strokeLinecap="butt"
+                strokeDasharray={`${arc.length} ${Math.max(0, CIRCUMFERENCE - arc.length)}`}
+                strokeDashoffset={arc.dashoffset}
+                transform="rotate(-90 7 7)"
+              />
+            ))}
           </svg>
         </button>
       </PopoverTrigger>
       <PopoverContent
         align="end"
         side="top"
-        className="w-[280px] p-3 text-xs leading-relaxed"
+        className="w-[300px] p-3 text-xs leading-relaxed"
         role="dialog"
         aria-label="上下文用量"
       >
@@ -127,29 +180,33 @@ export function ContextMeter({
           </span>
         </div>
 
-        <div className="my-2.5 flex h-1 overflow-hidden rounded-full bg-muted" aria-hidden>
+        <div className="my-2.5 flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
           {barSegments.map((seg) => (
             <div
               key={seg.key}
-              className={cn("h-full min-w-[2px] rounded-sm", seg.color)}
-              style={{ width: `${Math.max(seg.width, seg.tokens ? 0.4 : 0)}%` }}
+              className={cn("h-full min-w-[2px]", seg.swatch)}
+              style={{ width: `${Math.max(seg.width, seg.tokens ? 0.5 : 0)}%` }}
+              title={`${seg.label} ${seg.usedLabel}`}
             />
           ))}
         </div>
 
         <dl className="m-0">
-          {barSegments.map((seg) => (
+          {legendRows.map((seg) => (
             <div key={seg.key} className="flex justify-between gap-3 py-0.5">
-              <dt className="flex items-center text-muted-foreground">
-                <span className={cn("mr-1.5 inline-block size-2 rounded-sm", seg.color)} aria-hidden />
-                {seg.label}
+              <dt className="flex min-w-0 items-center text-muted-foreground">
+                <span className={cn("mr-1.5 inline-block size-2 shrink-0 rounded-sm", seg.swatch)} aria-hidden />
+                <span className="truncate">{seg.label}</span>
               </dt>
-              <dd className="m-0 tabular-nums text-foreground">~{seg.display}</dd>
+              <dd className="m-0 flex shrink-0 items-baseline gap-2 tabular-nums text-foreground">
+                <span className="text-muted-foreground">{seg.shareLabel}</span>
+                <span>~{seg.display}</span>
+              </dd>
             </div>
           ))}
         </dl>
         <p className="mt-2.5 text-[10px] text-muted-foreground/85">
-          估算值；按字符约 4∶1 换算，并结合模型窗口容量。
+          构成含系统提示、工具定义与对话消息；占比相对模型窗口。估算约 4 字/token。
         </p>
       </PopoverContent>
     </Popover>

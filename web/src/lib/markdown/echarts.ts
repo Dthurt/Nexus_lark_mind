@@ -1,3 +1,5 @@
+import { diagramPanelBg, isLightDiagramTheme } from "./diagramTheme";
+
 /** ECharts fenced blocks — ```echarts / ```echart JSON option. */
 
 function escapeHtml(s: string) {
@@ -134,9 +136,25 @@ export function normalizeEchartsMarkdown(raw: string) {
 let echartsMod: any = null;
 async function ensureEcharts() {
   if (!echartsMod) {
-    echartsMod = await import("echarts");
+    const mod: any = await import("echarts");
+    echartsMod = mod?.default && typeof mod.default.init === "function" ? mod.default : mod;
   }
   return echartsMod;
+}
+
+/** Dispose chart instances before React replaces markdown DOM (avoids zr `.get` crashes). */
+export function disposeEchartsIn(root: HTMLElement | null) {
+  if (!root) return;
+  root.querySelectorAll(".echarts-block").forEach((block) => {
+    const el = block as any;
+    if (!el._nlmChart) return;
+    try {
+      el._nlmChart.dispose?.();
+    } catch {
+      /* ignore */
+    }
+    el._nlmChart = null;
+  });
 }
 
 function parseOption(raw: string) {
@@ -149,9 +167,80 @@ function parseOption(raw: string) {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start >= 0 && end > start) text = text.slice(start, end + 1);
-  // Tolerate trailing commas common in model output
+  // Tolerate trailing commas / smart quotes common in model output
   text = text.replace(/,\s*([}\]])/g, "$1");
+  text = text.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
   return JSON.parse(text);
+}
+
+function asArray<T>(v: T | T[] | null | undefined): T[] {
+  if (v == null) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+function coerceData(data: any): any[] | undefined {
+  if (data == null) return undefined;
+  if (Array.isArray(data)) return data;
+  if (typeof data === "object") return Object.values(data);
+  return undefined;
+}
+
+/** Normalize LLM option quirks that make ECharts throw (`…reading 'get'`). */
+function sanitizeOption(option: any) {
+  if (!option || typeof option !== "object" || Array.isArray(option)) {
+    throw new Error("option 必须是 JSON 对象");
+  }
+  const opt: any = { ...option };
+
+  if (opt.series != null) opt.series = asArray(opt.series).filter((s: any) => s && typeof s === "object");
+  if (!opt.series?.length && !opt.dataset) {
+    throw new Error("缺少 series / dataset");
+  }
+
+  if (Array.isArray(opt.series)) {
+    opt.series = opt.series.map((s: any, i: number) => {
+      const next = { ...s };
+      if (!next.type || typeof next.type !== "string") {
+        next.type = typeof opt.dataset !== "undefined" ? "line" : "bar";
+      }
+      const data = coerceData(next.data);
+      if (data) next.data = data;
+      else if (next.data != null && !Array.isArray(next.data)) delete next.data;
+      if (next.name == null) next.name = `系列${i + 1}`;
+      // Drop broken nested refs models often invent
+      if (next.encode && typeof next.encode !== "object") delete next.encode;
+      return next;
+    });
+  }
+
+  for (const key of ["xAxis", "yAxis", "radiusAxis", "angleAxis", "radar"]) {
+    if (opt[key] == null) continue;
+    if (typeof opt[key] !== "object") {
+      delete opt[key];
+      continue;
+    }
+    if (Array.isArray(opt[key])) {
+      opt[key] = opt[key].filter((a: any) => a && typeof a === "object").map((a: any) => {
+        const axis = { ...a };
+        const d = coerceData(axis.data);
+        if (d) axis.data = d;
+        return axis;
+      });
+      if (!opt[key].length) delete opt[key];
+    } else {
+      const d = coerceData(opt[key].data);
+      if (d) opt[key] = { ...opt[key], data: d };
+    }
+  }
+
+  if (opt.color != null && !Array.isArray(opt.color) && typeof opt.color !== "string") {
+    delete opt.color;
+  }
+  for (const key of ["visualMap", "calendar", "geo", "graphic", "timeline", "brush", "toolbox"]) {
+    if (opt[key] == null) delete opt[key];
+  }
+
+  return polishOption(opt);
 }
 
 function setStatus(block: HTMLElement, text: string, isError = false) {
@@ -263,8 +352,18 @@ function applyCollapsed(block: HTMLElement, collapsed: boolean) {
 
 async function renderOne(block: any, option: any) {
   const echarts = await ensureEcharts();
-  const stage = block.querySelector(".echarts-stage");
-  if (!stage) return;
+  if (!echarts || typeof echarts.init !== "function") {
+    throw new Error("ECharts 未能加载");
+  }
+  ensureChrome(block, block.dataset.echartsSource || "");
+  const stage = block.querySelector(".echarts-stage") as HTMLElement | null;
+  if (!stage) throw new Error("缺少图表容器");
+  // Hidden / 0-size stages make zrender blow up on internal `.get`
+  if (block.dataset.collapsed === "1") applyCollapsed(block, false);
+  if (block.dataset.mode === "source") applyMode(block, "view");
+  stage.style.minHeight = stage.style.minHeight || "160px";
+  stage.style.width = stage.style.width || "100%";
+
   if (block._nlmChart) {
     try {
       block._nlmChart.dispose();
@@ -273,13 +372,30 @@ async function renderOne(block: any, option: any) {
     }
     block._nlmChart = null;
   }
-  const polished = polishOption(option);
-  const chart = echarts.init(stage, null, { renderer: "canvas" });
-  chart.setOption(polished, { notMerge: true });
+  const polished = sanitizeOption(option);
+  const chart = echarts.init(stage, undefined, { renderer: "canvas", width: "auto", height: "auto" });
+  try {
+    chart.setOption(polished, { notMerge: true, lazyUpdate: false });
+  } catch (err) {
+    try {
+      chart.dispose();
+    } catch {
+      /* ignore */
+    }
+    block._nlmChart = null;
+    throw err;
+  }
   block._nlmChart = chart;
   block.setAttribute("data-processed", "ok");
   setStatus(block, "");
   applyZoom(block, Number(block.dataset.zoom) || 1);
+  requestAnimationFrame(() => {
+    try {
+      chart.resize();
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 function polishOption(option: any) {
@@ -290,6 +406,35 @@ function polishOption(option: any) {
   }
   if (!opt.color) {
     opt.color = ["#3a9cf0", "#2bb8a0", "#c9a227", "#a78bfa", "#e07070", "#60a5fa"];
+  }
+  if (opt.backgroundColor == null) {
+    opt.backgroundColor = diagramPanelBg();
+  }
+  const light = isLightDiagramTheme();
+  const axisColor = light ? "#334155" : "#94a3b8";
+  const splitColor = light ? "rgba(15,23,42,0.08)" : "rgba(148,163,184,0.16)";
+  const applyAxis = (axis: any) => {
+    if (!axis || typeof axis !== "object") return axis;
+    const next = { ...axis };
+    next.axisLabel = { ...(next.axisLabel || {}), color: axisColor };
+    next.axisLine = {
+      ...(next.axisLine || {}),
+      lineStyle: { ...((next.axisLine && next.axisLine.lineStyle) || {}), color: splitColor },
+    };
+    next.splitLine = {
+      ...(next.splitLine || {}),
+      lineStyle: { ...((next.splitLine && next.splitLine.lineStyle) || {}), color: splitColor },
+    };
+    return next;
+  };
+  if (opt.xAxis) {
+    opt.xAxis = Array.isArray(opt.xAxis) ? opt.xAxis.map(applyAxis) : applyAxis(opt.xAxis);
+  }
+  if (opt.yAxis) {
+    opt.yAxis = Array.isArray(opt.yAxis) ? opt.yAxis.map(applyAxis) : applyAxis(opt.yAxis);
+  }
+  if (!opt.textStyle) {
+    opt.textStyle = { color: light ? "#0f172a" : "#e2e8f0" };
   }
   if (Array.isArray(opt.series)) {
     opt.series = opt.series.map((s: any) => {
@@ -316,9 +461,7 @@ function downloadPng(block: any) {
     const url = chart.getDataURL({
       type: "png",
       pixelRatio: 2,
-      backgroundColor:
-        getComputedStyle(document.documentElement).getPropertyValue("--panel-solid").trim() ||
-        "#0f1b2a",
+      backgroundColor: diagramPanelBg(),
     });
     const a = document.createElement("a");
     a.href = url;
@@ -368,15 +511,15 @@ function openFullscreen(block: HTMLElement) {
   const stage = overlay.querySelector(".echarts-fs-stage");
   let chart: any = null;
   ensureEcharts().then((echarts) => {
-    chart = echarts.init(stage, null, { renderer: "canvas" });
-    const opt = { ...option };
-    if (!opt.dataZoom) {
-      opt.dataZoom = [
-        { type: "inside" },
-        { type: "slider", height: 18, bottom: 8 },
-      ];
+    if (!stage || typeof echarts.init !== "function") return;
+    try {
+      chart = echarts.init(stage, undefined, { renderer: "canvas" });
+      chart.setOption(sanitizeOption(option), { notMerge: true });
+    } catch (err: any) {
+      setStatus(block, `全屏失败：${err?.message || err}`, true);
+      close();
+      return;
     }
-    chart.setOption(opt, { notMerge: true });
     overlay._nlmChart = chart;
     const onResize = () => chart && chart.resize();
     window.addEventListener("resize", onResize);
@@ -406,7 +549,7 @@ function openFullscreen(block: HTMLElement) {
     if ((ev.target as HTMLElement).closest?.("[data-fs-download]")) {
       const c = overlay._nlmChart;
       if (!c) return;
-      const url = c.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#0f1b2a" });
+      const url = c.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: diagramPanelBg() });
       const a = document.createElement("a");
       a.href = url;
       a.download = `echarts-${Date.now()}.png`;
@@ -446,6 +589,15 @@ function bindControls(root: any) {
     if (action === "mode-view") {
       if (block.dataset.collapsed === "1") applyCollapsed(block, false);
       applyMode(block, "view");
+      if (!block._nlmChart && typeof block._nlmRetry === "function") {
+        await block._nlmRetry();
+      } else if (block._nlmChart) {
+        try {
+          block._nlmChart.resize();
+        } catch {
+          /* ignore */
+        }
+      }
       return;
     }
     if (action === "copy") {
@@ -472,15 +624,54 @@ function bindControls(root: any) {
   });
 }
 
+function extractEchartsSource(raw: string) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  const fenced = text.match(/```(?:echarts|echart|echarts-json|json)\s*([\s\S]*?)```/i);
+  if (fenced) return fenced[1].trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) return text.slice(start, end + 1).trim();
+  return text;
+}
+
+function failToSource(block: any, message: string) {
+  block.setAttribute("data-processed", "error");
+  setStatus(block, message, true);
+  applyMode(block, "source");
+}
+
 export async function renderEchartsIn(
   root: HTMLElement | null,
-  { streaming = false }: { streaming?: boolean } = {}
+  {
+    streaming = false,
+    repair = null,
+    onFixed = null,
+  }: {
+    streaming?: boolean;
+    repair?: ((source: string, error: string) => Promise<string>) | null;
+    onFixed?: ((args: { from: string; to: string }) => void) | null;
+  } = {}
 ) {
   if (!root) return;
   bindControls(root);
-  void streaming;
   const blocks = [...root.querySelectorAll(".echarts-block")] as any[];
   if (!blocks.length) return;
+
+  // Incomplete fences during stream → skip init (source preview only)
+  if (streaming) {
+    for (const block of blocks) {
+      if (block.getAttribute("data-processed") === "ok" && block._nlmChart) continue;
+      const pre = block.querySelector("pre.echarts-source");
+      const original = block.dataset.echartsSource || pre?.textContent || "";
+      if (!original.trim()) continue;
+      ensureChrome(block, original);
+      applyMode(block, "source");
+      setStatus(block, "生成中…");
+      block.setAttribute("data-processed", "pending");
+    }
+    return;
+  }
 
   for (const block of blocks) {
     const pre = block.querySelector("pre.echarts-source");
@@ -497,22 +688,60 @@ export async function renderEchartsIn(
     }
 
     ensureChrome(block, original);
-    block._nlmRetry = async () => {
+
+    const attemptRender = async (
+      src: string,
+      { allowRepair = true }: { allowRepair?: boolean } = {}
+    ) => {
+      let source = src;
+      let lastErr: any = null;
+
       try {
-        const opt = parseOption(block.dataset.echartsSource || original);
+        const opt = parseOption(source);
         await renderOne(block, opt);
+        ensureChrome(block, source);
+        applyMode(block, "view");
+        return true;
       } catch (err: any) {
-        block.setAttribute("data-processed", "error");
-        setStatus(block, `渲染失败：${err.message || err}`, true);
+        lastErr = err;
       }
+
+      if (allowRepair && typeof repair === "function") {
+        const reason = String(lastErr?.message || lastErr || "unknown");
+        setStatus(block, "渲染失败，正在重新生成…", true);
+        applyMode(block, "source");
+        try {
+          const fixedRaw = await repair(source, reason);
+          const fixed = extractEchartsSource(fixedRaw || "");
+          if (fixed) {
+            ensureChrome(block, fixed);
+            const opt = parseOption(fixed);
+            await renderOne(block, opt);
+            applyMode(block, "view");
+            if (fixed !== original && typeof onFixed === "function") {
+              onFixed({ from: original, to: fixed });
+            }
+            return true;
+          }
+          lastErr = new Error(`修复未返回可用 JSON（原错误：${reason}）`);
+        } catch (err: any) {
+          lastErr = new Error(
+            `修复失败：${err?.message || err}｜原错误：${reason}`
+          );
+        }
+      }
+
+      ensureChrome(block, source);
+      failToSource(block, `JSON/渲染错误：${lastErr?.message || lastErr}`);
+      return false;
     };
 
-    try {
-      const opt = parseOption(original);
-      await renderOne(block, opt);
-    } catch (err: any) {
-      block.setAttribute("data-processed", "error");
-      setStatus(block, `JSON/渲染错误：${err.message || err}`, true);
-    }
+    block._nlmRetry = async () => {
+      block.removeAttribute("data-processed");
+      setStatus(block, "重试中…");
+      await attemptRender(block.dataset.echartsSource || original, { allowRepair: true });
+    };
+
+    await attemptRender(original, { allowRepair: true });
   }
 }

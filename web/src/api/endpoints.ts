@@ -17,6 +17,10 @@ import type {
   InteractionPatchBody,
   MermaidRepairBody,
   MermaidRepairResult,
+  EchartsRepairBody,
+  EchartsRepairResult,
+  DrawioRepairBody,
+  DrawioRepairResult,
   Plugin,
   PluginCallRow,
   PluginConfigSchema,
@@ -46,6 +50,14 @@ export function cancelChatTask(taskId: string): Promise<unknown> {
 
 export function repairMermaid(body: MermaidRepairBody): Promise<MermaidRepairResult> {
   return apiPost<MermaidRepairResult>("/api/mermaid/repair", body);
+}
+
+export function repairEcharts(body: EchartsRepairBody): Promise<EchartsRepairResult> {
+  return apiPost<EchartsRepairResult>("/api/echarts/repair", body);
+}
+
+export function repairDrawio(body: DrawioRepairBody): Promise<DrawioRepairResult> {
+  return apiPost<DrawioRepairResult>("/api/drawio/repair", body);
 }
 
 export function openChatStream(sessionId: string): EventSource {

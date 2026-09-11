@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
   type ChangeEvent,
 } from "react";
-import { Mic, Paperclip, Plus, Square, ArrowUp } from "lucide-react";
+import { Mic, Paperclip, Plus, Square, ArrowUp, ListTodo, ShieldCheck } from "lucide-react";
 
 import { ContextMeter } from "@/components/chat/ContextMeter";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ import {
 } from "@/lib/pricing";
 import { formatUsage } from "@/lib/pretty";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 export type ComposerOption = { value: string; label: string };
 
@@ -115,9 +116,14 @@ export function Composer({
   const menuRootRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const plusBtnRef = useRef<HTMLButtonElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [listening, setListening] = useState(false);
-  const [voiceHint, setVoiceHint] = useState("");
   const recognitionRef = useRef<any>(null);
+  const voiceBaseRef = useRef("");
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   const voiceSupported =
     typeof window !== "undefined" &&
@@ -186,6 +192,18 @@ export function Composer({
     setListening(false);
   }, []);
 
+  const resizeTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "0px";
+    const next = Math.min(Math.max(el.scrollHeight, 34), 160);
+    el.style.height = `${next}px`;
+  }, []);
+
+  useEffect(() => {
+    resizeTextarea();
+  }, [value, resizeTextarea]);
+
   const toggleVoice = useCallback(() => {
     if (!voiceSupported || busy) return;
     if (listening) {
@@ -198,39 +216,50 @@ export function Composer({
     recognition.lang = "zh-CN";
     recognition.interimResults = true;
     recognition.continuous = false;
-    setVoiceHint("");
+    voiceBaseRef.current = valueRef.current || "";
     let finalText = "";
+
+    const pushVoiceText = (committed: string, interim = "") => {
+      const prefix = voiceBaseRef.current;
+      const spoken = `${committed}${interim}`.trim();
+      if (!spoken) {
+        onChangeRef.current?.(prefix);
+        return;
+      }
+      const sep = prefix && !/\s$/.test(prefix) ? " " : "";
+      onChangeRef.current?.(prefix + sep + spoken);
+    };
+
     recognition.onstart = () => setListening(true);
     recognition.onerror = (ev: any) => {
-      setVoiceHint(
-        ev?.error === "not-allowed" ? "麦克风权限被拒绝" : `语音失败: ${ev?.error || "unknown"}`,
-      );
+      const msg =
+        ev?.error === "not-allowed" ? "麦克风权限被拒绝" : `语音失败: ${ev?.error || "unknown"}`;
+      toast.error(msg);
       setListening(false);
     };
     recognition.onend = () => {
       setListening(false);
-      if (finalText.trim()) {
-        const base = (value || "").trim();
-        const next = base ? `${base} ${finalText.trim()}` : finalText.trim();
-        onChange?.(next);
-      }
+      if (finalText.trim()) pushVoiceText(finalText.trim());
+      requestAnimationFrame(resizeTextarea);
     };
     recognition.onresult = (ev: any) => {
-      let interim = "";
+      let gotFinal = false;
       for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
-        const piece = ev.results[i][0]?.transcript || "";
-        if (ev.results[i].isFinal) finalText += piece;
-        else interim += piece;
+        if (!ev.results[i].isFinal) continue;
+        finalText += ev.results[i][0]?.transcript || "";
+        gotFinal = true;
       }
-      if (interim) setVoiceHint(interim);
+      if (!gotFinal) return;
+      pushVoiceText(finalText.trim());
+      requestAnimationFrame(resizeTextarea);
     };
     try {
       recognition.start();
     } catch (err: any) {
-      setVoiceHint(String(err?.message || err));
+      toast.error(String(err?.message || err));
       setListening(false);
     }
-  }, [busy, listening, onChange, stopVoice, value, voiceSupported]);
+  }, [busy, listening, resizeTextarea, stopVoice, voiceSupported]);
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
@@ -298,10 +327,10 @@ export function Composer({
         className={cn(
           "composer-shell flex w-full min-w-0 flex-col overflow-visible rounded-xl border border-border bg-muted/40 transition-shadow",
           "focus-within:border-primary/50 focus-within:shadow-[0_0_0_2px_rgba(58,156,240,0.12)]",
-          busy && "busy",
+          busy && "busy ring-1 ring-primary/35",
         )}
       >
-        <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-end gap-1.5 px-2 pb-1 pt-2">
+        <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-end gap-1.5 px-2 pb-1 pt-1.5">
           <div ref={menuRootRef} className="relative self-end pb-1.5">
             <Button
               ref={plusBtnRef}
@@ -435,24 +464,59 @@ export function Composer({
             ) : null}
           </div>
 
-          <Textarea
-            value={value}
-            disabled={busy}
-            placeholder="输入消息 · Enter 发送 · Shift+Enter 换行"
-            onChange={(e) => onChange?.(e.target.value)}
-            onKeyDown={onTextareaKeyDown}
-            className="min-h-[52px] max-h-40 resize-none border-0 bg-transparent px-1 py-1.5 shadow-none focus-visible:ring-0"
-            rows={2}
-          />
+          <div className="flex min-w-0 items-start gap-1.5">
+            {planOn || autoAccept ? (
+              <div className="flex shrink-0 items-center gap-1 pt-[7px]" aria-label="已启用模式">
+                {planOn ? (
+                  <button
+                    type="button"
+                    className="inline-flex size-[22px] items-center justify-center rounded-md border border-amber-400/35 bg-amber-400/12 text-amber-400 transition-colors hover:bg-amber-400/20"
+                    title="Plan Mode（点击关闭）"
+                    aria-label="关闭 Plan Mode"
+                    disabled={busy}
+                    onClick={() => onAgentModeChange?.("agent")}
+                  >
+                    <ListTodo className="size-3.5" strokeWidth={2.25} />
+                  </button>
+                ) : null}
+                {autoAccept ? (
+                  <button
+                    type="button"
+                    className="inline-flex size-[22px] items-center justify-center rounded-md border border-emerald-400/35 bg-emerald-400/12 text-emerald-400 transition-colors hover:bg-emerald-400/20"
+                    title="Accept（点击关闭）"
+                    aria-label="关闭 Accept"
+                    disabled={busy}
+                    onClick={() => onAutoAcceptChange?.(false)}
+                  >
+                    <ShieldCheck className="size-3.5" strokeWidth={2.25} />
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
 
-          <div className="flex items-end gap-1.5 pb-1.5">
+            <Textarea
+              ref={textareaRef}
+              value={value}
+              disabled={busy}
+              placeholder="输入消息 · Enter 发送 · Shift+Enter 换行"
+              onChange={(e) => {
+                onChange?.(e.target.value);
+                requestAnimationFrame(resizeTextarea);
+              }}
+              onKeyDown={onTextareaKeyDown}
+              className="min-h-[34px] max-h-40 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-0.5 py-1.5 leading-[1.4] shadow-none focus-visible:ring-0"
+              rows={1}
+            />
+          </div>
+
+          <div className="flex items-end gap-1.5 self-end pb-1.5">
             {voiceSupported ? (
               <Button
                 type="button"
                 variant="outline"
                 size="icon"
                 className={cn(
-                  "size-[34px] rounded-full",
+                  "size-[30px] rounded-full text-muted-foreground",
                   listening && "animate-pulse border-destructive/50 bg-destructive/75 text-white",
                 )}
                 disabled={busy}
@@ -460,32 +524,29 @@ export function Composer({
                 aria-label={listening ? "停止语音输入" : "语音输入"}
                 onClick={toggleVoice}
               >
-                <Mic className="size-4" />
+                <Mic className="size-3.5" />
               </Button>
             ) : null}
             <Button
               type="submit"
+              variant="outline"
               size="icon"
               className={cn(
-                "size-[34px] rounded-full",
+                "size-[30px] rounded-full",
                 busy
-                  ? "border-destructive/55 bg-destructive/85 text-white hover:bg-destructive"
+                  ? "border-destructive/45 bg-destructive/15 text-destructive hover:bg-destructive/25 hover:text-destructive"
                   : canSend
-                    ? "bg-gradient-to-br from-primary to-blue-600 text-white"
-                    : "opacity-35",
+                    ? "border-primary/40 bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary"
+                    : "text-muted-foreground opacity-35",
               )}
               disabled={!busy && !canSend}
               title={actionTitle}
               aria-label={actionTitle}
             >
-              {busy ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
+              {busy ? <Square className="size-3 fill-current" /> : <ArrowUp className="size-3.5" strokeWidth={2.25} />}
             </Button>
           </div>
         </div>
-
-        {voiceHint ? (
-          <p className="m-0 px-3 pb-1 text-xs text-muted-foreground">{voiceHint}</p>
-        ) : null}
 
         <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 border-t border-border px-2 pb-2 pt-1.5">
           {cwd ? (

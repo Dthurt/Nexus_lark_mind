@@ -5,6 +5,7 @@ import {
   Moon,
   PanelLeft,
   PanelRight,
+  Search,
   Sun,
   Trash2,
   Waves,
@@ -12,6 +13,17 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 import { ViewRing, type CenterViewId } from "@/components/layout/ViewRing";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { themeLabel, type Theme, useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
@@ -36,6 +48,7 @@ export type TopbarProps = {
   onToggleRail?: () => void;
   onClear?: () => void;
   onCycleTheme?: () => void;
+  onOpenCommand?: () => void;
   className?: string;
 };
 
@@ -51,6 +64,7 @@ export function Topbar({
   onToggleRail,
   onClear,
   onCycleTheme,
+  onOpenCommand,
   className,
 }: TopbarProps) {
   const { theme, cycle, label } = useTheme();
@@ -100,13 +114,41 @@ export function Topbar({
         onChange={onCenterViewChange}
       />
 
+      <IconButton
+        title="命令面板 (Ctrl+K)"
+        aria-label="命令面板"
+        onClick={onOpenCommand}
+        className="hidden sm:inline-flex"
+      >
+        <Search className="size-4" />
+      </IconButton>
+      <kbd className="hidden rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground md:inline">
+        ⌘K
+      </kbd>
+
       <IconButton title={themeTitle} aria-label={themeTitle} onClick={handleTheme}>
         <ThemeIcon className="size-4" />
       </IconButton>
 
-      <IconButton title="清空当前会话" aria-label="清空当前会话" onClick={onClear}>
-        <Trash2 className="size-4" />
-      </IconButton>
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <IconButton title="清空当前会话" aria-label="清空当前会话">
+            <Trash2 className="size-4" />
+          </IconButton>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>清空当前会话？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将清除本会话的消息与轨迹记录，此操作不可撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => onClear?.()}>清空</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <IconButton title="切换右侧栏" aria-label="切换右侧栏" onClick={onToggleRail}>
         <PanelRight className="size-4" />

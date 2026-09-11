@@ -1,0 +1,648 @@
+/* Mermaid / Echarts / Draw.io / code chrome (ported from Vue workbench).
+   Selectors target .nlm-md (React) with .msg .body.md kept for compatibility. */
+
+@keyframes nlm-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.nlm-md .code-block,
+.msg .body.md .code-block {
+  margin: 0.5em 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: hsl(var(--foreground) / 0.04);
+  overflow: hidden;
+}
+
+.nlm-md .code-toolbar,
+.msg .body.md .code-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  min-height: 26px;
+  border-bottom: 1px solid var(--line);
+  background: hsl(var(--foreground) / 0.02);
+}
+
+.nlm-md .code-lang,
+.msg .body.md .code-lang {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+
+.nlm-md .code-toolbar-spacer,
+.msg .body.md .code-toolbar-spacer {
+  flex: 1;
+}
+
+.nlm-md .code-tool-btn,
+.nlm-md .mermaid-tool-btn.icon-btn,
+.nlm-md .mermaid-zoom-btn.icon-btn,
+.msg .body.md .code-tool-btn,
+.msg .body.md .mermaid-tool-btn.icon-btn,
+.msg .body.md .mermaid-zoom-btn.icon-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: hsl(var(--foreground) / 0.04);
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.nlm-md .code-tool-btn svg,
+.nlm-md .mermaid-tool-btn.icon-btn svg,
+.nlm-md .mermaid-zoom-btn.icon-btn svg,
+.msg .body.md .code-tool-btn svg,
+.msg .body.md .mermaid-tool-btn.icon-btn svg,
+.msg .body.md .mermaid-zoom-btn.icon-btn svg {
+  display: block;
+}
+
+.nlm-md .code-tool-btn:hover,
+.nlm-md .mermaid-tool-btn.icon-btn:hover,
+.nlm-md .mermaid-zoom-btn.icon-btn:hover,
+.msg .body.md .code-tool-btn:hover,
+.msg .body.md .mermaid-tool-btn.icon-btn:hover,
+.msg .body.md .mermaid-zoom-btn.icon-btn:hover {
+  color: var(--accent);
+  border-color: hsl(var(--primary) / 0.45);
+}
+
+.nlm-md .code-tool-btn.is-ok,
+.msg .body.md .code-tool-btn.is-ok {
+  color: #6ee7b7;
+  border-color: rgba(110, 231, 183, 0.45);
+}
+
+.nlm-md .code-tool-btn.is-err,
+.msg .body.md .code-tool-btn.is-err {
+  color: #f0a0a0;
+}
+
+.nlm-md .code-block > pre,
+.msg .body.md .code-block > pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  max-height: 420px;
+  overflow: auto;
+  scrollbar-width: none;
+}
+
+.nlm-md .code-block.is-collapsed > pre,
+.nlm-md .mermaid-block.is-collapsed .mermaid-viewport,
+.nlm-md .mermaid-block.is-collapsed .mermaid-source,
+.msg .body.md .code-block.is-collapsed > pre,
+.msg .body.md .mermaid-block.is-collapsed .mermaid-viewport,
+.msg .body.md .mermaid-block.is-collapsed .mermaid-source {
+  display: none !important;
+}
+
+.nlm-md .code-block.is-collapsed .code-toolbar,
+.nlm-md .mermaid-block.is-collapsed .mermaid-toolbar,
+.msg .body.md .code-block.is-collapsed .code-toolbar,
+.msg .body.md .mermaid-block.is-collapsed .mermaid-toolbar {
+  border-bottom: 0;
+}
+
+.nlm-md .code-block.is-collapsed .icon-chevron,
+.nlm-md .mermaid-block.is-collapsed .icon-chevron,
+.msg .body.md .code-block.is-collapsed .icon-chevron,
+.msg .body.md .mermaid-block.is-collapsed .icon-chevron {
+  transform: rotate(-90deg);
+}
+
+.nlm-md .icon-chevron,
+.msg .body.md .icon-chevron {
+  transition: transform 120ms ease;
+}
+
+.nlm-md .mermaid-block,
+.msg .body.md .mermaid-block {
+  margin: 0.5em 0;
+  padding: 4px 6px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: hsl(var(--foreground) / 0.04);
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.nlm-md .mermaid-block.is-collapsed,
+.msg .body.md .mermaid-block.is-collapsed {
+  padding-bottom: 4px;
+}
+
+.nlm-md .mermaid-toolbar,
+.msg .body.md .mermaid-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 4px;
+  min-height: 22px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.nlm-md .mermaid-block.is-collapsed .mermaid-toolbar,
+.msg .body.md .mermaid-block.is-collapsed .mermaid-toolbar {
+  margin-bottom: 0;
+}
+
+.nlm-md .mermaid-status-inline,
+.msg .body.md .mermaid-status-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--muted);
+  padding-right: 4px;
+}
+
+.nlm-md .mermaid-status-inline.is-error,
+.msg .body.md .mermaid-status-inline.is-error {
+  color: #f0a0a0;
+}
+
+.nlm-md .mermaid-toolbar-spacer,
+.msg .body.md .mermaid-toolbar-spacer {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+}
+
+.nlm-md .mermaid-mode-btn,
+.msg .body.md .mermaid-mode-btn {
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: hsl(var(--foreground) / 0.04);
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+
+.nlm-md .mermaid-mode-btn:hover,
+.msg .body.md .mermaid-mode-btn:hover {
+  border-color: hsl(var(--primary) / 0.45);
+  color: var(--accent);
+}
+
+.nlm-md .mermaid-mode-switch,
+.msg .body.md .mermaid-mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.nlm-md .mermaid-mode-switch .mermaid-mode-btn,
+.msg .body.md .mermaid-mode-switch .mermaid-mode-btn {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.nlm-md .mermaid-mode-btn.is-active,
+.msg .body.md .mermaid-mode-btn.is-active {
+  background: hsl(var(--primary) / 0.18);
+  color: var(--accent);
+}
+
+.nlm-md .mermaid-viewport,
+.msg .body.md .mermaid-viewport {
+  overflow: auto;
+  max-width: 100%;
+  max-height: 360px;
+  border-radius: 4px;
+  scrollbar-width: none;
+}
+
+.nlm-md .mermaid-stage,
+.msg .body.md .mermaid-stage {
+  display: flex;
+  justify-content: center;
+  width: max-content;
+  min-width: 100%;
+  transition: transform 120ms ease;
+}
+
+.nlm-md .mermaid-stage svg,
+.msg .body.md .mermaid-stage svg {
+  max-width: none;
+  height: auto;
+}
+
+.nlm-md .mermaid-source,
+.msg .body.md .mermaid-source {
+  display: none;
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: hsl(var(--foreground) / 0.05);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  white-space: pre;
+  line-height: 1.45;
+  scrollbar-width: none;
+}
+
+.nlm-md .mermaid-source.is-visible,
+.msg .body.md .mermaid-source.is-visible {
+  display: block;
+}
+
+.nlm-md .mermaid-error,
+.msg .body.md .mermaid-error {
+  color: var(--danger);
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+/* ECharts */
+.nlm-md .echarts-block.is-collapsed .echarts-viewport,
+.nlm-md .echarts-block.is-collapsed .echarts-source,
+.msg .body.md .echarts-block.is-collapsed .echarts-viewport,
+.msg .body.md .echarts-block.is-collapsed .echarts-source {
+  display: none !important;
+}
+
+.nlm-md .echarts-block.is-collapsed .echarts-toolbar,
+.msg .body.md .echarts-block.is-collapsed .echarts-toolbar {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+
+.nlm-md .echarts-block.is-collapsed .icon-chevron,
+.msg .body.md .echarts-block.is-collapsed .icon-chevron {
+  transform: rotate(-90deg);
+}
+
+.nlm-md .echarts-block,
+.msg .body.md .echarts-block {
+  margin: 0.5em 0;
+  padding: 4px 6px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: hsl(var(--foreground) / 0.04);
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.nlm-md .echarts-block.is-collapsed,
+.msg .body.md .echarts-block.is-collapsed {
+  padding-bottom: 4px;
+}
+
+.nlm-md .echarts-toolbar,
+.msg .body.md .echarts-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 4px;
+  min-height: 22px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.nlm-md .echarts-status-inline,
+.msg .body.md .echarts-status-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--muted);
+  padding-right: 4px;
+}
+
+.nlm-md .echarts-status-inline.is-error,
+.msg .body.md .echarts-status-inline.is-error {
+  color: #f0a0a0;
+}
+
+.nlm-md .echarts-viewport,
+.msg .body.md .echarts-viewport {
+  overflow: hidden;
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+.nlm-md .echarts-stage,
+.msg .body.md .echarts-stage {
+  width: 100%;
+  height: 320px;
+  min-height: 160px;
+}
+
+.nlm-md .echarts-source,
+.msg .body.md .echarts-source {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: hsl(var(--foreground) / 0.05);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  white-space: pre;
+  line-height: 1.45;
+  scrollbar-width: none;
+}
+
+.nlm-md .katex-display,
+.nlm-md .katex-display-host,
+.msg .body.md .katex-display,
+.msg .body.md .katex-display-host {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.35em 0;
+  max-width: 100%;
+  text-align: center;
+}
+
+.nlm-md .katex-inline-host,
+.msg .body.md .katex-inline-host {
+  display: inline;
+}
+
+.nlm-md .katex,
+.msg .body.md .katex {
+  font-size: 1.05em;
+}
+
+.nlm-md .katex-fallback,
+.msg .body.md .katex-fallback {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.echarts-fs-stage {
+  width: 100%;
+  height: 100%;
+  min-height: 60vh;
+}
+
+html.echarts-fs-open {
+  overflow: hidden;
+}
+
+/* Mermaid fullscreen — must be position:fixed or overlays blow page height */
+.mermaid-fs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 12px;
+  background: var(--mask);
+  backdrop-filter: blur(4px);
+  animation: nlm-fade 140ms ease both;
+}
+
+.mermaid-fs-panel {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-solid);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.mermaid-fs-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.mermaid-fs-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mermaid-fs-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mermaid-fs-zoom-label {
+  min-width: 3.2em;
+  text-align: center;
+  font-family: var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.mermaid-fs-toolbar .mermaid-tool-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: hsl(0 0% 100% / 0.04);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-xs);
+}
+
+.mermaid-fs-toolbar .mermaid-tool-btn.icon-btn {
+  width: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mermaid-fs-toolbar .mermaid-tool-btn:hover {
+  border-color: hsl(var(--primary) / 0.45);
+  color: var(--accent);
+}
+
+.mermaid-fs-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+  background:
+    radial-gradient(ellipse at center, hsl(var(--primary) / 0.04), transparent 55%),
+    hsl(var(--background));
+}
+
+.mermaid-fs-viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.mermaid-fs-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  user-select: none;
+}
+
+.mermaid-fs-stage svg {
+  display: block;
+  max-width: none;
+  height: auto;
+  pointer-events: none;
+  shape-rendering: geometricPrecision;
+  text-rendering: geometricPrecision;
+}
+
+.mermaid-fs-source {
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  white-space: pre;
+  max-width: 80vw;
+}
+
+html.mermaid-fs-open {
+  overflow: hidden;
+}
+
+/* Draw.io */
+.nlm-md .drawio-block,
+.msg .body.md .drawio-block {
+  margin: 0.55em 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: hsl(var(--foreground) / 0.04);
+  overflow: hidden;
+}
+
+.nlm-md .drawio-toolbar,
+.msg .body.md .drawio-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.nlm-md .drawio-badge,
+.msg .body.md .drawio-badge {
+  font-size: var(--fs-xs);
+  color: #7dd3fc;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.nlm-md .drawio-status-inline,
+.msg .body.md .drawio-status-inline {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nlm-md .drawio-status-inline.is-error,
+.msg .body.md .drawio-status-inline.is-error {
+  color: var(--danger);
+}
+
+.nlm-md .drawio-viewport,
+.msg .body.md .drawio-viewport {
+  height: 360px;
+  background: hsl(var(--background));
+}
+
+.nlm-md .drawio-frame,
+.drawio-fs-frame,
+.msg .body.md .drawio-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: hsl(var(--background));
+}
+
+.nlm-md .drawio-block.is-collapsed .drawio-viewport,
+.nlm-md .drawio-block.is-collapsed pre.drawio-source,
+.msg .body.md .drawio-block.is-collapsed .drawio-viewport,
+.msg .body.md .drawio-block.is-collapsed pre.drawio-source {
+  display: none !important;
+}
+
+.nlm-md pre.drawio-source,
+.msg .body.md pre.drawio-source {
+  display: none;
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  white-space: pre;
+  line-height: 1.45;
+}
+
+.nlm-md pre.drawio-source.is-visible,
+.msg .body.md pre.drawio-source.is-visible {
+  display: block;
+}
+
+.drawio-fs-viewport {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}

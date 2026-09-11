@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
-import { repairMermaid as repairMermaidApi } from "@/api/endpoints";
+import { toast } from "sonner";
 import {
+  disposeEchartsIn,
   enhanceMarkdownRoot,
   renderDrawioIn,
   renderEchartsIn,
@@ -10,6 +11,11 @@ import {
   renderMermaidIn,
 } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
+import {
+  repairDrawio as repairDrawioApi,
+  repairEcharts as repairEchartsApi,
+  repairMermaid as repairMermaidApi,
+} from "@/api/endpoints";
 
 export type MarkdownBodyProps = {
   content?: string;
@@ -19,6 +25,8 @@ export type MarkdownBodyProps = {
   modelName?: string;
   className?: string;
   onMermaidFixed?: (args: { from: string; to: string }) => void;
+  onEchartsFixed?: (args: { from: string; to: string }) => void;
+  onDrawioFixed?: (args: { from: string; to: string }) => void;
 };
 
 export function MarkdownBody({
@@ -29,12 +37,25 @@ export function MarkdownBody({
   modelName = "",
   className,
   onMermaidFixed,
+  onEchartsFixed,
+  onDrawioFixed,
 }: MarkdownBodyProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState("");
+  const [themeTick, setThemeTick] = useState(0);
   const genRef = useRef(0);
   const onFixedRef = useRef(onMermaidFixed);
   onFixedRef.current = onMermaidFixed;
+  const onEchartsFixedRef = useRef(onEchartsFixed);
+  onEchartsFixedRef.current = onEchartsFixed;
+  const onDrawioFixedRef = useRef(onDrawioFixed);
+  onDrawioFixedRef.current = onDrawioFixed;
+
+  useEffect(() => {
+    const onTheme = () => setThemeTick((n) => n + 1);
+    window.addEventListener("nlm-theme-change", onTheme);
+    return () => window.removeEventListener("nlm-theme-change", onTheme);
+  }, []);
 
   useEffect(() => {
     if (plain) {
@@ -50,6 +71,9 @@ export function MarkdownBody({
       const gen = ++genRef.current;
       const nextHtml = await renderMarkdownWithMath(content, { streaming });
       if (cancelled || gen !== genRef.current) return;
+
+      // Dispose live charts BEFORE React replaces innerHTML (prevents zr `.get` crashes)
+      disposeEchartsIn(rootRef.current);
       setHtml(nextHtml);
 
       // Wait for DOM to commit before enhancing
@@ -59,43 +83,62 @@ export function MarkdownBody({
       const root = rootRef.current;
       if (!root) return;
 
-      root.querySelectorAll(".echarts-block").forEach((block) => {
-        const el = block as HTMLElement & { _nlmChart?: { dispose?: () => void } | null };
-        if (el._nlmChart) {
-          try {
-            el._nlmChart.dispose?.();
-          } catch {
-            /* ignore */
-          }
-          el._nlmChart = null;
-        }
-      });
-
       enhanceMarkdownRoot(root);
       await renderMathIn(root);
 
-      const repair = streaming
+      const modelOpts = {
+        model_provider: modelProvider || undefined,
+        model_name: modelName || undefined,
+      };
+
+      const repairMermaid = streaming
         ? null
         : async (source: string, error: string) => {
-            const data = await repairMermaidApi({
-              source,
-              error,
-              model_provider: modelProvider || undefined,
-              model_name: modelName || undefined,
-            });
+            const data = await repairMermaidApi({ source, error, ...modelOpts });
+            return data?.source || "";
+          };
+
+      const repairEcharts = streaming
+        ? null
+        : async (source: string, error: string) => {
+            const data = await repairEchartsApi({ source, error, ...modelOpts });
+            return data?.source || "";
+          };
+
+      const repairDrawio = streaming
+        ? null
+        : async (source: string, error: string) => {
+            const data = await repairDrawioApi({ source, error, ...modelOpts });
             return data?.source || "";
           };
 
       await Promise.all([
         renderMermaidIn(root, {
-          streaming: false,
-          repair,
-          onFixed: (args) => onFixedRef.current?.(args),
+          streaming,
+          repair: repairMermaid,
+          onFixed: (args) => {
+            onFixedRef.current?.(args);
+            toast.success("Mermaid 已自动修复语法");
+          },
         }),
-        renderEchartsIn(root, { streaming }),
+        renderEchartsIn(root, {
+          streaming,
+          repair: repairEcharts,
+          onFixed: (args) => {
+            onEchartsFixedRef.current?.(args);
+            toast.success("ECharts 已自动修复语法");
+          },
+        }),
       ]);
       if (!streaming) {
-        await renderDrawioIn(root, { streaming: false });
+        await renderDrawioIn(root, {
+          streaming: false,
+          repair: repairDrawio,
+          onFixed: (args) => {
+            onDrawioFixedRef.current?.(args);
+            toast.success("Draw.io 已自动修复语法");
+          },
+        });
       }
     };
 
@@ -107,16 +150,9 @@ export function MarkdownBody({
     return () => {
       cancelled = true;
       if (debounceTimer) clearTimeout(debounceTimer);
-      rootRef.current?.querySelectorAll?.(".echarts-block").forEach((block) => {
-        const el = block as HTMLElement & { _nlmChart?: { dispose?: () => void } | null };
-        try {
-          el._nlmChart?.dispose?.();
-        } catch {
-          /* ignore */
-        }
-      });
+      disposeEchartsIn(rootRef.current);
     };
-  }, [content, streaming, plain, modelProvider, modelName]);
+  }, [content, streaming, plain, modelProvider, modelName, themeTick]);
 
   if (plain) {
     return (

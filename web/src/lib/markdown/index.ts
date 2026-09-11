@@ -16,7 +16,13 @@ export {
   enhanceChatImages,
 } from "./render";
 
-export { renderEchartsIn, normalizeEchartsMarkdown, isEchartsLang, looksLikeEchartsOption } from "./echarts";
+export {
+  renderEchartsIn,
+  disposeEchartsIn,
+  normalizeEchartsMarkdown,
+  isEchartsLang,
+  looksLikeEchartsOption,
+} from "./echarts";
 
 export { renderMathIn, protectMath, applyMathPlaceholders } from "./math";
 

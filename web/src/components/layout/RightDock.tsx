@@ -3,8 +3,15 @@ import { RefreshCw, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import type { DockPane, useRightDock } from "@/hooks/useRightDock";
+import {
+  estimateContextOccupancy,
+  formatCompactTokens,
+  formatSharePercent,
+} from "@/lib/contextEstimate";
 import { pretty } from "@/lib/pretty";
 import type { Plugin, Tool, Usage } from "@/types/api";
 import { cn } from "@/lib/utils";
@@ -30,6 +37,12 @@ export type RightDockProps = {
   reloading?: boolean;
   highlightActivityId?: string | null;
   inspectorPayload?: unknown;
+  /** Context composition inputs (same as composer meter). */
+  contextItems?: any[];
+  modelName?: string;
+  cwd?: string;
+  workspaceTitle?: string;
+  draft?: string;
   onTogglePlugin?: (pluginId: string, enabled: boolean) => void | Promise<void>;
   onReload?: () => void | Promise<void>;
   onReloadOne?: (pluginId: string) => void | Promise<void>;
@@ -64,6 +77,11 @@ export function RightDock({
   reloading = false,
   highlightActivityId,
   inspectorPayload,
+  contextItems = [],
+  modelName = "",
+  cwd = "",
+  workspaceTitle = "",
+  draft = "",
   onTogglePlugin,
   onReload,
   onReloadOne,
@@ -241,6 +259,11 @@ export function RightDock({
                     usage={usage}
                     totalTokens={totalTokens}
                     tools={tools}
+                    contextItems={contextItems}
+                    modelName={modelName}
+                    cwd={cwd}
+                    workspaceTitle={workspaceTitle}
+                    draft={draft}
                     onShowSchema={showSchema}
                   />
                 )}
@@ -484,31 +507,219 @@ function UsagePanel({
   usage,
   totalTokens,
   tools,
+  contextItems = [],
+  modelName = "",
+  cwd = "",
+  workspaceTitle = "",
+  draft = "",
   onShowSchema,
 }: {
   usage: Usage;
   totalTokens: number;
   tools: Tool[];
+  contextItems?: any[];
+  modelName?: string;
+  cwd?: string;
+  workspaceTitle?: string;
+  draft?: string;
   onShowSchema: (tool: Tool) => void;
 }) {
+  const lastPromptTokens = useMemo(() => {
+    for (let i = contextItems.length - 1; i >= 0; i -= 1) {
+      const it = contextItems[i];
+      if (it?.kind === "msg" && it.role === "assistant" && it.usage?.prompt_tokens) {
+        return Number(it.usage.prompt_tokens) || 0;
+      }
+    }
+    return 0;
+  }, [contextItems]);
+
+  const occupancy = useMemo(
+    () =>
+      estimateContextOccupancy({
+        items: contextItems,
+        tools,
+        modelName,
+        cwd,
+        workspaceTitle,
+        lastPromptTokens,
+        draft,
+      }),
+    [contextItems, tools, modelName, cwd, workspaceTitle, lastPromptTokens, draft],
+  );
+
+  const compositionRows = useMemo(() => {
+    const b = occupancy.breakdown;
+    return [
+      {
+        key: "system" as const,
+        label: "系统提示",
+        tokens: b.systemTokens,
+        share: occupancy.windowShares.system,
+        usedShare: occupancy.usedShares.system,
+        color: "bg-[#7aa2c8]",
+      },
+      {
+        key: "tools" as const,
+        label: "工具定义",
+        tokens: b.toolsTokens,
+        share: occupancy.windowShares.tools,
+        usedShare: occupancy.usedShares.tools,
+        color: "bg-[#a78bfa]",
+      },
+      {
+        key: "messages" as const,
+        label: "对话消息",
+        tokens: b.messageTokens,
+        share: occupancy.windowShares.messages,
+        usedShare: occupancy.usedShares.messages,
+        color: "bg-[#3a9cf0]",
+      },
+      {
+        key: "free" as const,
+        label: "剩余可用",
+        tokens: b.freeTokens,
+        share: occupancy.windowShares.free,
+        usedShare: 0,
+        color: "bg-foreground/15",
+      },
+    ];
+  }, [occupancy]);
+
+  const prompt = Number(usage.prompt_tokens || 0);
+  const completion = Number(usage.completion_tokens || 0);
+  const cached = Number(usage.cached_tokens || 0);
+  const ioTotal = Math.max(1, prompt + completion);
+  const ioRows = [
+    {
+      key: "prompt",
+      label: "输入",
+      value: prompt,
+      width: (prompt / ioTotal) * 100,
+      color: "bg-[#3a9cf0]",
+    },
+    {
+      key: "completion",
+      label: "输出",
+      value: completion,
+      width: (completion / ioTotal) * 100,
+      color: "bg-[#2bb8a0]",
+    },
+  ];
+  const cacheShare = prompt > 0 ? cached / prompt : 0;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-2.5">
       <div className="mb-1 rounded-lg border border-border bg-foreground/[0.03] p-2.5">
-        <div className="mb-2 text-[10.5px] uppercase tracking-wide text-muted-foreground">
-          会话累计
+        <div className="mb-2 flex items-center justify-between gap-2 text-[10.5px] uppercase tracking-wide text-muted-foreground">
+          <span>上下文构成</span>
+          <span className="normal-case tracking-normal font-mono text-foreground">
+            {occupancy.percent}% · ~{formatCompactTokens(occupancy.usedTokens)} /{" "}
+            {formatCompactTokens(occupancy.contextWindow)}
+          </span>
         </div>
-        <UsageRow label="输入" value={Number(usage.prompt_tokens || 0)} />
-        <UsageRow label="输出" value={Number(usage.completion_tokens || 0)} />
+        <div className="mb-2 flex h-2 overflow-hidden rounded-full bg-muted" aria-hidden>
+          {compositionRows
+            .filter((r) => r.key !== "free" && r.tokens > 0)
+            .map((row) => (
+              <div
+                key={row.key}
+                className={cn("h-full min-w-[2px]", row.color)}
+                style={{
+                  width: `${Math.max(occupancy.percent * row.usedShare, 0.4)}%`,
+                }}
+                title={row.label}
+              />
+            ))}
+        </div>
+        <div className="space-y-1">
+          {compositionRows.map((row) => (
+            <div key={row.key} className="flex items-center justify-between gap-2 text-xs">
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
+                <span className={cn("size-2 shrink-0 rounded-sm", row.color)} aria-hidden />
+                <span className="truncate">{row.label}</span>
+              </span>
+              <span className="shrink-0 tabular-nums">
+                <span className="mr-2 text-muted-foreground">{formatSharePercent(row.share)}</span>
+                <strong className="font-mono font-medium text-foreground">
+                  ~{formatCompactTokens(row.tokens)}
+                </strong>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-1 rounded-lg border border-border bg-foreground/[0.03] p-2.5">
+        <div className="mb-2 flex items-center justify-between gap-2 text-[10.5px] uppercase tracking-wide text-muted-foreground">
+          <span>会话累计</span>
+          <HoverCard>
+            <HoverCardTrigger asChild>
+              <button type="button" className="normal-case tracking-normal text-primary/80 hover:underline">
+                详情
+              </button>
+            </HoverCardTrigger>
+            <HoverCardContent className="w-56 text-xs">
+              <p className="m-0 font-medium text-foreground">Token 分布</p>
+              <p className="mt-1 m-0 text-muted-foreground">
+                输入 {prompt} · 输出 {completion} · 缓存 {cached}
+              </p>
+            </HoverCardContent>
+          </HoverCard>
+        </div>
+
+        <div className="mb-1.5 flex justify-between text-[10.5px] text-muted-foreground">
+          <span>输入 / 输出占比</span>
+          <span className="font-mono">{totalTokens}</span>
+        </div>
+        <div className="mb-2 flex h-2 overflow-hidden rounded-full bg-muted" aria-hidden>
+          {ioRows
+            .filter((r) => r.value > 0)
+            .map((row) => (
+              <div
+                key={row.key}
+                className={cn("h-full min-w-[2px]", row.color)}
+                style={{ width: `${Math.max(row.width, 0.5)}%` }}
+                title={`${row.label} ${row.value}`}
+              />
+            ))}
+        </div>
+        {ioRows.map((row) => (
+          <div key={row.key} className="flex items-center justify-between gap-2 py-0.5 text-xs">
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+              <span className={cn("size-2 rounded-sm", row.color)} aria-hidden />
+              {row.label}
+            </span>
+            <span className="tabular-nums">
+              <span className="mr-2 text-muted-foreground">
+                {formatSharePercent(row.value / ioTotal)}
+              </span>
+              <strong className="font-mono font-medium">{row.value}</strong>
+            </span>
+          </div>
+        ))}
         <UsageRow label="合计" value={totalTokens} />
-        <UsageRow label="缓存命中" value={Number(usage.cached_tokens || 0)} />
-        <UsageRow label="命中率" value={cacheHitRate(usage)} />
+        <div className="mt-1.5 flex items-center justify-between gap-2 py-0.5 text-xs">
+          <span className="text-muted-foreground">缓存命中</span>
+          <span className="tabular-nums">
+            <span className="mr-2 text-muted-foreground">{formatSharePercent(cacheShare)}</span>
+            <strong className="font-mono font-medium">{cached}</strong>
+          </span>
+        </div>
+        <div className="mt-1.5">
+          <div className="mb-1 flex justify-between text-[10.5px] text-muted-foreground">
+            <span>缓存命中率</span>
+            <span className="font-mono">{cacheHitRate(usage)}</span>
+          </div>
+          <Progress value={Math.min(100, cacheShare * 100)} />
+        </div>
         <p className="mt-2 text-[10.5px] text-muted-foreground">
           {usage.estimated
             ? "含估算值（接口未返回 usage 时按约 4 字/token）。"
-            : "优先使用接口返回的 usage；费用估算见输入栏。"}
+            : "优先使用接口返回的 usage；上下文构成为启发式估算。"}
         </p>
       </div>
-      <p className="m-0 text-[10.5px] text-muted-foreground">已启用工具</p>
+      <p className="m-0 text-[10.5px] text-muted-foreground">已启用工具 · {tools.length}</p>
       <div className="flex flex-col gap-1.5">
         {tools.map((t) => (
           <button
@@ -537,7 +748,7 @@ function UsagePanel({
 function UsageRow({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex justify-between py-0.5 text-xs">
-      <span>{label}</span>
+      <span className="text-muted-foreground">{label}</span>
       <strong className="font-mono font-medium">{value}</strong>
     </div>
   );

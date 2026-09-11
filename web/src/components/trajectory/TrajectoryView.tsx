@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import "./TrajectoryView.css";
@@ -26,12 +26,20 @@ export type TrajectoryViewProps = {
   className?: string;
 };
 
+const KIND_FILTERS = ["all", "tool", "model", "system", "error"] as const;
+
 function kindClass(row: TrajectoryRow) {
   return cn(
     `tr-${row.kind || "system"}`,
     row.error && "tr-error",
     row.phase && `tr-${row.phase}`,
   );
+}
+
+function matchesFilter(row: TrajectoryRow, filter: string) {
+  if (filter === "all") return true;
+  if (filter === "error") return !!row.error;
+  return String(row.kind || "").toLowerCase().includes(filter);
 }
 
 export function TrajectoryView({
@@ -45,12 +53,40 @@ export function TrajectoryView({
 }: TrajectoryViewProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [userPinned, setUserPinned] = useState(false);
+  const [filter, setFilter] = useState<(typeof KIND_FILTERS)[number]>("all");
+
+  const visible = useMemo(
+    () => rows.filter((r) => matchesFilter(r, filter)),
+    [rows, filter],
+  );
 
   useEffect(() => {
     if (!followTail || userPinned) return;
     const el = scrollerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [rows.length, followTail, userPinned]);
+  }, [visible.length, followTail, userPinned]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key !== "j" && e.key !== "k") return;
+      if (!visible.length) return;
+      e.preventDefault();
+      const idx = Math.max(
+        0,
+        visible.findIndex((r) => r.id === selectedId),
+      );
+      const next =
+        e.key === "j"
+          ? visible[Math.min(visible.length - 1, (idx < 0 ? 0 : idx) + 1)]
+          : visible[Math.max(0, (idx < 0 ? 0 : idx) - 1)];
+      if (!next) return;
+      onSelect?.(next.id);
+      onInspect?.(next);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [visible, selectedId, onSelect, onInspect]);
 
   const onScroll = () => {
     const el = scrollerRef.current;
@@ -64,6 +100,23 @@ export function TrajectoryView({
     <div className={cn("trajectory", className)}>
       <div className="traj-toolbar">
         <span className="traj-label">Trajectory · 事件账本</span>
+        <div className="flex flex-wrap items-center gap-1">
+          {KIND_FILTERS.map((k) => (
+            <button
+              key={k}
+              type="button"
+              className={cn(
+                "rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase",
+                filter === k
+                  ? "border-primary/40 bg-primary/15 text-foreground"
+                  : "border-border text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setFilter(k)}
+            >
+              {k}
+            </button>
+          ))}
+        </div>
         <label className="traj-follow">
           <input
             type="checkbox"
@@ -78,10 +131,12 @@ export function TrajectoryView({
         </label>
       </div>
       <div ref={scrollerRef} className="traj-list" onScroll={onScroll}>
-        {!rows.length ? (
-          <div className="traj-empty">发送消息后，此处按回合记录工具与回复。</div>
+        {!visible.length ? (
+          <div className="traj-empty">
+            {rows.length ? "当前筛选无事件。" : "发送消息后，此处按回合记录工具与回复。"}
+          </div>
         ) : (
-          rows.map((row) => (
+          visible.map((row) => (
             <button
               key={row.id}
               type="button"

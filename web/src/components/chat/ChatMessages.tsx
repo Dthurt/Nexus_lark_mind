@@ -5,8 +5,10 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
+  type ReactNode,
   type UIEvent,
 } from "react";
+import { AnimatePresence, motion } from "motion/react";
 
 import { AskUserForm } from "@/components/chat/AskUserForm";
 import { MessageBubble } from "@/components/chat/MessageBubble";
@@ -19,6 +21,11 @@ import { ToolCard } from "@/components/chat/ToolCard";
 import "@/components/tools/registerBuiltinTools";
 import { WorkspacePicker } from "@/components/workspace/WorkspacePicker";
 import type { TimelineItem } from "@/hooks/useChatTimeline";
+import {
+  timelineItemMotion,
+  timelineItemMotionReduced,
+  usePrefersReducedMotion,
+} from "@/lib/motion";
 import type { Workspace } from "@/types/api";
 import { cn } from "@/lib/utils";
 
@@ -120,6 +127,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
   ) {
     const scrollerRef = useRef<HTMLDivElement>(null);
     const followTailRef = useRef(true);
+    const reducedMotion = usePrefersReducedMotion();
+    const itemMotion = reducedMotion ? timelineItemMotionReduced : timelineItemMotion;
 
     useImperativeHandle(ref, () => ({
       get el() {
@@ -164,17 +173,26 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       followTailRef.current = nearBottom(e.currentTarget);
     }
 
+    function wrapMotion(id: string, child: ReactNode) {
+      return (
+        <motion.div key={id} layout={!reducedMotion} {...itemMotion} className="w-full">
+          {child}
+        </motion.div>
+      );
+    }
+
     return (
       <div
         ref={scrollerRef}
         className={cn(
           "messages flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain px-0.5 pb-3 pt-4",
+          "[scrollbar-gutter:stable]",
           className,
         )}
         onScroll={onScroll}
       >
         {!items.length ? (
-          <div className="empty-state m-auto px-4 py-10 text-center text-muted-foreground">
+          <div className="empty-state m-auto px-4 py-10 text-center text-muted-foreground animate-in fade-in duration-300">
             <div className="empty-brand mb-2 bg-gradient-to-r from-white via-[#8ec8f5] to-[#6fd4c0] bg-clip-text text-[22px] font-bold tracking-tight text-transparent">
               Nexus Lark Mind
             </div>
@@ -192,94 +210,87 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
           </div>
         ) : null}
 
-        {blocks.map((block) => {
-          if (block.kind === "msg") {
-            return (
-              <MessageBubble
-                key={block.id}
-                item={block.item as any}
-                modelProvider={modelProvider}
-                modelName={modelName}
-                onAcceptPlan={() => onAcceptPlan?.(block.item)}
-              />
-            );
-          }
-          if (block.kind === "approval") {
-            return (
-              <ToolApprovalCard
-                key={block.id}
-                item={block.item as any}
-                onResolve={(ev) =>
-                  onResolveApproval?.({ item: block.item, action: ev.action })
-                }
-              />
-            );
-          }
-          if (block.kind === "ask") {
-            return (
-              <AskUserForm
-                key={block.id}
-                item={block.item as any}
-                onSubmit={(ev) =>
-                  onResolveAsk?.({
-                    item: block.item,
-                    action: "submit",
-                    answers: ev.answers as Record<string, unknown> | undefined,
-                  })
-                }
-                onDismiss={() => onResolveAsk?.({ item: block.item, action: "deny" })}
-              />
-            );
-          }
-          if (block.kind === "plan_review") {
-            return (
-              <PlanReviewCard
-                key={block.id}
-                item={block.item as any}
-                modelProvider={modelProvider}
-                modelName={modelName}
-                onResolve={(ev) =>
-                  onResolvePlanReview?.({
-                    item: block.item,
-                    action: ev.action,
-                    feedback: ev.feedback || "",
-                  })
-                }
-              />
-            );
-          }
-          if (block.kind === "todos") {
-            return <TodoListCard key={block.id} item={block.item as any} />;
-          }
-          if (block.kind === "subagent") {
-            return (
-              <SubagentCard
-                key={block.id}
-                item={block.item as any}
-                onInspect={onInspectTool}
-              />
-            );
-          }
-          if (block.kind === "tools") {
-            if (block.tools.length > 1) {
-              return (
-                <ToolCallGroup
-                  key={block.id}
-                  tools={block.tools as any}
-                  onInspect={onInspectTool}
-                />
+        <AnimatePresence initial={false} mode="popLayout">
+          {blocks.map((block) => {
+            if (block.kind === "msg") {
+              return wrapMotion(
+                block.id,
+                <MessageBubble
+                  item={block.item as any}
+                  modelProvider={modelProvider}
+                  modelName={modelName}
+                  onAcceptPlan={() => onAcceptPlan?.(block.item)}
+                />,
               );
             }
-            return (
-              <ToolCard
-                key={block.id}
-                item={block.tools[0] as any}
-                onInspect={onInspectTool}
-              />
-            );
-          }
-          return null;
-        })}
+            if (block.kind === "approval") {
+              return wrapMotion(
+                block.id,
+                <ToolApprovalCard
+                  item={block.item as any}
+                  onResolve={(ev) =>
+                    onResolveApproval?.({ item: block.item, action: ev.action })
+                  }
+                />,
+              );
+            }
+            if (block.kind === "ask") {
+              return wrapMotion(
+                block.id,
+                <AskUserForm
+                  item={block.item as any}
+                  onSubmit={(ev) =>
+                    onResolveAsk?.({
+                      item: block.item,
+                      action: "submit",
+                      answers: ev.answers as Record<string, unknown> | undefined,
+                    })
+                  }
+                  onDismiss={() => onResolveAsk?.({ item: block.item, action: "deny" })}
+                />,
+              );
+            }
+            if (block.kind === "plan_review") {
+              return wrapMotion(
+                block.id,
+                <PlanReviewCard
+                  item={block.item as any}
+                  modelProvider={modelProvider}
+                  modelName={modelName}
+                  onResolve={(ev) =>
+                    onResolvePlanReview?.({
+                      item: block.item,
+                      action: ev.action,
+                      feedback: ev.feedback || "",
+                    })
+                  }
+                />,
+              );
+            }
+            if (block.kind === "todos") {
+              return wrapMotion(block.id, <TodoListCard item={block.item as any} />);
+            }
+            if (block.kind === "subagent") {
+              return wrapMotion(
+                block.id,
+                <SubagentCard item={block.item as any} onInspect={onInspectTool} />,
+              );
+            }
+            if (block.kind === "tools") {
+              if (block.tools.length > 1) {
+                return wrapMotion(
+                  block.id,
+                  <ToolCallGroup tools={block.tools as any} onInspect={onInspectTool} />,
+                );
+              }
+              return wrapMotion(
+                block.id,
+                <ToolCard item={block.tools[0] as any} onInspect={onInspectTool} />,
+              );
+            }
+            return null;
+          })}
+        </AnimatePresence>
       </div>
     );
   },

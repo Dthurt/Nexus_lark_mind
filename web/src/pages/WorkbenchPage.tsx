@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ChatMessages } from "@/components/chat/ChatMessages";
+import { CommandPalette } from "@/components/command/CommandPalette";
 import { Composer } from "@/components/composer/Composer";
 import { RightDock } from "@/components/layout/RightDock";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -14,6 +15,7 @@ import { gitInfo, getPluginCalls, deleteSession as apiDeleteSession } from "@/ap
 import { useChatActions } from "@/hooks/useChatActions";
 import { useChatStream } from "@/hooks/useChatStream";
 import { useChatTimeline } from "@/hooks/useChatTimeline";
+import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { usePlugins } from "@/hooks/usePlugins";
 import { useProviders } from "@/hooks/useProviders";
 import { useRightDock } from "@/hooks/useRightDock";
@@ -22,6 +24,7 @@ import { useTrajectory } from "@/hooks/useTrajectory";
 import { useWorkspaces } from "@/hooks/useWorkspaces";
 import { cn } from "@/lib/utils";
 import type { Workspace } from "@/types/api";
+import { toast } from "sonner";
 import "@/styles/workbench.css";
 
 export type WorkbenchPageProps = {
@@ -59,6 +62,7 @@ export function WorkbenchPage({
   const timeline = useChatTimeline();
   const trajectory = useTrajectory();
   const dock = useRightDock();
+  const commandPalette = useCommandPalette();
 
   const {
     sessionId,
@@ -525,6 +529,7 @@ export function WorkbenchPage({
             onToggleSidebar={toggleSidebar}
             onToggleRail={toggleRail}
             onClear={() => void clearSession()}
+            onOpenCommand={commandPalette.show}
           />
 
           <section className="nlm-chat-panel" aria-label="对话">
@@ -572,6 +577,8 @@ export function WorkbenchPage({
               multitask={actions.multitask}
               onMultitaskChange={actions.setMultitask}
               sessionUsage={sessionUsage}
+              items={timeline.items}
+              tools={tools}
               cwd={cwd}
               workspaceTitle={workspaceTitle}
               workspaceKind={workspaceKind}
@@ -597,11 +604,19 @@ export function WorkbenchPage({
           reloading={reloading}
           highlightActivityId={highlightId}
           inspectorPayload={dock.inspectorPayload}
+          contextItems={timeline.items}
+          modelName={modelName}
+          cwd={cwd}
+          workspaceTitle={workspaceTitle}
+          draft={actions.input}
           onTogglePlugin={async (id, enabled) => {
             try {
               await togglePlugin(id, enabled);
+              toast.success(enabled ? `已启用 ${id}` : `已停用 ${id}`);
             } catch (err: any) {
-              setStatus(String(err?.message || err));
+              const msg = String(err?.message || err);
+              setStatus(msg);
+              toast.error(msg);
               await loadPlugins();
             }
           }}
@@ -609,28 +624,38 @@ export function WorkbenchPage({
             try {
               await reloadPlugins(null);
               setStatus("plugins reloaded");
+              toast.success("插件已重载");
             } catch (err: any) {
-              setStatus(String(err?.message || err));
+              const msg = String(err?.message || err);
+              setStatus(msg);
+              toast.error(msg);
             }
           }}
           onReloadOne={async (pluginId) => {
             try {
               await reloadPlugins(pluginId);
               setStatus(`reloaded ${pluginId}`);
+              toast.success(`已重载 ${pluginId}`);
             } catch (err: any) {
-              setStatus(String(err?.message || err));
+              const msg = String(err?.message || err);
+              setStatus(msg);
+              toast.error(msg);
             }
           }}
           onRetryPlugin={async (pluginId) => {
             try {
               await togglePlugin(pluginId, true);
               setStatus(`retry enabled ${pluginId}`);
+              toast.success(`已重试启用 ${pluginId}`);
             } catch {
               try {
                 await reloadPlugins(pluginId);
                 await togglePlugin(pluginId, true);
+                toast.success(`已重试启用 ${pluginId}`);
               } catch (err: any) {
-                setStatus(String(err?.message || err));
+                const msg = String(err?.message || err);
+                setStatus(msg);
+                toast.error(msg);
               }
             }
           }}
@@ -638,13 +663,33 @@ export function WorkbenchPage({
             try {
               await savePluginConfig(pluginId, values);
               setStatus(`已保存 ${pluginId} 配置`);
+              toast.success(`已保存 ${pluginId} 配置`);
             } catch (err: any) {
-              setStatus(String(err?.message || err));
+              const msg = String(err?.message || err);
+              setStatus(msg);
+              toast.error(msg);
               throw err;
             }
           }}
         />
       </div>
+
+      <CommandPalette
+        open={commandPalette.open}
+        onOpenChange={commandPalette.setOpen}
+        conversations={conversations}
+        onNewChat={startNewConversation}
+        onSelectChat={(id) => void switchConversation(id)}
+        onClearChat={() => void clearSession()}
+        onSetCenterView={setCenterView}
+        onOpenDockTab={(tab) => {
+          dock.expand();
+          dock.openTab(tab, { reveal: true });
+          if (narrowUi) setLayout((s) => ({ ...s, railOpen: true }));
+        }}
+        onToggleTools={() => setToolsEnabled((v) => !v)}
+        onOpenSettings={onOpenSettings}
+      />
     </>
   );
 }

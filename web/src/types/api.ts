@@ -364,6 +364,12 @@ export type MermaidRepairResult = {
   raw?: unknown;
 };
 
+export type EchartsRepairBody = MermaidRepairBody;
+export type EchartsRepairResult = MermaidRepairResult;
+
+export type DrawioRepairBody = MermaidRepairBody;
+export type DrawioRepairResult = MermaidRepairResult;
+
 export type GitInfo = {
   branch: string;
   is_repo?: boolean;

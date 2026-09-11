@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 
 export type ActivityHintProps = {
@@ -61,39 +62,45 @@ export function ActivityHint({
 
   if (!active || !label) return null;
 
+  const elapsedSec = active && startedAt ? Math.max(0, (now - startedAt) / 1000) : 0;
+  const indeterminate = Math.min(92, 12 + elapsedSec * 4);
+
   return (
     <div
       className={cn(
-        "flex min-h-7 items-center gap-2 px-1 py-1.5 text-xs text-muted-foreground",
+        "flex min-h-7 flex-col gap-1 px-1 py-1.5 text-xs text-muted-foreground",
         embedded && "mt-0.5 min-h-[22px] px-0 py-0.5",
         className,
       )}
       role="status"
       aria-live="polite"
     >
-      <span
-        className={cn(
-          "size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/25",
-          phaseIconClass(phase),
-        )}
-        aria-hidden
-      />
-      <span className="inline-flex min-w-0 flex-1 items-baseline gap-1.5">
-        <span className="whitespace-nowrap text-foreground/85">{label}</span>
-        {detail ? (
-          <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">
-            {detail}
+      <div className="flex items-center gap-2">
+        <span
+          className={cn(
+            "size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/25",
+            phaseIconClass(phase),
+          )}
+          aria-hidden
+        />
+        <span className="inline-flex min-w-0 flex-1 items-baseline gap-1.5">
+          <span className="whitespace-nowrap text-foreground/85">{label}</span>
+          {detail ? (
+            <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">
+              {detail}
+            </span>
+          ) : null}
+        </span>
+        {elapsedText ? (
+          <span
+            className="shrink-0 font-mono text-[10px] tracking-wide text-muted-foreground/85"
+            title={`已进行 ${elapsedText}`}
+          >
+            {elapsedText}
           </span>
         ) : null}
-      </span>
-      {elapsedText ? (
-        <span
-          className="shrink-0 font-mono text-[10px] tracking-wide text-muted-foreground/85"
-          title={`已进行 ${elapsedText}`}
-        >
-          {elapsedText}
-        </span>
-      ) : null}
+      </div>
+      <Progress value={indeterminate} className="h-0.5" />
     </div>
   );
 }

@@ -46,10 +46,39 @@ function messageText(item: any) {
   return item.content || "";
 }
 
+export type ContextBreakdown = {
+  systemTokens: number;
+  toolsTokens: number;
+  messageTokens: number;
+  freeTokens: number;
+};
+
+export type ContextOccupancy = {
+  contextWindow: number;
+  usedTokens: number;
+  freeTokens: number;
+  percent: number;
+  estimated: boolean;
+  breakdown: ContextBreakdown;
+  /** Share of full window (sums ≈ 1). */
+  windowShares: {
+    system: number;
+    tools: number;
+    messages: number;
+    free: number;
+  };
+  /** Share of *used* pie only (sums ≈ 1). */
+  usedShares: {
+    system: number;
+    tools: number;
+    messages: number;
+  };
+};
+
 /**
- * Build occupancy + breakdown for the composer meter.
+ * Build occupancy + breakdown for the composer meter / usage dock.
  */
-export function estimateContextOccupancy(opts: any = {}) {
+export function estimateContextOccupancy(opts: any = {}): ContextOccupancy {
   const items = opts.items || [];
   const tools = opts.tools || [];
   const modelName = opts.modelName || "";
@@ -72,7 +101,7 @@ export function estimateContextOccupancy(opts: any = {}) {
         name: t.openai_name || t.name,
         description: t.description,
         parameters: t.parameters || t.inputSchema,
-      })
+      }),
     );
   }
 
@@ -90,10 +119,16 @@ export function estimateContextOccupancy(opts: any = {}) {
   // Prefer last provider prompt_tokens as anchor when larger (more complete).
   const anchor = Number(opts.lastPromptTokens || 0);
   const usedTokens = Math.min(contextWindow, Math.max(heuristicUsed, anchor));
-  const freeTokens = Math.max(0, contextWindow - usedTokens);
-  const percent = contextWindow > 0 ? Math.min(100, Math.round((usedTokens / contextWindow) * 100)) : 0;
+  // Attribute provider-only delta to conversation so composition still fills the used ring.
+  if (usedTokens > heuristicUsed) {
+    messageTokens += usedTokens - heuristicUsed;
+  }
 
-  const breakdownTotal = systemTokens + toolsTokens + messageTokens || 1;
+  const freeTokens = Math.max(0, contextWindow - usedTokens);
+  const percent =
+    contextWindow > 0 ? Math.min(100, Math.round((usedTokens / contextWindow) * 100)) : 0;
+
+  const breakdownTotal = Math.max(1, systemTokens + toolsTokens + messageTokens);
 
   return {
     contextWindow,
@@ -107,7 +142,12 @@ export function estimateContextOccupancy(opts: any = {}) {
       messageTokens,
       freeTokens,
     },
-    // Share of the *used* pie (for colored bar inside used portion)
+    windowShares: {
+      system: systemTokens / contextWindow,
+      tools: toolsTokens / contextWindow,
+      messages: messageTokens / contextWindow,
+      free: freeTokens / contextWindow,
+    },
     usedShares: {
       system: systemTokens / breakdownTotal,
       tools: toolsTokens / breakdownTotal,
@@ -125,4 +165,11 @@ export function formatCompactTokens(value: number) {
   }
   const m = n / 1_000_000;
   return `${m >= 100 ? Math.round(m) : Math.round(m * 10) / 10}M`;
+}
+
+export function formatSharePercent(share: number) {
+  const pct = Math.max(0, (Number(share) || 0) * 100);
+  if (pct > 0 && pct < 0.1) return "<0.1%";
+  if (pct < 10) return `${Math.round(pct * 10) / 10}%`;
+  return `${Math.round(pct)}%`;
 }
