@@ -22,11 +22,12 @@ Flags persist in `localStorage` (`nlm_agent_mode`, `nlm_auto_accept`) and Redis 
 
 ## Tool approval
 
-SSE: `task.tool_approval` → `ToolApprovalCard`.
+SSE: `task.tool_approval` → `ApprovalDock`（输入框上方审批条）。
 
-- **允许** — run this call  
-- **允许并自动接受** — allow + set session `auto_accept=true`  
-- **拒绝** — synthetic tool error back to the model  
+- **仅允许这次** — 只放行本次调用  
+- **本会话自动接受** — 放行并开启 Accept（后续请求带 `auto_accept`）  
+- **拒绝** — 合成工具错误回传模型  
+- 超时按工具类型自动拒绝（shell 60s / 写编辑 45s / 其他 30s） 
 
 Resolve: `POST /api/sessions/{id}/approvals` → Kernel `POST /rpc/gates/resolve`.
 

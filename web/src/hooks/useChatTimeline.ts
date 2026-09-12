@@ -1,5 +1,4 @@
 import { useCallback, useRef, useState } from "react";
-import { approvalTimeoutMs } from "@/lib/approvalTimeout";
 import { pretty } from "@/lib/pretty";
 
 let msgSeq = 0;
@@ -702,7 +701,6 @@ export function useChatTimeline() {
           arguments: payload?.arguments || {},
           status: "pending",
           activityId,
-          expiresAt: Date.now() + approvalTimeoutMs(payload?.base || payload?.name),
         };
         list.push(item);
       } else {
@@ -711,7 +709,6 @@ export function useChatTimeline() {
         item.base = payload?.base || item.base;
         if (item.status !== "allowed" && item.status !== "denied") {
           item.status = "pending";
-          item.expiresAt = Date.now() + approvalTimeoutMs(item.base || item.name);
         }
       }
       commit(list);
@@ -958,7 +955,6 @@ export function useChatTimeline() {
             : meta.tool_call
               ? [meta.tool_call]
               : [];
-          if (!calls.length && meta.tool_calls?.[0]) calls.push(meta.tool_calls[0]);
           for (const tc of calls) {
             if (tc) renderToolCall(tc);
           }

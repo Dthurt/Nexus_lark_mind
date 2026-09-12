@@ -30,11 +30,9 @@ function looksBinary(mime: string, content: string) {
     return true;
   }
   const sample = content.slice(0, 4096);
+  // Control chars (except tab/LF/CR) → binary. Avoid base64 heuristics that
+  // false-positive on minified JSON / long alphanumeric tokens.
   if (/[\x00-\x08\x0e-\x1f]/.test(sample)) return true;
-  // Base64-looking blobs without printable newlines are likely binary payloads.
-  if (sample.length > 200 && /^[A-Za-z0-9+/=\s]+$/.test(sample) && !/\n{2,}/.test(sample)) {
-    if (/^(image|application)\//i.test(mime)) return true;
-  }
   return false;
 }
 

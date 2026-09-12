@@ -11,8 +11,6 @@ export type ApprovalDockItem = {
   base?: string;
   arguments?: Record<string, any>;
   status?: string;
-  /** Absolute ms deadline from timeline; preferred over default timeout. */
-  expiresAt?: number;
 };
 
 export type ApprovalDockProps = {
@@ -43,11 +41,8 @@ function summarize(item: ApprovalDockItem) {
   }
 }
 
-function initialSeconds(item: ApprovalDockItem | null) {
+function timeoutSeconds(item: ApprovalDockItem | null) {
   if (!item) return approvalTimeoutSec();
-  if (item.expiresAt && item.expiresAt > Date.now()) {
-    return Math.max(1, Math.ceil((item.expiresAt - Date.now()) / 1000));
-  }
   return approvalTimeoutSec(item.base || item.name);
 }
 
@@ -60,8 +55,8 @@ export function ApprovalDock({ items, onResolve, className }: ApprovalDockProps)
   const current = pending[0] || null;
   const queueLeft = Math.max(0, pending.length - 1);
 
-  const [secondsLeft, setSecondsLeft] = useState(() => initialSeconds(current));
-  const totalSecRef = useRef(initialSeconds(current));
+  const [secondsLeft, setSecondsLeft] = useState(() => timeoutSeconds(current));
+  const totalSecRef = useRef(timeoutSeconds(current));
   const resolvingRef = useRef(false);
   const callIdRef = useRef<string | null>(null);
   const onResolveRef = useRef(onResolve);
@@ -76,7 +71,7 @@ export function ApprovalDock({ items, onResolve, className }: ApprovalDockProps)
     if (callIdRef.current !== current.callId) {
       callIdRef.current = current.callId;
       resolvingRef.current = false;
-      const sec = initialSeconds(current);
+      const sec = timeoutSeconds(current);
       totalSecRef.current = sec;
       setSecondsLeft(sec);
     }
