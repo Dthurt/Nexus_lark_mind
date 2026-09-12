@@ -292,23 +292,29 @@ html.code-fs-open {
   overflow: auto;
   max-width: 100%;
   max-height: 360px;
+  min-height: 120px;
   border-radius: 4px;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  background: hsl(var(--foreground) / 0.02);
 }
 
 .nlm-md .mermaid-stage,
 .msg .body.md .mermaid-stage {
   display: flex;
   justify-content: center;
-  width: max-content;
-  min-width: 100%;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+  min-height: 80px;
+  padding: 8px 4px;
   transition: transform 120ms ease;
 }
 
 .nlm-md .mermaid-stage svg,
 .msg .body.md .mermaid-stage svg {
-  max-width: none;
+  max-width: 100%;
   height: auto;
+  display: block;
 }
 
 .nlm-md .mermaid-source,
@@ -597,6 +603,13 @@ html.echarts-fs-open {
   pointer-events: none;
   shape-rendering: geometricPrecision;
   text-rendering: geometricPrecision;
+}
+
+.mermaid-fs-loading {
+  padding: 24px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
 }
 
 .mermaid-fs-source {

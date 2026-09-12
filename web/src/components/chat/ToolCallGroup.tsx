@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { ToolCard } from "@/components/chat/ToolCard";
@@ -27,11 +27,8 @@ function shortName(name?: string) {
 
 export function ToolCallGroup({ tools, onInspect, onStop, className }: ToolCallGroupProps) {
   const pending = tools.some((t) => isToolPending(t));
-  const [open, setOpen] = useState(pending);
-
-  useEffect(() => {
-    if (pending) setOpen(true);
-  }, [pending]);
+  // Default collapsed — summary bar shows counts / current tool; expand on demand.
+  const [open, setOpen] = useState(false);
 
   const stats = useMemo(() => {
     let running = 0;

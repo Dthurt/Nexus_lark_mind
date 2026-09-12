@@ -1,5 +1,7 @@
 /** Mermaid fullscreen: crisp SVG size zoom + pan (no CSS scale blur). */
 
+import { diagramInk, diagramPanelBg, mermaidThemeName } from "./diagramTheme";
+
 function iconSvg(name: string) {
   const common =
     'width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
@@ -20,9 +22,83 @@ export function closeMermaidFullscreen() {
   document.documentElement.classList.remove("mermaid-fs-open");
 }
 
+async function renderSvgFromSource(source: string): Promise<SVGSVGElement | null> {
+  const text = (source || "").trim();
+  if (!text) return null;
+  const mod = await import("mermaid");
+  const mermaid = (mod as any).default || mod;
+  const theme = mermaidThemeName();
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "loose",
+    theme,
+    themeVariables: {
+      background: diagramPanelBg(),
+      primaryTextColor: diagramInk(),
+    },
+  });
+  const id = `nlm-mmd-fs-${Date.now()}`;
+  try {
+    const result = await mermaid.render(id, text);
+    const svgHtml = typeof result === "string" ? result : result?.svg;
+    if (!svgHtml) return null;
+    const wrap = document.createElement("div");
+    wrap.innerHTML = svgHtml;
+    return wrap.querySelector("svg");
+  } finally {
+    document.getElementById(id)?.remove();
+    document.querySelectorAll(`svg[id^="${id}"], [id^="d${id}"]`).forEach((n) => n.remove());
+  }
+}
+
+function mountSvg(
+  fsStage: HTMLElement,
+  srcSvg: SVGSVGElement,
+): { svgEl: SVGSVGElement; baseW: number; baseH: number } {
+  const svgEl = srcSvg.cloneNode(true) as SVGSVGElement;
+  svgEl.removeAttribute("style");
+  svgEl.style.maxWidth = "none";
+  svgEl.style.height = "auto";
+  svgEl.style.display = "block";
+  const vb = svgEl.viewBox?.baseVal;
+  let baseW = 400;
+  let baseH = 300;
+  const wAttr = parseFloat(svgEl.getAttribute("width") || "");
+  const hAttr = parseFloat(svgEl.getAttribute("height") || "");
+  if (vb && vb.width > 0 && vb.height > 0) {
+    baseW = vb.width;
+    baseH = vb.height;
+  } else if (wAttr > 0 && hAttr > 0 && !/%/.test(String(svgEl.getAttribute("width") || ""))) {
+    baseW = wAttr;
+    baseH = hAttr;
+  } else {
+    try {
+      const b = srcSvg.getBBox?.();
+      if (b && b.width > 1 && b.height > 1) {
+        baseW = b.width;
+        baseH = b.height;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!svgEl.getAttribute("viewBox")) {
+    svgEl.setAttribute("viewBox", `0 0 ${baseW} ${baseH}`);
+  }
+  svgEl.setAttribute("width", String(baseW));
+  svgEl.setAttribute("height", String(baseH));
+  svgEl.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  fsStage.innerHTML = "";
+  fsStage.appendChild(svgEl);
+  return { svgEl, baseW, baseH };
+}
+
 export function openMermaidFullscreen(block: HTMLElement) {
   closeMermaidFullscreen();
-  const source = block.dataset.mermaidSource || "";
+  const source =
+    block.dataset.mermaidSource ||
+    block.querySelector("pre.mermaid-source, pre.mermaid")?.textContent ||
+    "";
   const stage = block.querySelector(".mermaid-stage");
   const overlay = document.createElement("div");
   overlay.className = "mermaid-fs-overlay";
@@ -40,7 +116,7 @@ export function openMermaidFullscreen(block: HTMLElement) {
         </div>
       </div>
       <div class="mermaid-fs-viewport" tabindex="0">
-        <div class="mermaid-fs-stage"></div>
+        <div class="mermaid-fs-stage"><div class="mermaid-fs-loading">渲染中…</div></div>
       </div>
     </div>
   `;
@@ -48,43 +124,10 @@ export function openMermaidFullscreen(block: HTMLElement) {
   const fsStage = overlay.querySelector(".mermaid-fs-stage") as HTMLElement;
   const zoomLabel = overlay.querySelector("[data-fs-zoom-label]");
   const srcSvg = stage?.querySelector("svg") as SVGSVGElement | null;
+
   let svgEl: SVGSVGElement | null = null;
   let baseW = 400;
   let baseH = 300;
-
-  if (srcSvg) {
-    svgEl = srcSvg.cloneNode(true) as SVGSVGElement;
-    svgEl.removeAttribute("style");
-    svgEl.style.maxWidth = "none";
-    svgEl.style.height = "auto";
-    svgEl.style.display = "block";
-    const vb = svgEl.viewBox?.baseVal;
-    const wAttr = parseFloat(svgEl.getAttribute("width") || "");
-    const hAttr = parseFloat(svgEl.getAttribute("height") || "");
-    if (vb && vb.width > 0 && vb.height > 0) {
-      baseW = vb.width;
-      baseH = vb.height;
-    } else if (wAttr > 0 && hAttr > 0 && !/%/.test(String(svgEl.getAttribute("width") || ""))) {
-      baseW = wAttr;
-      baseH = hAttr;
-    } else {
-      const r = srcSvg.getBoundingClientRect();
-      baseW = r.width || 400;
-      baseH = r.height || 300;
-    }
-    if (!svgEl.getAttribute("viewBox")) {
-      svgEl.setAttribute("viewBox", `0 0 ${baseW} ${baseH}`);
-    }
-    svgEl.setAttribute("width", String(baseW));
-    svgEl.setAttribute("height", String(baseH));
-    svgEl.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    fsStage.appendChild(svgEl);
-  } else {
-    const pre = document.createElement("pre");
-    pre.className = "mermaid-fs-source";
-    pre.textContent = source;
-    fsStage.appendChild(pre);
-  }
 
   const state = { zoom: 1, x: 0, y: 0, dragging: false, lastX: 0, lastY: 0 };
 
@@ -195,6 +238,33 @@ export function openMermaidFullscreen(block: HTMLElement) {
     }
   }
 
+  function afterSvgReady() {
+    const tryFit = (n = 0) => {
+      const vr = viewport.getBoundingClientRect();
+      if ((!vr.width || !vr.height) && n < 12) {
+        requestAnimationFrame(() => tryFit(n + 1));
+        return;
+      }
+      if (svgEl) {
+        try {
+          const b = svgEl.getBBox();
+          if (b.width > 1 && b.height > 1) {
+            baseW = b.width;
+            baseH = b.height;
+            if (!svgEl.getAttribute("viewBox")) {
+              svgEl.setAttribute("viewBox", `${b.x} ${b.y} ${b.width} ${b.height}`);
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      fitToViewport();
+      viewport.focus?.({ preventScroll: true });
+    };
+    requestAnimationFrame(() => tryFit(0));
+  }
+
   overlay.addEventListener("click", onToolbarClick as any);
   overlay.addEventListener("click", (ev) => {
     if (ev.target === overlay) closeMermaidFullscreen();
@@ -210,29 +280,27 @@ export function openMermaidFullscreen(block: HTMLElement) {
   document.body.appendChild(overlay);
   document.documentElement.classList.add("mermaid-fs-open");
 
-  const tryFit = (n = 0) => {
-    const vr = viewport.getBoundingClientRect();
-    if ((!vr.width || !vr.height) && n < 12) {
-      requestAnimationFrame(() => tryFit(n + 1));
-      return;
-    }
-    if (svgEl) {
+  void (async () => {
+    let ready: SVGSVGElement | null = srcSvg;
+    if (!ready) {
       try {
-        const b = svgEl.getBBox();
-        if (b.width > 1 && b.height > 1) {
-          baseW = b.width;
-          baseH = b.height;
-          const hasVb = !!(srcSvg && srcSvg.getAttribute("viewBox"));
-          if (!hasVb) {
-            svgEl.setAttribute("viewBox", `${b.x} ${b.y} ${b.width} ${b.height}`);
-          }
-        }
+        ready = await renderSvgFromSource(source);
       } catch {
-        /* ignore */
+        ready = null;
       }
     }
-    fitToViewport();
-    viewport.focus?.({ preventScroll: true });
-  };
-  requestAnimationFrame(() => tryFit(0));
+    if (!ready) {
+      fsStage.innerHTML = "";
+      const pre = document.createElement("pre");
+      pre.className = "mermaid-fs-source";
+      pre.textContent = source || "（无 Mermaid 源码，无法渲染视图）";
+      fsStage.appendChild(pre);
+      return;
+    }
+    const mounted = mountSvg(fsStage, ready);
+    svgEl = mounted.svgEl;
+    baseW = mounted.baseW;
+    baseH = mounted.baseH;
+    afterSvgReady();
+  })();
 }

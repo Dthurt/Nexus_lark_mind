@@ -238,6 +238,23 @@ export function renderMarkdown(text: string, { streaming = false }: { streaming?
   return html;
 }
 
+/**
+ * Lightweight parse for streaming settled blocks — default GFM renderer only
+ * (no mermaid/echarts hosts, no math placeholders) so partial UI stays calm.
+ */
+export function renderMarkdownLight(text: string) {
+  const src = text || "";
+  if (!src.trim()) return "";
+  const lightRenderer = new marked.Renderer();
+  let html = marked.parse(src, {
+    async: false,
+    gfm: true,
+    breaks: true,
+    renderer: lightRenderer,
+  }) as string;
+  return sanitizeHtml(html);
+}
+
 /** Full pipeline including KaTeX (preferred for chat body). */
 export async function renderMarkdownWithMath(
   text: string,
@@ -906,6 +923,37 @@ function setMermaidStatus(block: HTMLElement, text: string, isError = false, ful
   el.classList.toggle("is-error", !!isError);
 }
 
+function normalizeMermaidSvgSize(svg: SVGSVGElement) {
+  try {
+    const vb = svg.viewBox?.baseVal;
+    let w = parseFloat(svg.getAttribute("width") || "") || 0;
+    let h = parseFloat(svg.getAttribute("height") || "") || 0;
+    const pctW = /%/.test(String(svg.getAttribute("width") || ""));
+    const pctH = /%/.test(String(svg.getAttribute("height") || ""));
+    if ((!w || !h || pctW || pctH) && vb && vb.width > 0 && vb.height > 0) {
+      w = vb.width;
+      h = vb.height;
+    }
+    if ((!w || !h) && typeof svg.getBBox === "function") {
+      const b = svg.getBBox();
+      if (b.width > 0 && b.height > 0) {
+        w = w || b.width;
+        h = h || b.height;
+        if (!svg.getAttribute("viewBox")) {
+          svg.setAttribute("viewBox", `${b.x} ${b.y} ${b.width} ${b.height}`);
+        }
+      }
+    }
+    if (w > 0) svg.setAttribute("width", String(w));
+    if (h > 0) svg.setAttribute("height", String(h));
+    svg.style.maxWidth = "100%";
+    svg.style.height = "auto";
+    svg.style.display = "block";
+  } catch {
+    /* ignore measurement errors off-DOM */
+  }
+}
+
 async function renderOneMermaid(mermaid: any, block: HTMLElement, source: string) {
   const stage = ensureMermaidChrome(block, source);
   if (!stage) return;
@@ -920,10 +968,13 @@ async function renderOneMermaid(mermaid: any, block: HTMLElement, source: string
     }
     stage.innerHTML = svg;
     if (typeof result?.bindFunctions === "function") result.bindFunctions(stage);
+    const svgEl = stage.querySelector("svg") as SVGSVGElement | null;
+    if (svgEl) normalizeMermaidSvgSize(svgEl);
     delete block.dataset.mermaidError;
     setMermaidStatus(block, "");
     block.setAttribute("data-processed", "ok");
     applyMermaidMode(block, "view");
+    applyMermaidCollapsed(block, false);
   } finally {
     cleanupMermaidArtifacts(id);
   }

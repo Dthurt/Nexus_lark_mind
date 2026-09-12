@@ -58,12 +58,17 @@ services:
       ORCHESTRATOR_RPC_URL: "http://orchestrator:8002"
       PLUGINS_DIR: "/app/plugins_volume"
       WEB_STATIC_DIR: "/app/web-static"
+      # Host projects mounted at /workspaces (see README «挂载本地代码目录»)
+      NLM_WORKSPACE_ROOT: "/workspaces"
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
     volumes:
       - ./data:/app/data
       - ./plugins_volume:/app/plugins_volume
       - ./logs:/app/logs
+      # Map a host folder into the container so Agent 工具能读写本地项目。
+      # Override with NLM_HOST_WORKSPACE in .env (Windows example: E:/code or //c/Users/you/code).
+      - ${NLM_HOST_WORKSPACE:-./workspaces}:/workspaces:rw
     ports:
       - "8001:8001"
     depends_on:

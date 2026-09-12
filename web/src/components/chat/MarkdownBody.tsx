@@ -6,10 +6,12 @@ import {
   enhanceMarkdownRoot,
   renderDrawioIn,
   renderEchartsIn,
+  renderMarkdownLight,
   renderMarkdownWithMath,
   renderMathIn,
   renderMermaidIn,
   renderMindmapIn,
+  splitSettledMarkdown,
 } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 import {
@@ -30,9 +32,11 @@ export type MarkdownBodyProps = {
   onDrawioFixed?: (args: { from: string; to: string }) => void;
 };
 
+const STREAM_LIGHT_MS = 120;
+
 /**
- * While streaming: plain text + caret (no remounting rich HTML / diagrams).
- * After stream ends: one full markdown enhance pass — avoids flicker/jump.
+ * Streaming: light-render settled (closed) blocks + plain growing tail.
+ * After stream ends: one full markdown / diagram enhance pass.
  */
 export function MarkdownBody({
   content = "",
@@ -47,8 +51,12 @@ export function MarkdownBody({
 }: MarkdownBodyProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState("");
+  const [streamSettledHtml, setStreamSettledHtml] = useState("");
+  const [streamTail, setStreamTail] = useState("");
   const [themeTick, setThemeTick] = useState(0);
   const genRef = useRef(0);
+  const streamTimerRef = useRef<number | null>(null);
+  const pendingStreamRef = useRef(content);
   const onFixedRef = useRef(onMermaidFixed);
   onFixedRef.current = onMermaidFixed;
   const onEchartsFixedRef = useRef(onEchartsFixed);
@@ -62,8 +70,48 @@ export function MarkdownBody({
     return () => window.removeEventListener("nlm-theme-change", onTheme);
   }, []);
 
-  // Parse markdown → HTML string only. Enhance must wait until React commits
-  // dangerouslySetInnerHTML, otherwise copy/fold chrome never attaches.
+  // Progressive light markdown while streaming (throttled).
+  useEffect(() => {
+    if (plain || !streaming) {
+      if (streamTimerRef.current != null) {
+        window.clearTimeout(streamTimerRef.current);
+        streamTimerRef.current = null;
+      }
+      setStreamSettledHtml("");
+      setStreamTail("");
+      return;
+    }
+
+    pendingStreamRef.current = content;
+    const flush = () => {
+      streamTimerRef.current = null;
+      const { settled, tail } = splitSettledMarkdown(pendingStreamRef.current);
+      setStreamSettledHtml(settled ? renderMarkdownLight(settled) : "");
+      setStreamTail(tail);
+    };
+
+    // Leading paint immediately; coalesce later updates.
+    if (streamTimerRef.current == null) {
+      const delay = !streamSettledHtml && !streamTail ? 0 : STREAM_LIGHT_MS;
+      streamTimerRef.current = window.setTimeout(flush, delay);
+    }
+
+    return () => {
+      /* keep timer — cancelled when streaming/plain flips */
+    };
+  }, [content, streaming, plain]);
+
+  // Flush pending stream paint when streaming ends or unmounts.
+  useEffect(() => {
+    return () => {
+      if (streamTimerRef.current != null) {
+        window.clearTimeout(streamTimerRef.current);
+        streamTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // Final rich markdown after stream completes.
   useEffect(() => {
     if (plain || streaming) {
       disposeEchartsIn(rootRef.current);
@@ -156,17 +204,41 @@ export function MarkdownBody({
     };
   }, [html, streaming, plain, modelProvider, modelName]);
 
-  if (plain || streaming) {
+  if (plain) {
     return (
       <div
         className={cn(
-          "nlm-md body min-w-0 max-w-full whitespace-pre-wrap break-words text-[13.5px] leading-[1.7]",
-          plain && "plain text-[13px]",
+          "nlm-md body min-w-0 max-w-full whitespace-pre-wrap break-words text-[13.5px] leading-[1.7] plain text-[13px]",
           className,
         )}
       >
         {content}
-        {streaming ? <span className="streaming-caret" aria-hidden="true" /> : null}
+      </div>
+    );
+  }
+
+  if (streaming) {
+    return (
+      <div
+        className={cn(
+          "nlm-md md body min-w-0 max-w-full text-[13.5px] leading-[1.7] break-words [&_*:first-child]:mt-0 [&_*:last-child]:mb-0",
+          className,
+        )}
+      >
+        {streamSettledHtml ? (
+          <div
+            className="nlm-md-settled"
+            dangerouslySetInnerHTML={{ __html: streamSettledHtml }}
+          />
+        ) : null}
+        {streamTail || !streamSettledHtml ? (
+          <div className="nlm-md-tail whitespace-pre-wrap break-words">
+            {streamTail || (!streamSettledHtml ? content : "")}
+            <span className="streaming-caret" aria-hidden="true" />
+          </div>
+        ) : (
+          <span className="streaming-caret" aria-hidden="true" />
+        )}
       </div>
     );
   }

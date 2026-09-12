@@ -5,6 +5,7 @@
 
 export {
   renderMarkdown,
+  renderMarkdownLight,
   renderMarkdownWithMath,
   decorateMarkdownLinks,
   enhanceCodeBlocks,
@@ -16,6 +17,8 @@ export {
   enhanceChatImages,
   renderMindmapIn,
 } from "./render";
+
+export { splitSettledMarkdown } from "./streamSplit";
 
 export {
   renderEchartsIn,
