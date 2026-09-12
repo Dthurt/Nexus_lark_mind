@@ -2,6 +2,8 @@
 
 个人自用、高解耦、分层清晰的现代化 AI Agent 编排平台。
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 ## 架构一览
 
 ```
@@ -216,3 +218,7 @@ CI：`.github/workflows/ci.yml`、`.github/workflows/docker-image.yml`（GHCR）
 ## 目录
 
 严格按分层放置，禁止跨层反向依赖。完整说明见 `docs/`。
+
+## 开源许可
+
+本项目采用 [Apache License 2.0](LICENSE) 开源协议发布。
