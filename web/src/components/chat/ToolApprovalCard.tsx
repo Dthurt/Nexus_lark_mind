@@ -60,7 +60,7 @@ export function ToolApprovalCard({ item, onResolve, className }: ToolApprovalCar
             className="h-7 border-emerald-500/50 px-2.5 text-xs text-emerald-400"
             onClick={() => onResolve?.({ action: "allow" })}
           >
-            允许
+            仅允许这次
           </Button>
           <Button
             type="button"
@@ -69,7 +69,7 @@ export function ToolApprovalCard({ item, onResolve, className }: ToolApprovalCar
             className="h-7 border-primary/50 px-2.5 text-xs text-primary"
             onClick={() => onResolve?.({ action: "allow_session" })}
           >
-            允许并自动接受
+            本会话自动接受
           </Button>
           <Button
             type="button"

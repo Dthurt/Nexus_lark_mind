@@ -17,6 +17,10 @@
   border: 1px solid var(--line);
   background: hsl(var(--foreground) / 0.04);
   overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .nlm-md .code-toolbar,
@@ -49,16 +53,16 @@
 .msg .body.md .code-tool-btn,
 .msg .body.md .mermaid-tool-btn.icon-btn,
 .msg .body.md .mermaid-zoom-btn.icon-btn {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 5px;
   border: 1px solid var(--line);
-  background: hsl(var(--foreground) / 0.04);
-  color: var(--muted);
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--foreground) / 0.72);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -98,9 +102,62 @@
   margin: 0;
   border: 0;
   border-radius: 0;
-  max-height: 420px;
+  max-height: 360px;
+  max-width: 100%;
   overflow: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+}
+
+.nlm-md .code-lines,
+.msg .body.md .code-lines {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+html.code-fs-open {
+  overflow: hidden;
+}
+
+.code-fs-viewport {
+  padding: 0 !important;
+  overflow: auto !important;
+}
+
+.code-fs-pre {
+  margin: 0;
+  padding: 16px 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.code-fs-pre code {
+  background: transparent;
+  color: hsl(var(--foreground) / 0.92);
+}
+
+.nlm-md .code-block > pre > code,
+.msg .body.md .code-block > pre > code {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  background: transparent;
+  color: hsl(var(--foreground) / 0.92);
 }
 
 .nlm-md .code-block.is-collapsed > pre,

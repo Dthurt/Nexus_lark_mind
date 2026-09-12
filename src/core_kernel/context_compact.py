@@ -20,10 +20,48 @@ from src.common.schemas import ChatMessage, ChatRole
 DEFAULT_WINDOW = 128_000
 # Reserve room for reply + tools schema
 REPLY_RESERVE_RATIO = 0.18
-SOFT_MSG_CHARS = 16_000
-TARGET_RATIO = 0.55  # aim for ~55% of usable budget after reserve; compress earlier
-# Start middle-collapse once past this fraction of usable (not only when over hard usable)
-COLLAPSE_TRIGGER_RATIO = 0.62
+
+# Profiles for COMPACTION_AGGRESSIVENESS / Settings.compaction_aggressiveness.
+# conservative ≈ older thresholds (compress late); aggressive = current tight defaults.
+COMPACTION_PROFILES: Dict[str, Dict[str, float]] = {
+    "conservative": {
+        "soft_msg_chars": 24_000,
+        "target_ratio": 0.72,
+        "collapse_trigger_ratio": 0.75,
+    },
+    "balanced": {
+        "soft_msg_chars": 20_000,
+        "target_ratio": 0.62,
+        "collapse_trigger_ratio": 0.70,
+    },
+    "aggressive": {
+        "soft_msg_chars": 16_000,
+        "target_ratio": 0.55,
+        "collapse_trigger_ratio": 0.62,
+    },
+}
+
+# Module-level fallbacks (= balanced) for importers / tests that read constants.
+SOFT_MSG_CHARS = int(COMPACTION_PROFILES["balanced"]["soft_msg_chars"])
+TARGET_RATIO = float(COMPACTION_PROFILES["balanced"]["target_ratio"])
+COLLAPSE_TRIGGER_RATIO = float(COMPACTION_PROFILES["balanced"]["collapse_trigger_ratio"])
+
+
+def resolve_compaction_params(
+    aggressiveness: Optional[str] = None,
+) -> Dict[str, float]:
+    """Return soft_msg_chars / target_ratio / collapse_trigger_ratio for a profile."""
+    key = (aggressiveness or "").strip().lower()
+    if not key:
+        try:
+            from src.common.config import get_settings
+
+            key = str(get_settings().compaction_aggressiveness or "balanced").strip().lower()
+        except Exception:
+            key = "balanced"
+    if key not in COMPACTION_PROFILES:
+        key = "balanced"
+    return dict(COMPACTION_PROFILES[key])
 
 # Tags wrapping the structured summary inside the landed checkpoint node.
 CHECKPOINT_PREAMBLE = (
@@ -107,12 +145,17 @@ def _soft_trim_content(content: str, limit: int = SOFT_MSG_CHARS) -> str:
     )
 
 
-def _layer1_soft_trim(messages: Sequence[ChatMessage]) -> List[ChatMessage]:
+def _layer1_soft_trim(
+    messages: Sequence[ChatMessage],
+    *,
+    soft_msg_chars: Optional[int] = None,
+) -> List[ChatMessage]:
+    limit = int(soft_msg_chars or resolve_compaction_params()["soft_msg_chars"])
     out: List[ChatMessage] = []
     for m in messages:
         content = m.content or ""
-        if m.role == ChatRole.TOOL or len(content) > SOFT_MSG_CHARS:
-            content = _soft_trim_content(content)
+        if m.role == ChatRole.TOOL or len(content) > limit:
+            content = _soft_trim_content(content, limit)
         if content == m.content:
             out.append(m)
         else:
@@ -344,14 +387,20 @@ def compact_messages(
     *,
     model_name: Optional[str] = None,
     context_window: Optional[int] = None,
+    aggressiveness: Optional[str] = None,
 ) -> List[ChatMessage]:
     """Return a copy of messages that fits under the model context budget."""
+    params = resolve_compaction_params(aggressiveness)
+    soft_chars = int(params["soft_msg_chars"])
+    target_ratio = float(params["target_ratio"])
+    collapse_ratio = float(params["collapse_trigger_ratio"])
+
     window = int(context_window or resolve_context_window(model_name))
     usable = max(4_000, int(window * (1.0 - REPLY_RESERVE_RATIO)))
-    target = max(3_000, int(usable * TARGET_RATIO))
-    collapse_at = max(3_000, int(usable * COLLAPSE_TRIGGER_RATIO))
+    target = max(3_000, int(usable * target_ratio))
+    collapse_at = max(3_000, int(usable * collapse_ratio))
 
-    layer1 = _layer1_soft_trim(messages)
+    layer1 = _layer1_soft_trim(messages, soft_msg_chars=soft_chars)
     if sum(_msg_tokens(m) for m in layer1) <= collapse_at:
         return layer1
 

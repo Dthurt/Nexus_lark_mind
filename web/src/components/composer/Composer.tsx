@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
   type ChangeEvent,
 } from "react";
-import { Mic, Paperclip, Plus, Square, ArrowUp, ListTodo, ShieldCheck } from "lucide-react";
+import { Mic, Paperclip, Plus, Square, ArrowUp, ListTodo, ShieldCheck, Layers2 } from "lucide-react";
 
 import { ContextMeter } from "@/components/chat/ContextMeter";
 import { Button } from "@/components/ui/button";
@@ -465,7 +465,7 @@ export function Composer({
           </div>
 
           <div className="flex min-w-0 items-start gap-1.5">
-            {planOn || autoAccept ? (
+            {planOn || autoAccept || multitask ? (
               <div className="flex shrink-0 items-center gap-1 pt-[7px]" aria-label="已启用模式">
                 {planOn ? (
                   <button
@@ -491,13 +491,29 @@ export function Composer({
                     <ShieldCheck className="size-3.5" strokeWidth={2.25} />
                   </button>
                 ) : null}
+                {multitask ? (
+                  <button
+                    type="button"
+                    className="inline-flex size-[22px] items-center justify-center rounded-md border border-violet-400/35 bg-violet-400/12 text-violet-300 transition-colors hover:bg-violet-400/20"
+                    title="Multi-Task 子 agent（点击关闭）"
+                    aria-label="关闭 Multi-Task"
+                    disabled={busy}
+                    onClick={() => onMultitaskChange?.(false)}
+                  >
+                    <Layers2 className="size-3.5" strokeWidth={2.25} />
+                  </button>
+                ) : null}
               </div>
             ) : null}
 
             <Textarea
               ref={textareaRef}
               value={value}
-              placeholder="输入消息 · Enter 发送 · Shift+Enter 换行"
+              placeholder={
+                busy
+                  ? "可先输入下一条草稿（当前回复完成后发送）"
+                  : "输入消息 · Enter 发送 · Shift+Enter 换行"
+              }
               onChange={(e) => {
                 onChange?.(e.target.value);
                 requestAnimationFrame(resizeTextarea);

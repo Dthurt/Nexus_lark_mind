@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     agent_max_rounds: int = 48
     agent_max_rounds_workspace: int = 64
     subagent_max_rounds: int = 32
+    # Context compaction: conservative | balanced | aggressive
+    compaction_aggressiveness: str = "balanced"
 
     feishu_app_id: str = ""
     feishu_app_secret: str = ""

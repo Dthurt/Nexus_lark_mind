@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { approvalTimeoutSec } from "@/lib/approvalTimeout";
 import { cn } from "@/lib/utils";
-
-export const APPROVAL_TIMEOUT_SEC = 30;
 
 export type ApprovalDockItem = {
   id: string;
@@ -12,6 +11,8 @@ export type ApprovalDockItem = {
   base?: string;
   arguments?: Record<string, any>;
   status?: string;
+  /** Absolute ms deadline from timeline; preferred over default timeout. */
+  expiresAt?: number;
 };
 
 export type ApprovalDockProps = {
@@ -42,7 +43,15 @@ function summarize(item: ApprovalDockItem) {
   }
 }
 
-/** Floating approval panel above the composer — 30s countdown, auto-deny. */
+function initialSeconds(item: ApprovalDockItem | null) {
+  if (!item) return approvalTimeoutSec();
+  if (item.expiresAt && item.expiresAt > Date.now()) {
+    return Math.max(1, Math.ceil((item.expiresAt - Date.now()) / 1000));
+  }
+  return approvalTimeoutSec(item.base || item.name);
+}
+
+/** Floating approval panel above the composer — graduated countdown, auto-deny. */
 export function ApprovalDock({ items, onResolve, className }: ApprovalDockProps) {
   const pending = useMemo(
     () => items.filter((it) => it.status === "pending" || !it.status),
@@ -51,7 +60,8 @@ export function ApprovalDock({ items, onResolve, className }: ApprovalDockProps)
   const current = pending[0] || null;
   const queueLeft = Math.max(0, pending.length - 1);
 
-  const [secondsLeft, setSecondsLeft] = useState(APPROVAL_TIMEOUT_SEC);
+  const [secondsLeft, setSecondsLeft] = useState(() => initialSeconds(current));
+  const totalSecRef = useRef(initialSeconds(current));
   const resolvingRef = useRef(false);
   const callIdRef = useRef<string | null>(null);
   const onResolveRef = useRef(onResolve);
@@ -66,7 +76,9 @@ export function ApprovalDock({ items, onResolve, className }: ApprovalDockProps)
     if (callIdRef.current !== current.callId) {
       callIdRef.current = current.callId;
       resolvingRef.current = false;
-      setSecondsLeft(APPROVAL_TIMEOUT_SEC);
+      const sec = initialSeconds(current);
+      totalSecRef.current = sec;
+      setSecondsLeft(sec);
     }
   }, [current]);
 
@@ -90,7 +102,7 @@ export function ApprovalDock({ items, onResolve, className }: ApprovalDockProps)
 
   if (!current) return null;
 
-  const progress = Math.max(0, Math.min(1, secondsLeft / APPROVAL_TIMEOUT_SEC));
+  const progress = Math.max(0, Math.min(1, secondsLeft / Math.max(1, totalSecRef.current)));
   const urgent = secondsLeft <= 8;
 
   const act = (action: "allow" | "allow_session" | "deny") => {
@@ -148,16 +160,17 @@ export function ApprovalDock({ items, onResolve, className }: ApprovalDockProps)
             className="h-7 border-emerald-500/50 px-2.5 text-xs text-emerald-400 hover:bg-emerald-500/10"
             onClick={() => act("allow")}
           >
-            允许
+            仅允许这次
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="h-7 border-primary/50 px-2.5 text-xs text-primary hover:bg-primary/10"
+            title="开启 Accept：本会话后续写/shell 操作不再询问"
             onClick={() => act("allow_session")}
           >
-            允许并自动接受
+            本会话自动接受
           </Button>
           <Button
             type="button"
@@ -182,7 +195,7 @@ export type ApprovalDecision = "allowed" | "denied" | "allow_session";
 const DECISION_LABEL: Record<ApprovalDecision, string> = {
   allowed: "已审批",
   denied: "已拒绝",
-  allow_session: "接受并执行",
+  allow_session: "本会话接受",
 };
 
 export function ApprovalDecisionBadge({

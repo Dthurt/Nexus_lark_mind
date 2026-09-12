@@ -138,7 +138,7 @@ export function GenericToolCard({
             </pre>
           </div>
         ) : pending ? (
-          <p className="m-0 text-[11px] text-muted-foreground">Waiting for result…</p>
+          <p className="m-0 text-[11px] text-muted-foreground">等待结果…</p>
         ) : null}
         {item.activityId && onInspect ? (
           <div className="flex justify-end">
@@ -152,7 +152,7 @@ export function GenericToolCard({
                 onInspect(item.activityId!);
               }}
             >
-              Inspect
+              查看活动
             </Button>
           </div>
         ) : null}

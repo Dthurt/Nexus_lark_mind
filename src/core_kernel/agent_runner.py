@@ -246,27 +246,44 @@ def _base_tool_name(name: str) -> str:
     return raw
 
 
+def _tool_leaf_name(name: str) -> str:
+    """Normalize plugin / OpenAI tool ids to a short leaf for approval checks."""
+    b = (name or "").strip().lower()
+    if not b:
+        return ""
+    if "." in b:
+        b = b.rsplit(".", 1)[-1]
+    for prefix in ("builtin_workspace_", "builtin_subagent_", "builtin_", "cli_"):
+        if b.startswith(prefix):
+            b = b[len(prefix) :]
+            break
+    return b
+
+
 def _requires_approval(base: str) -> bool:
     """Mutating tools need UI approval unless Accept / auto_accept is on."""
     b = (base or "").strip().lower()
     if not b:
         return False
-    if b in SAFE_TOOLS:
+    leaf = _tool_leaf_name(b)
+    if leaf in SAFE_TOOLS or b in SAFE_TOOLS:
         return False
-    if b in APPROVAL_TOOLS:
+    if leaf in APPROVAL_TOOLS or b in APPROVAL_TOOLS:
         return True
-    # Catch aliases / mis-parsed OpenAI names so writes never silently skip the gate.
-    for needle in (
+    # Exact leaf match only — avoid substring false positives like preview_write_file_diff.
+    mutating = {
         "write_file",
         "edit_file",
         "run_shell",
         "apply_patch",
         "str_replace",
         "create_file",
-    ):
-        if needle in b:
-            return True
-    if b in {"bash", "shell", "terminal", "exec"}:
+        "bash",
+        "shell",
+        "terminal",
+        "exec",
+    }
+    if leaf in mutating:
         return True
     return False
 
@@ -295,8 +312,6 @@ async def run_agent_stream(
     rounds = int(max_rounds or 0) or int(settings.agent_max_rounds)
     if workspace_cwd:
         rounds = max(rounds, int(settings.agent_max_rounds_workspace))
-    else:
-        rounds = max(rounds, int(settings.agent_max_rounds))
     meta = dict(workspace_meta or {})
     session_id = parent_session_id or str(meta.get("session_id") or "")
     with workspace_cwd_scope(workspace_cwd, meta):
@@ -667,8 +682,8 @@ async def _run_agent_stream_inner(
                 _append_tool_result(payload)
                 break
             action = str((decision or {}).get("action") or "deny").lower()
-            # allow_session / always: only skip further gates THIS turn; Accept chip
-            # persists via client auto_accept for subsequent turns.
+            # allow_session / always: skip further gates THIS turn; client also
+            # sets Accept (auto_accept) so subsequent requests send auto_accept=true.
             if action in ("allow_session", "always"):
                 auto_accept = True
                 action = "allow"

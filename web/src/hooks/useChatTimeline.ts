@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { approvalTimeoutMs } from "@/lib/approvalTimeout";
 import { pretty } from "@/lib/pretty";
 
 let msgSeq = 0;
@@ -33,6 +34,7 @@ export function useChatTimeline() {
   const itemsRef = useRef<TimelineItem[]>([]);
   const streamingIdRef = useRef<string | null>(null);
   const liveAssistantIdRef = useRef<string | null>(null);
+  const streamRafRef = useRef<number | null>(null);
 
   itemsRef.current = items;
   streamingIdRef.current = streamingId;
@@ -272,7 +274,6 @@ export function useChatTimeline() {
       bot.content = (bot.content || "") + (delta || "");
       bot.streaming = true;
       bot.live = true;
-      // Prefer stream phase so caret + live markdown paint while ActivityHint spins.
       if (!bot.activity || bot.activity.phase === "model") {
         bot.activity = {
           phase: "stream",
@@ -281,7 +282,13 @@ export function useChatTimeline() {
           startedAt: bot.activity?.startedAt || Date.now(),
         };
       }
-      commit([...itemsRef.current]);
+      // Coalesce React commits to one paint per frame while tokens arrive.
+      if (streamRafRef.current == null) {
+        streamRafRef.current = requestAnimationFrame(() => {
+          streamRafRef.current = null;
+          commit([...itemsRef.current]);
+        });
+      }
     },
     [commit, ensureBotBubble],
   );
@@ -293,7 +300,20 @@ export function useChatTimeline() {
       bot.reasoning = (bot.reasoning || "") + delta;
       bot.streaming = true;
       bot.live = true;
-      commit([...itemsRef.current]);
+      if (!bot.activity || bot.activity.phase === "stream") {
+        bot.activity = {
+          phase: "model",
+          label: "思考中…",
+          detail: bot.activity?.detail || "",
+          startedAt: bot.activity?.startedAt || Date.now(),
+        };
+      }
+      if (streamRafRef.current == null) {
+        streamRafRef.current = requestAnimationFrame(() => {
+          streamRafRef.current = null;
+          commit([...itemsRef.current]);
+        });
+      }
     },
     [commit, ensureBotBubble],
   );
@@ -347,6 +367,10 @@ export function useChatTimeline() {
       setStreamingId(null);
       setLiveAssistantId(null);
       setRetryNote("");
+      if (streamRafRef.current != null) {
+        cancelAnimationFrame(streamRafRef.current);
+        streamRafRef.current = null;
+      }
     },
     [commit, ensureBotBubble],
   );
@@ -678,7 +702,7 @@ export function useChatTimeline() {
           arguments: payload?.arguments || {},
           status: "pending",
           activityId,
-          expiresAt: Date.now() + 30_000,
+          expiresAt: Date.now() + approvalTimeoutMs(payload?.base || payload?.name),
         };
         list.push(item);
       } else {
@@ -687,7 +711,7 @@ export function useChatTimeline() {
         item.base = payload?.base || item.base;
         if (item.status !== "allowed" && item.status !== "denied") {
           item.status = "pending";
-          item.expiresAt = Date.now() + 30_000;
+          item.expiresAt = Date.now() + approvalTimeoutMs(item.base || item.name);
         }
       }
       commit(list);
@@ -962,6 +986,7 @@ export function useChatTimeline() {
             if (meta.model_provider || meta.provider) {
               last.modelProvider = meta.model_provider || meta.provider;
             }
+            if (meta.reasoning) last.reasoning = String(meta.reasoning);
           }
         }
       }

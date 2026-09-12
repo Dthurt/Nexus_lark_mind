@@ -205,6 +205,19 @@
 
   .nlm-md pre:not(.mermaid-source):not(.echarts-source):not(.drawio-source):not(.mindmap-source) {
     margin: 0.65em 0;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    box-sizing: border-box;
+  }
+
+  .nlm-md pre:not(.mermaid-source):not(.echarts-source):not(.drawio-source):not(.mindmap-source) > code {
+    white-space: inherit;
+    overflow-wrap: inherit;
+    word-break: inherit;
   }
 
   /* —— HR —— */

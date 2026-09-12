@@ -310,8 +310,8 @@ export function useChatActions(opts: UseChatActionsOpts) {
           await cancelSession(sessionIdRef.current);
         }
         timeline.markRunningToolsStopped();
-        stream.setStatus("stopping…");
-        stream.setActivity("stop", "Stopping…");
+        stream.setStatus("正在停止…");
+        stream.setActivity("stop", "正在停止…");
       } catch (err) {
         stream.setStatus(String(err));
         onBusyChange?.(false);

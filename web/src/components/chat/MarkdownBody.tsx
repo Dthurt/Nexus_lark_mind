@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { toast } from "sonner";
 import {
@@ -30,6 +30,10 @@ export type MarkdownBodyProps = {
   onDrawioFixed?: (args: { from: string; to: string }) => void;
 };
 
+/**
+ * While streaming: plain text + caret (no remounting rich HTML / diagrams).
+ * After stream ends: one full markdown enhance pass — avoids flicker/jump.
+ */
 export function MarkdownBody({
   content = "",
   streaming = false,
@@ -58,64 +62,65 @@ export function MarkdownBody({
     return () => window.removeEventListener("nlm-theme-change", onTheme);
   }, []);
 
+  // Parse markdown → HTML string only. Enhance must wait until React commits
+  // dangerouslySetInnerHTML, otherwise copy/fold chrome never attaches.
   useEffect(() => {
-    if (plain) {
+    if (plain || streaming) {
+      disposeEchartsIn(rootRef.current);
       setHtml("");
       return;
     }
 
     let cancelled = false;
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const wait = streaming ? 60 : 0;
-
     const paint = async () => {
       const gen = ++genRef.current;
-      const nextHtml = await renderMarkdownWithMath(content, { streaming });
+      const nextHtml = await renderMarkdownWithMath(content, { streaming: false });
       if (cancelled || gen !== genRef.current) return;
-
-      // Dispose live charts BEFORE React replaces innerHTML (prevents zr `.get` crashes)
       disposeEchartsIn(rootRef.current);
       setHtml(nextHtml);
+    };
 
-      // Wait for DOM to commit before enhancing
-      await Promise.resolve();
-      await Promise.resolve();
-      if (cancelled || gen !== genRef.current) return;
-      const root = rootRef.current;
-      if (!root) return;
+    void paint();
+    return () => {
+      cancelled = true;
+    };
+  }, [content, streaming, plain, themeTick]);
 
-      enhanceMarkdownRoot(root);
+  useLayoutEffect(() => {
+    if (plain || streaming || !html) return;
+    const root = rootRef.current;
+    if (!root) return;
+
+    let cancelled = false;
+    const gen = genRef.current;
+
+    enhanceMarkdownRoot(root);
+
+    const modelOpts = {
+      model_provider: modelProvider || undefined,
+      model_name: modelName || undefined,
+    };
+
+    const paintRich = async () => {
       await renderMathIn(root);
+      if (cancelled || gen !== genRef.current) return;
 
-      const modelOpts = {
-        model_provider: modelProvider || undefined,
-        model_name: modelName || undefined,
+      const repairMermaid = async (source: string, error: string) => {
+        const data = await repairMermaidApi({ source, error, ...modelOpts });
+        return data?.source || "";
       };
-
-      const repairMermaid = streaming
-        ? null
-        : async (source: string, error: string) => {
-            const data = await repairMermaidApi({ source, error, ...modelOpts });
-            return data?.source || "";
-          };
-
-      const repairEcharts = streaming
-        ? null
-        : async (source: string, error: string) => {
-            const data = await repairEchartsApi({ source, error, ...modelOpts });
-            return data?.source || "";
-          };
-
-      const repairDrawio = streaming
-        ? null
-        : async (source: string, error: string) => {
-            const data = await repairDrawioApi({ source, error, ...modelOpts });
-            return data?.source || "";
-          };
+      const repairEcharts = async (source: string, error: string) => {
+        const data = await repairEchartsApi({ source, error, ...modelOpts });
+        return data?.source || "";
+      };
+      const repairDrawio = async (source: string, error: string) => {
+        const data = await repairDrawioApi({ source, error, ...modelOpts });
+        return data?.source || "";
+      };
 
       await Promise.all([
         renderMermaidIn(root, {
-          streaming,
+          streaming: false,
           repair: repairMermaid,
           onFixed: (args) => {
             onFixedRef.current?.(args);
@@ -123,7 +128,7 @@ export function MarkdownBody({
           },
         }),
         renderEchartsIn(root, {
-          streaming,
+          streaming: false,
           repair: repairEcharts,
           onFixed: (args) => {
             onEchartsFixedRef.current?.(args);
@@ -132,34 +137,36 @@ export function MarkdownBody({
         }),
         renderMindmapIn(root),
       ]);
-      if (!streaming) {
-        await renderDrawioIn(root, {
-          streaming: false,
-          repair: repairDrawio,
-          onFixed: (args) => {
-            onDrawioFixedRef.current?.(args);
-            toast.success("Draw.io 已自动修复语法");
-          },
-        });
-      }
+      if (cancelled || gen !== genRef.current) return;
+      await renderDrawioIn(root, {
+        streaming: false,
+        repair: repairDrawio,
+        onFixed: (args) => {
+          onDrawioFixedRef.current?.(args);
+          toast.success("Draw.io 已自动修复语法");
+        },
+      });
     };
 
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null;
-      void paint();
-    }, wait);
+    void paintRich();
 
     return () => {
       cancelled = true;
-      if (debounceTimer) clearTimeout(debounceTimer);
-      disposeEchartsIn(rootRef.current);
+      disposeEchartsIn(root);
     };
-  }, [content, streaming, plain, modelProvider, modelName, themeTick]);
+  }, [html, streaming, plain, modelProvider, modelName]);
 
-  if (plain) {
+  if (plain || streaming) {
     return (
-      <div className={cn("nlm-md plain whitespace-pre-wrap break-words text-[13px]", className)}>
+      <div
+        className={cn(
+          "nlm-md body min-w-0 max-w-full whitespace-pre-wrap break-words text-[13.5px] leading-[1.7]",
+          plain && "plain text-[13px]",
+          className,
+        )}
+      >
         {content}
+        {streaming ? <span className="streaming-caret" aria-hidden="true" /> : null}
       </div>
     );
   }
@@ -168,7 +175,7 @@ export function MarkdownBody({
     <div
       ref={rootRef}
       className={cn(
-        "nlm-md md body text-[13.5px] leading-[1.7] break-words [&_*:first-child]:mt-0 [&_*:last-child]:mb-0",
+        "nlm-md md body min-w-0 max-w-full text-[13.5px] leading-[1.7] break-words [&_*:first-child]:mt-0 [&_*:last-child]:mb-0",
         className,
       )}
       dangerouslySetInnerHTML={{ __html: html }}

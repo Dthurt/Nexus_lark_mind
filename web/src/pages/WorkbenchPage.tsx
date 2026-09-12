@@ -122,6 +122,7 @@ export function WorkbenchPage({
     trajectory,
     modelName,
     agentMode: actionsRef.current?.agentMode ?? "agent",
+    modelProvider: providerId,
     onBusyChange: setBusy,
     onStatusChange: setStatus,
     onTaskId: setCurrentTaskId,

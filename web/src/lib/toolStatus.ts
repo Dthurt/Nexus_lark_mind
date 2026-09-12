@@ -10,22 +10,32 @@ export function resolveToolStatus(item: {
   output?: unknown;
 }): ToolRunStatus {
   const s = String(item.status || "").toLowerCase();
+
+  // Explicit running wins over a partial result payload.
+  if (s === "running") return "running";
+
   if (item.error != null || item.success === false || s === "fail" || s === "failed") {
     return "failed";
   }
   if (s === "stopped" || s === "interrupted" || s === "cancelled") return "stopped";
   if (s === "ok" || s === "done" || s === "idle" || item.success === true) return "done";
+
+  // Empty status: treat as running until a result appears (or stay idle if neither).
+  if (!s) {
+    if (item.result != null || item.output) return "done";
+    return "running";
+  }
+
   if (item.result != null || item.output) return "done";
-  if (s === "running" || s === "") return "running";
   return "idle";
 }
 
 export const STATUS_LABEL: Record<ToolRunStatus, string> = {
-  running: "Running",
-  done: "Done",
-  failed: "Failed",
-  stopped: "Stopped",
-  idle: "Idle",
+  running: "运行中",
+  done: "已完成",
+  failed: "失败",
+  stopped: "已停止",
+  idle: "空闲",
 };
 
 /** Outer shell — muted borders, never neon. */

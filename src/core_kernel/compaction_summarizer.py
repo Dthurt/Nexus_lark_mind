@@ -12,16 +12,15 @@ from typing import Any, List, Optional, Sequence
 from src.common.schemas import ChatMessage, ChatRole, ModelRequest
 from src.core_kernel.context_compact import (
     CHECKPOINT_PREAMBLE,
-    COLLAPSE_TRIGGER_RATIO,
     SUMMARY_CLOSE,
     SUMMARY_OPEN,
-    TARGET_RATIO,
     REPLY_RESERVE_RATIO,
     _build_structured_checkpoint,
     _layer1_soft_trim,
     _layer3_hard_drop,
     _msg_tokens,
     compact_messages,
+    resolve_compaction_params,
     resolve_context_window,
 )
 
@@ -172,12 +171,17 @@ async def compact_messages_async(
     Returns (messages, info) where info may include compacted_via / compacted_count.
     """
     info: dict = {}
+    params = resolve_compaction_params()
+    soft_chars = int(params["soft_msg_chars"])
+    target_ratio = float(params["target_ratio"])
+    collapse_ratio = float(params["collapse_trigger_ratio"])
+
     window = int(context_window or resolve_context_window(model_name))
     usable = max(4_000, int(window * (1.0 - REPLY_RESERVE_RATIO)))
-    target = max(3_000, int(usable * TARGET_RATIO))
-    collapse_at = max(3_000, int(usable * COLLAPSE_TRIGGER_RATIO))
+    target = max(3_000, int(usable * target_ratio))
+    collapse_at = max(3_000, int(usable * collapse_ratio))
 
-    layer1 = _layer1_soft_trim(messages)
+    layer1 = _layer1_soft_trim(messages, soft_msg_chars=soft_chars)
     total = sum(_msg_tokens(m) for m in layer1)
     # Compress once past soft trigger — don't wait until the hard usable ceiling.
     if total <= collapse_at:

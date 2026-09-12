@@ -40,6 +40,7 @@ export type UseChatStreamOpts = {
     | "endTurn"
   >;
   modelName?: string;
+  modelProvider?: string;
   agentMode?: string;
   onBusyChange?: (busy: boolean) => void;
   onStatusChange?: (status: string) => void;
@@ -70,6 +71,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
     timeline,
     trajectory,
     modelName = "",
+    modelProvider = "",
     agentMode = "agent",
     onBusyChange,
     onStatusChange,
@@ -85,6 +87,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
   const sessionIdRef = useRef(sessionId);
   const agentModeRef = useRef(agentMode);
   const modelNameRef = useRef(modelName);
+  const modelProviderRef = useRef(modelProvider);
   const timelineRef = useRef(timeline);
   const trajectoryRef = useRef(trajectory);
   const cbsRef = useRef({
@@ -100,6 +103,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
   sessionIdRef.current = sessionId;
   agentModeRef.current = agentMode;
   modelNameRef.current = modelName;
+  modelProviderRef.current = modelProvider;
   timelineRef.current = timeline;
   trajectoryRef.current = trajectory;
   cbsRef.current = {
@@ -264,16 +268,18 @@ export function useChatStream(opts: UseChatStreamOpts) {
         }
         if (payload.delta) {
           tl.appendDelta(payload.delta || "");
-          setStatus("streaming…");
+          setStatus("正在生成…");
           setActivity("stream", "正在生成回复…");
         } else if (payload.reasoning_delta) {
-          setStatus("thinking…");
+          setStatus("思考中…");
           setActivity("model", "思考中…", modelNameRef.current || "");
         }
       } else if (type === "task.completed") {
         tl.clearRetry();
         tl.finalizeBot(payload.content || undefined, payload.usage, {
-          modelName: modelNameRef.current || "",
+          modelName: modelNameRef.current || payload.model_name || "",
+          modelProvider:
+            modelProviderRef.current || payload.model_provider || payload.provider || "",
         });
         if (agentModeRef.current === "plan") tl.markPlanReady(payload.content || "");
         tr.addAssistant(payload.content || "", payload.usage);
@@ -281,7 +287,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
         turnOpenRef.current = false;
         if (payload.session_usage) cbs.onUsage?.(payload.session_usage);
         cbs.onTaskId?.(null);
-        setStatus("ready");
+        setStatus("就绪");
         setBusy(false);
         cbs.onCompleted?.();
       } else if (type === "task.failed") {
@@ -291,6 +297,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
           if (payload.partial) {
             tl.finalizeBot(payload.partial, undefined, {
               modelName: modelNameRef.current || "",
+              modelProvider: modelProviderRef.current || "",
             });
             tr.addAssistant(payload.partial);
           } else {

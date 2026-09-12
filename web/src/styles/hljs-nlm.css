@@ -1,0 +1,101 @@
+/* highlight.js token colors tuned to NLM HSL theme tokens (light + dark). */
+
+.nlm-md .code-block .hljs,
+.msg .body.md .code-block .hljs {
+  color: hsl(var(--foreground) / 0.92);
+  background: transparent;
+}
+
+.nlm-md .code-block .hljs-comment,
+.nlm-md .code-block .hljs-quote,
+.msg .body.md .code-block .hljs-comment,
+.msg .body.md .code-block .hljs-quote {
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+.nlm-md .code-block .hljs-keyword,
+.nlm-md .code-block .hljs-selector-tag,
+.nlm-md .code-block .hljs-addition,
+.msg .body.md .code-block .hljs-keyword,
+.msg .body.md .code-block .hljs-selector-tag,
+.msg .body.md .code-block .hljs-addition {
+  color: hsl(var(--primary));
+}
+
+.nlm-md .code-block .hljs-number,
+.nlm-md .code-block .hljs-string,
+.nlm-md .code-block .hljs-meta .hljs-meta-string,
+.nlm-md .code-block .hljs-literal,
+.nlm-md .code-block .hljs-doctag,
+.nlm-md .code-block .hljs-regexp,
+.msg .body.md .code-block .hljs-number,
+.msg .body.md .code-block .hljs-string,
+.msg .body.md .code-block .hljs-meta .hljs-meta-string,
+.msg .body.md .code-block .hljs-literal,
+.msg .body.md .code-block .hljs-doctag,
+.msg .body.md .code-block .hljs-regexp {
+  color: hsl(var(--teal));
+}
+
+.nlm-md .code-block .hljs-title,
+.nlm-md .code-block .hljs-section,
+.nlm-md .code-block .hljs-name,
+.nlm-md .code-block .hljs-selector-id,
+.nlm-md .code-block .hljs-selector-class,
+.msg .body.md .code-block .hljs-title,
+.msg .body.md .code-block .hljs-section,
+.msg .body.md .code-block .hljs-name,
+.msg .body.md .code-block .hljs-selector-id,
+.msg .body.md .code-block .hljs-selector-class {
+  color: hsl(210 78% 52%);
+}
+
+.nlm-md .code-block .hljs-attribute,
+.nlm-md .code-block .hljs-attr,
+.nlm-md .code-block .hljs-variable,
+.nlm-md .code-block .hljs-template-variable,
+.nlm-md .code-block .hljs-class .hljs-title,
+.nlm-md .code-block .hljs-type,
+.msg .body.md .code-block .hljs-attribute,
+.msg .body.md .code-block .hljs-attr,
+.msg .body.md .code-block .hljs-variable,
+.msg .body.md .code-block .hljs-template-variable,
+.msg .body.md .code-block .hljs-class .hljs-title,
+.msg .body.md .code-block .hljs-type {
+  color: hsl(32 90% 48%);
+}
+
+.nlm-md .code-block .hljs-symbol,
+.nlm-md .code-block .hljs-bullet,
+.nlm-md .code-block .hljs-link,
+.nlm-md .code-block .hljs-meta,
+.nlm-md .code-block .hljs-selector-attr,
+.nlm-md .code-block .hljs-selector-pseudo,
+.nlm-md .code-block .hljs-built_in,
+.nlm-md .code-block .hljs-title.class_,
+.msg .body.md .code-block .hljs-symbol,
+.msg .body.md .code-block .hljs-bullet,
+.msg .body.md .code-block .hljs-link,
+.msg .body.md .code-block .hljs-meta,
+.msg .body.md .code-block .hljs-selector-attr,
+.msg .body.md .code-block .hljs-selector-pseudo,
+.msg .body.md .code-block .hljs-built_in,
+.msg .body.md .code-block .hljs-title.class_ {
+  color: hsl(262 55% 58%);
+}
+
+.nlm-md .code-block .hljs-deletion,
+.msg .body.md .code-block .hljs-deletion {
+  color: hsl(var(--destructive));
+}
+
+.nlm-md .code-block .hljs-emphasis,
+.msg .body.md .code-block .hljs-emphasis {
+  font-style: italic;
+}
+
+.nlm-md .code-block .hljs-strong,
+.msg .body.md .code-block .hljs-strong {
+  font-weight: 700;
+}

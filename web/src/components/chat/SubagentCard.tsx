@@ -195,7 +195,7 @@ export function SubagentCard({
                 onInspect(item.activityId!);
               }}
             >
-              Inspect
+              查看活动
             </Button>
           </div>
         ) : null}

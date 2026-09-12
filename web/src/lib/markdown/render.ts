@@ -1,5 +1,19 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import css from "highlight.js/lib/languages/css";
+import go from "highlight.js/lib/languages/go";
+import java from "highlight.js/lib/languages/java";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdown from "highlight.js/lib/languages/markdown";
+import python from "highlight.js/lib/languages/python";
+import rust from "highlight.js/lib/languages/rust";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
 import { openMermaidFullscreen } from "./mermaidFullscreen";
 import { drawioMarkdownHtml, isDrawioLang, looksLikeDrawioXml, renderDrawioIn } from "./drawio";
 import {
@@ -12,6 +26,61 @@ import { applyMathPlaceholders, protectMath } from "./math";
 import { enhanceChatImages } from "./chatImages";
 import { diagramInk, diagramPanelBg, mermaidThemeName } from "./diagramTheme";
 import { isMindmapLang, mindmapMarkdownHtml, renderMindmapIn } from "./mindmap";
+
+const HLJS_LANG_ALIASES: Record<string, string> = {
+  js: "javascript",
+  jsx: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  py: "python",
+  sh: "bash",
+  shell: "bash",
+  zsh: "bash",
+  html: "xml",
+  htm: "xml",
+  svg: "xml",
+  yml: "yaml",
+  md: "markdown",
+  rs: "rust",
+};
+
+let hljsReady = false;
+function ensureHljs() {
+  if (hljsReady) return;
+  hljs.registerLanguage("javascript", javascript);
+  hljs.registerLanguage("typescript", typescript);
+  hljs.registerLanguage("python", python);
+  hljs.registerLanguage("bash", bash);
+  hljs.registerLanguage("json", json);
+  hljs.registerLanguage("xml", xml);
+  hljs.registerLanguage("css", css);
+  hljs.registerLanguage("sql", sql);
+  hljs.registerLanguage("yaml", yaml);
+  hljs.registerLanguage("markdown", markdown);
+  hljs.registerLanguage("go", go);
+  hljs.registerLanguage("rust", rust);
+  hljs.registerLanguage("java", java);
+  hljsReady = true;
+}
+
+function highlightCodeElement(codeEl: HTMLElement, lang: string) {
+  ensureHljs();
+  const raw = codeEl.textContent || "";
+  if (!raw) return;
+  const key = (lang || "").toLowerCase();
+  const resolved = HLJS_LANG_ALIASES[key] || key;
+  try {
+    const result =
+      resolved && hljs.getLanguage(resolved)
+        ? hljs.highlight(raw, { language: resolved, ignoreIllegals: true })
+        : hljs.highlightAuto(raw);
+    codeEl.innerHTML = result.value;
+    codeEl.classList.add("hljs");
+    if (result.language) codeEl.dataset.hljsLang = result.language;
+  } catch {
+    /* keep plain text */
+  }
+}
 
 export { enhanceChatImages } from "./chatImages";
 export { renderMindmapIn };
@@ -694,6 +763,10 @@ export function enhanceCodeBlocks(root: any) {
           btn.classList.add("is-err");
           setTimeout(() => btn.classList.remove("is-err"), 900);
         }
+        return;
+      }
+      if (action === "fullscreen") {
+        openCodeFullscreen(wrap);
       }
     });
   }
@@ -726,17 +799,88 @@ export function enhanceCodeBlocks(root: any) {
         .find(Boolean) || "";
     if (lang) wrap.dataset.lang = lang;
 
+    highlightCodeElement(codeEl as HTMLElement, lang);
+
+    const rawText = (codeEl as HTMLElement).innerText || codeEl.textContent || "";
+    const lineCount = Math.max(1, rawText.replace(/\n$/, "").split("\n").length);
+    wrap.dataset.lines = String(lineCount);
+
     const bar = document.createElement("div");
     bar.className = "code-toolbar";
     bar.innerHTML = `
       <button type="button" class="code-tool-btn icon-btn" data-code-action="fold" title="折叠" aria-label="折叠" aria-expanded="true">${iconSvg("fold")}</button>
       <span class="code-lang">${escapeHtml(lang || "code")}</span>
+      <span class="code-lines">${lineCount} 行</span>
       <span class="code-toolbar-spacer"></span>
       <button type="button" class="code-tool-btn icon-btn" data-code-action="copy" title="复制代码" aria-label="复制">${iconSvg("copy")}</button>
+      <button type="button" class="code-tool-btn icon-btn" data-code-action="fullscreen" title="全屏" aria-label="全屏">${iconSvg("fullscreen")}</button>
     `;
     pre.parentNode!.insertBefore(wrap, pre);
     wrap.appendChild(bar);
     wrap.appendChild(pre);
+  });
+}
+
+function closeCodeFullscreen() {
+  document.querySelectorAll(".code-fs-overlay").forEach((el) => el.remove());
+  document.documentElement.classList.remove("code-fs-open");
+}
+
+function openCodeFullscreen(block: HTMLElement) {
+  closeCodeFullscreen();
+  const pre = block.querySelector("pre");
+  const code = block.querySelector("pre > code");
+  const lang = block.dataset.lang || "code";
+  const lines = block.dataset.lines || "";
+  const text = (pre as any)?.innerText || pre?.textContent || "";
+  const highlighted = code?.innerHTML || escapeHtml(text);
+
+  const overlay = document.createElement("div");
+  overlay.className = "mermaid-fs-overlay code-fs-overlay";
+  overlay.innerHTML = `
+    <div class="mermaid-fs-panel" role="dialog" aria-modal="true" aria-label="代码全屏">
+      <div class="mermaid-fs-toolbar">
+        <span class="mermaid-fs-title">${escapeHtml(lang)}${lines ? ` · ${escapeHtml(lines)} 行` : ""}</span>
+        <div class="mermaid-fs-tools">
+          <button type="button" class="mermaid-tool-btn icon-btn" data-fs-copy="1" title="复制" aria-label="复制">${iconSvg("copy")}</button>
+          <button type="button" class="mermaid-tool-btn" data-fs-close="1">关闭</button>
+        </div>
+      </div>
+      <div class="mermaid-fs-viewport code-fs-viewport" tabindex="0">
+        <pre class="code-fs-pre"><code class="hljs">${highlighted}</code></pre>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.documentElement.classList.add("code-fs-open");
+
+  const close = () => {
+    overlay.remove();
+    document.documentElement.classList.remove("code-fs-open");
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (ev: KeyboardEvent) => {
+    if (ev.key === "Escape") close();
+  };
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay || (ev.target as HTMLElement).closest?.("[data-fs-close]")) {
+      close();
+      return;
+    }
+    const copyBtn = (ev.target as HTMLElement).closest?.("[data-fs-copy]") as HTMLElement | null;
+    if (copyBtn) {
+      void navigator.clipboard.writeText(text).then(
+        () => {
+          copyBtn.classList.add("is-ok");
+          setTimeout(() => copyBtn.classList.remove("is-ok"), 900);
+        },
+        () => {
+          copyBtn.classList.add("is-err");
+          setTimeout(() => copyBtn.classList.remove("is-err"), 900);
+        },
+      );
+    }
   });
 }
 

@@ -17,6 +17,7 @@ import { PlanReviewCard } from "@/components/chat/PlanReviewCard";
 import { SubagentCard } from "@/components/chat/SubagentCard";
 import { TodoListCard } from "@/components/chat/TodoListCard";
 import { ToolCard } from "@/components/chat/ToolCard";
+import { ToolCallGroup } from "@/components/chat/ToolCallGroup";
 import "@/components/tools/registerBuiltinTools";
 import { WorkspacePicker } from "@/components/workspace/WorkspacePicker";
 import type { TimelineItem } from "@/hooks/useChatTimeline";
@@ -82,10 +83,12 @@ function buildBlocks(items: TimelineItem[]): Block[] {
       continue;
     }
     if (item.kind === "tool") {
-      // Keep each tool as its own block so refresh / parallel calls never merge
-      // unrelated tools into one foldable group or scramble visual order.
-      const key = String(item.callId || item.id);
-      out.push({ kind: "tools", id: `tool-${key}`, tools: [item] });
+      const last = out[out.length - 1];
+      if (last && last.kind === "tools") {
+        last.tools.push(item);
+      } else {
+        out.push({ kind: "tools", id: `tools-${item.id}`, tools: [item] });
+      }
       continue;
     }
     if (item.kind === "file") {
@@ -159,9 +162,12 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
     const stickKey = useMemo(() => {
       const last = items[items.length - 1];
       if (!last) return "";
-      if (last.kind === "msg") return `${items.length}|${last.content || ""}`;
+      // Prefer length over full text so React effect deps stay cheap while streaming.
+      if (last.kind === "msg") {
+        return `${items.length}|${(last.content || "").length}|${(last.reasoning || "").length}|${last.streaming ? 1 : 0}`;
+      }
       if (last.kind === "subagent")
-        return `${items.length}|${last.streamText || ""}|${last.status || ""}`;
+        return `${items.length}|${(last.streamText || "").length}|${last.status || ""}`;
       if (last.kind === "tool") return `${items.length}|${last.status || ""}|${last.open ? 1 : 0}`;
       return `${items.length}|${last.id || ""}`;
     }, [items]);
@@ -178,7 +184,15 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       followTailRef.current = nearBottom(e.currentTarget);
     }
 
-    function wrapMotion(id: string, child: ReactNode) {
+    function wrapMotion(id: string, child: ReactNode, live = false) {
+      // Live rows grow every token — layout animation causes flicker/jump.
+      if (live || reducedMotion) {
+        return (
+          <div key={id} className="w-full">
+            {child}
+          </div>
+        );
+      }
       return (
         <motion.div key={id} layout={!reducedMotion} {...itemMotion} className="w-full">
           {child}
@@ -215,9 +229,10 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
           </div>
         ) : null}
 
-        <AnimatePresence initial={false} mode="popLayout">
+        <AnimatePresence initial={false} mode="sync">
           {blocks.map((block) => {
             if (block.kind === "msg") {
+              const live = !!(block.item.streaming || block.item.live);
               return wrapMotion(
                 block.id,
                 <MessageBubble
@@ -226,6 +241,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
                   modelName={modelName}
                   onAcceptPlan={() => onAcceptPlan?.(block.item)}
                 />,
+                live,
               );
             }
             if (block.kind === "ask") {
@@ -272,6 +288,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
                   onInspect={onInspectTool}
                   onStop={onStopTool}
                 />,
+                block.item.status === "running",
               );
             }
             if (block.kind === "file") {
@@ -281,13 +298,27 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
               );
             }
             if (block.kind === "tools") {
+              const live = block.tools.some((t) => t?.status === "running");
+              if (block.tools.length === 1) {
+                const t = block.tools[0];
+                return wrapMotion(
+                  block.id,
+                  <ToolCard
+                    item={t as any}
+                    onInspect={onInspectTool}
+                    onStop={onStopTool}
+                  />,
+                  live,
+                );
+              }
               return wrapMotion(
                 block.id,
-                <ToolCard
-                  item={block.tools[0] as any}
+                <ToolCallGroup
+                  tools={block.tools as any}
                   onInspect={onInspectTool}
                   onStop={onStopTool}
                 />,
+                live,
               );
             }
             return null;

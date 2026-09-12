@@ -133,15 +133,15 @@ export const MessageBubble = memo(function MessageBubble({
   return (
     <div
       className={cn(
-        "msg w-fit max-w-full animate-in fade-in duration-150 rounded-xl border px-3.5 py-2.5",
+        "msg max-w-full min-w-0 animate-in fade-in duration-150 rounded-xl border px-3.5 py-2.5",
         isUser
-          ? "ml-auto max-w-[min(92%,720px)] self-end rounded-br-sm border-primary/25 bg-primary/10"
+          ? "ml-auto w-fit max-w-[min(92%,720px)] self-end rounded-br-sm border-primary/25 bg-primary/10"
           : "w-full self-start rounded-bl-sm border-border bg-card/40",
         (item.live || item.streaming) && "live",
         className,
       )}
     >
-      {!isUser && (item.reasoning || (item.streaming && item.activity?.phase === "model")) ? (
+      {!isUser && (item.reasoning || (item.streaming && !(content || "").trim())) ? (
         <ThinkingFold
           text={item.reasoning || ""}
           streaming={!!item.streaming && !(content || "").trim()}
