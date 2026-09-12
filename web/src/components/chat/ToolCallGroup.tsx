@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { ToolCard } from "@/components/chat/ToolCard";
@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 
 export type ToolCallGroupProps = {
   tools: ToolCardItem[];
+  highlightCallId?: string | null;
   onInspect?: (activityId: string) => void;
   onStop?: (callId?: string) => void;
   className?: string;
@@ -25,10 +26,16 @@ function shortName(name?: string) {
   return raw.replace(/^builtin_workspace_/, "").replace(/^cli_/, "").split(".").pop();
 }
 
-export function ToolCallGroup({ tools, onInspect, onStop, className }: ToolCallGroupProps) {
+export function ToolCallGroup({ tools, highlightCallId, onInspect, onStop, className }: ToolCallGroupProps) {
   const pending = tools.some((t) => isToolPending(t));
-  // Default collapsed — summary bar shows counts / current tool; expand on demand.
+  const hasHighlight = !!highlightCallId && tools.some(
+    (t) => t.callId === highlightCallId || (t as any).id === highlightCallId,
+  );
+  // Default collapsed — expand when an approval targets a tool in this group.
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (hasHighlight) setOpen(true);
+  }, [hasHighlight, highlightCallId]);
 
   const stats = useMemo(() => {
     let running = 0;
@@ -170,6 +177,7 @@ export function ToolCallGroup({ tools, onInspect, onStop, className }: ToolCallG
             key={(t as any).id || t.callId || t.name}
             item={t}
             nested
+            highlighted={!!highlightCallId && (t.callId === highlightCallId || (t as any).id === highlightCallId)}
             onInspect={onInspect}
             onStop={onStop}
           />

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import { TeamsPanel } from "@/components/layout/TeamsPanel";
 import type { DockPane, useRightDock } from "@/hooks/useRightDock";
 import {
   estimateContextOccupancy,
@@ -33,6 +34,8 @@ export type RightDockProps = {
   plugins?: Plugin[];
   tools?: Tool[];
   activity?: ActivityItem[];
+  /** Running / recent tool & subagent cards from the chat timeline. */
+  jobs?: any[];
   usage?: Usage;
   pluginError?: string | null;
   reloading?: boolean;
@@ -44,6 +47,8 @@ export type RightDockProps = {
   cwd?: string;
   workspaceTitle?: string;
   draft?: string;
+  /** Team mailbox / DAG (defaults to session id). */
+  teamId?: string;
   onTogglePlugin?: (pluginId: string, enabled: boolean) => void | Promise<void>;
   onReload?: () => void | Promise<void>;
   onReloadOne?: (pluginId: string) => void | Promise<void>;
@@ -53,6 +58,8 @@ export type RightDockProps = {
     pluginId: string,
     values: Record<string, string>,
   ) => void | Promise<void>;
+  onInspectJob?: (activityId: string) => void;
+  onStopJob?: (callId?: string) => void;
   className?: string;
 };
 
@@ -73,6 +80,7 @@ export function RightDock({
   plugins = [],
   tools = [],
   activity = [],
+  jobs = [],
   usage = {},
   pluginError,
   reloading = false,
@@ -83,11 +91,14 @@ export function RightDock({
   cwd = "",
   workspaceTitle = "",
   draft = "",
+  teamId = "",
   onTogglePlugin,
   onReload,
   onReloadOne,
   onRetryPlugin,
   onViewSchema,
+  onInspectJob,
+  onStopJob,
   className,
 }: RightDockProps) {
   const [toggling, setToggling] = useState<Record<string, boolean>>({});
@@ -246,6 +257,14 @@ export function RightDock({
                     onReloadOne={onReloadOne}
                     onRetryPlugin={onRetryPlugin}
                     onShowSchema={showSchema}
+                  />
+                )}
+                {kind === "teams" && <TeamsPanel teamId={teamId} />}
+                {kind === "jobs" && (
+                  <JobsPanel
+                    jobs={jobs}
+                    onInspect={onInspectJob}
+                    onStop={onStopJob}
                   />
                 )}
                 {kind === "activity" && (
@@ -459,6 +478,102 @@ function PluginsPanel({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function JobsPanel({
+  jobs,
+  onInspect,
+  onStop,
+}: {
+  jobs: any[];
+  onInspect?: (activityId: string) => void;
+  onStop?: (callId?: string) => void;
+}) {
+  const running = jobs.filter((j) => {
+    const s = String(j?.status || "").toLowerCase();
+    return s === "running" || s === "" || s == null;
+  });
+  const recent = jobs
+    .filter((j) => !running.includes(j))
+    .slice(-12)
+    .reverse();
+
+  function shortName(name?: string) {
+    const raw = String(name || "tool");
+    return raw.replace(/^builtin_workspace_/, "").replace(/^cli_/, "").split(".").pop();
+  }
+
+  function row(j: any) {
+    const st = String(j?.status || "done").toLowerCase() || "done";
+    const title =
+      j?.kind === "subagent"
+        ? j?.label || j?.subagentId || "subagent"
+        : shortName(j?.name) || "tool";
+    const runningRow = st === "running";
+    return (
+      <div
+        key={j.id}
+        className={cn(
+          "flex items-start justify-between gap-2 rounded-lg border px-2 py-1.5 text-[11px]",
+          runningRow
+            ? "border-sky-500/35 bg-sky-500/10"
+            : "border-border/60 bg-muted/20",
+        )}
+      >
+        <button
+          type="button"
+          className="min-w-0 flex-1 text-left"
+          onClick={() => onInspect?.(j.activityId || j.id)}
+        >
+          <div className="truncate font-medium text-foreground">{title}</div>
+          <div className="text-muted-foreground">
+            {j.kind === "subagent" ? "子代理" : "工具"} · {st}
+          </div>
+        </button>
+        {runningRow ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-6 shrink-0 px-2 text-[10px]"
+            onClick={() => onStop?.(j.callId || j.id)}
+          >
+            停止
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-2.5">
+      <p className="m-0 text-[10.5px] text-muted-foreground">
+        长 shell / 子代理后台任务（来自当前会话时间线）
+      </p>
+      {!jobs.length ? (
+        <p className="m-0 text-[10.5px] text-muted-foreground">暂无 Jobs</p>
+      ) : (
+        <>
+          {running.length ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                运行中 · {running.length}
+              </div>
+              {running.map(row)}
+            </div>
+          ) : null}
+          {recent.length ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                最近
+              </div>
+              {recent.map(row)}
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

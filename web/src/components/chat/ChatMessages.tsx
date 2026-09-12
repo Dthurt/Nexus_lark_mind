@@ -5,6 +5,7 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
   type UIEvent,
 } from "react";
@@ -18,6 +19,7 @@ import { SubagentCard } from "@/components/chat/SubagentCard";
 import { TodoListCard } from "@/components/chat/TodoListCard";
 import { ToolCard } from "@/components/chat/ToolCard";
 import { ToolCallGroup } from "@/components/chat/ToolCallGroup";
+import { TurnProcessFold } from "@/components/chat/TurnProcessFold";
 import "@/components/tools/registerBuiltinTools";
 import { WorkspacePicker } from "@/components/workspace/WorkspacePicker";
 import type { TimelineItem } from "@/hooks/useChatTimeline";
@@ -29,11 +31,15 @@ import {
 import type { Workspace } from "@/types/api";
 import { cn } from "@/lib/utils";
 
+/** Initial visible timeline blocks; older ones load on demand (Wave C). */
+const WINDOW_STEP = 60;
+
 export type ChatMessagesProps = {
   items?: TimelineItem[];
   showWorkspacePicker?: boolean;
   modelProvider?: string;
   modelName?: string;
+  experienceTier?: "fast" | "balanced" | "high" | string;
   onInspectTool?: (activityId: string) => void;
   onStopTool?: (callId?: string) => void;
   onPickWorkspace?: (meta: Workspace) => void;
@@ -52,6 +58,8 @@ export type ChatMessagesProps = {
     feedback?: string;
   }) => void;
   onAcceptPlan?: (item: TimelineItem) => void;
+  /** Highlight the tool card awaiting ApprovalDock decision. */
+  highlightCallId?: string | null;
   className?: string;
 };
 
@@ -62,7 +70,16 @@ export type ChatMessagesHandle = {
 
 type Block =
   | { kind: "msg" | "approval" | "ask" | "todos" | "plan_review" | "subagent" | "file"; id: string; item: TimelineItem }
-  | { kind: "tools"; id: string; tools: TimelineItem[] };
+  | { kind: "tools"; id: string; tools: TimelineItem[] }
+  | {
+      kind: "turn_process";
+      id: string;
+      summary: string;
+      reasoning: string;
+      tools: TimelineItem[];
+      subagents: TimelineItem[];
+      botId: string;
+    };
 
 function nearBottom(el: HTMLElement, threshold = 80) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
@@ -70,14 +87,35 @@ function nearBottom(el: HTMLElement, threshold = 80) {
 
 function buildBlocks(items: TimelineItem[]): Block[] {
   const out: Block[] = [];
+  // Precompute fold groups keyed by assistant bubble id.
+  const foldBuckets = new Map<
+    string,
+    { tools: TimelineItem[]; subagents: TimelineItem[] }
+  >();
   for (const item of items || []) {
+    const botId = String(item.foldInto || "");
+    if (!botId) continue;
+    if (item.kind !== "tool" && item.kind !== "subagent") continue;
+    let bucket = foldBuckets.get(botId);
+    if (!bucket) {
+      bucket = { tools: [], subagents: [] };
+      foldBuckets.set(botId, bucket);
+    }
+    if (item.kind === "tool") bucket.tools.push(item);
+    else bucket.subagents.push(item);
+  }
+
+  for (const item of items || []) {
+    if (item.foldInto) {
+      // Emitted as part of turn_process when we hit the assistant bubble.
+      continue;
+    }
     if (
       item.kind === "approval" ||
       item.kind === "ask" ||
       item.kind === "todos" ||
       item.kind === "plan_review"
     ) {
-      // Approvals render in ApprovalDock above the composer, not in the message stream.
       if (item.kind === "approval") continue;
       out.push({ kind: item.kind, id: item.id, item });
       continue;
@@ -110,6 +148,23 @@ function buildBlocks(items: TimelineItem[]): Block[] {
     ) {
       continue;
     }
+    if (item.kind === "msg" && item.role === "assistant" && item.processFold && !item.streaming && !item.live) {
+      const bucket = foldBuckets.get(item.id) || { tools: [], subagents: [] };
+      const hasThinking = !!(item.reasoning || "").trim();
+      if (hasThinking || bucket.tools.length || bucket.subagents.length) {
+        out.push({
+          kind: "turn_process",
+          id: `proc-${item.id}`,
+          summary: String(item.processFold.summary || "本回合过程"),
+          reasoning: String(item.reasoning || ""),
+          tools: bucket.tools,
+          subagents: bucket.subagents,
+          botId: item.id,
+        });
+      }
+      out.push({ kind: "msg", id: item.id, item: { ...item, hideReasoning: true } });
+      continue;
+    }
     out.push({ kind: "msg", id: item.id, item });
   }
   return out;
@@ -122,6 +177,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       showWorkspacePicker = false,
       modelProvider = "",
       modelName = "",
+      experienceTier = "balanced",
       onInspectTool,
       onStopTool,
       onPickWorkspace,
@@ -129,6 +185,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       onResolveAsk,
       onResolvePlanReview,
       onAcceptPlan,
+      highlightCallId = null,
       className,
     },
     ref,
@@ -137,6 +194,9 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
     const followTailRef = useRef(true);
     const reducedMotion = usePrefersReducedMotion();
     const itemMotion = reducedMotion ? timelineItemMotionReduced : timelineItemMotion;
+    const [windowSize, setWindowSize] = useState(WINDOW_STEP);
+    const hasWorkspace = !showWorkspacePicker;
+    const hasModel = !!(modelProvider || "").trim() && !!(modelName || "").trim();
 
     useImperativeHandle(ref, () => ({
       get el() {
@@ -149,7 +209,31 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       },
     }));
 
-    const blocks = useMemo(() => buildBlocks(items), [items]);
+    const allBlocks = useMemo(() => buildBlocks(items), [items]);
+
+    useEffect(() => {
+      if (allBlocks.length === 0) {
+        setWindowSize(WINDOW_STEP);
+      }
+    }, [allBlocks.length]);
+
+    const hiddenCount = Math.max(0, allBlocks.length - windowSize);
+    const blocks = useMemo(
+      () => (hiddenCount > 0 ? allBlocks.slice(hiddenCount) : allBlocks),
+      [allBlocks, hiddenCount],
+    );
+
+    const loadEarlier = useCallback(() => {
+      const el = scrollerRef.current;
+      const prevHeight = el?.scrollHeight ?? 0;
+      const prevTop = el?.scrollTop ?? 0;
+      followTailRef.current = false;
+      setWindowSize((n) => Math.min(allBlocks.length, n + WINDOW_STEP));
+      requestAnimationFrame(() => {
+        if (!el) return;
+        el.scrollTop = el.scrollHeight - prevHeight + prevTop;
+      });
+    }, [allBlocks.length]);
 
     const maybeStickBottom = useCallback(() => {
       if (!followTailRef.current) return;
@@ -171,6 +255,16 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       if (last.kind === "tool") return `${items.length}|${last.status || ""}|${last.open ? 1 : 0}`;
       return `${items.length}|${last.id || ""}`;
     }, [items]);
+
+    useEffect(() => {
+      if (!highlightCallId) return;
+      requestAnimationFrame(() => {
+        const el = scrollerRef.current?.querySelector(
+          `[data-approval-call="${CSS.escape(highlightCallId)}"]`,
+        ) as HTMLElement | null;
+        el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    }, [highlightCallId]);
 
     useEffect(() => {
       const last = items[items.length - 1];
@@ -211,14 +305,62 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
         onScroll={onScroll}
       >
         {!items.length ? (
-          <div className="empty-state m-auto px-4 py-10 text-center text-muted-foreground animate-in fade-in duration-300">
+          <div className="empty-state m-auto max-w-md px-4 py-10 text-center text-muted-foreground animate-in fade-in duration-300">
             <div className="empty-brand mb-2 bg-gradient-to-r from-white via-[#8ec8f5] to-[#6fd4c0] bg-clip-text text-[22px] font-bold tracking-tight text-transparent">
               Nexus Lark Mind
             </div>
             <p className="m-0 text-sm">
-              先绑定工作目录，再让 Coding Agent 用 glob / grep / 读写 / shell 在项目里干活。
-              Agent 会按任务自行决定是否委派 subagent；飞书、插件坞与 Trajectory 仍是工作台能力。
+              约一分钟就绪：绑定目录 → 选模型 → 描述任务。Agent 用 glob / grep / 读写 / shell 在项目里干活。
             </p>
+            <ol className="empty-checklist mt-4 space-y-2 text-left text-[13px]">
+              <li
+                className={cn(
+                  "rounded-lg border px-3 py-2",
+                  hasWorkspace
+                    ? "border-emerald-500/35 bg-emerald-500/10 text-foreground"
+                    : "border-border/70 bg-muted/30",
+                )}
+              >
+                <div className="font-medium text-foreground">
+                  {hasWorkspace ? "✓ " : "1. "}绑定工作目录
+                </div>
+                {!hasWorkspace ? (
+                  <div className="mt-0.5 text-[12px] text-muted-foreground">
+                    选一个本地项目根目录，工具才能读写文件。
+                  </div>
+                ) : null}
+              </li>
+              <li
+                className={cn(
+                  "rounded-lg border px-3 py-2",
+                  hasModel
+                    ? "border-emerald-500/35 bg-emerald-500/10 text-foreground"
+                    : "border-border/70 bg-muted/30",
+                )}
+              >
+                <div className="font-medium text-foreground">
+                  {hasModel ? "✓ " : "2. "}选择 Provider / 模型
+                </div>
+                <div className="mt-0.5 text-[12px] text-muted-foreground">
+                  {hasModel
+                    ? `${modelProvider}/${modelName}`
+                    : "在下方输入框旁的模型菜单中选择（需已配置 API Key）。"}
+                </div>
+              </li>
+              <li
+                className={cn(
+                  "rounded-lg border px-3 py-2",
+                  hasWorkspace && hasModel
+                    ? "border-border/70 bg-muted/20 text-foreground"
+                    : "border-border/40 bg-transparent opacity-70",
+                )}
+              >
+                <div className="font-medium">3. 描述任务并发送</div>
+                <div className="mt-0.5 text-[12px] text-muted-foreground">
+                  例如「梳理目录结构」或「修这个报错」。可用体验档控制图示精度。
+                </div>
+              </li>
+            </ol>
             {showWorkspacePicker ? (
               <WorkspacePicker
                 className="empty-ws mt-[18px]"
@@ -229,8 +371,32 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
           </div>
         ) : null}
 
+        {hiddenCount > 0 ? (
+          <button
+            type="button"
+            className="mx-auto mb-1 rounded-md border border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/70"
+            onClick={loadEarlier}
+          >
+            加载更早的消息（还有 {hiddenCount} 条）
+          </button>
+        ) : null}
+
         <AnimatePresence initial={false} mode="sync">
           {blocks.map((block) => {
+            if (block.kind === "turn_process") {
+              return wrapMotion(
+                block.id,
+                <TurnProcessFold
+                  summary={block.summary}
+                  reasoning={block.reasoning}
+                  tools={block.tools}
+                  subagents={block.subagents}
+                  highlightCallId={highlightCallId}
+                  onInspectTool={onInspectTool}
+                  onStopTool={onStopTool}
+                />,
+              );
+            }
             if (block.kind === "msg") {
               const live = !!(block.item.streaming || block.item.live);
               return wrapMotion(
@@ -239,6 +405,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
                   item={block.item as any}
                   modelProvider={modelProvider}
                   modelName={modelName}
+                  experienceTier={experienceTier}
                   onAcceptPlan={() => onAcceptPlan?.(block.item)}
                 />,
                 live,
@@ -305,6 +472,10 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
                   block.id,
                   <ToolCard
                     item={t as any}
+                    highlighted={
+                      !!highlightCallId &&
+                      ((t as any).callId === highlightCallId || (t as any).id === highlightCallId)
+                    }
                     onInspect={onInspectTool}
                     onStop={onStopTool}
                   />,
@@ -315,6 +486,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
                 block.id,
                 <ToolCallGroup
                   tools={block.tools as any}
+                  highlightCallId={highlightCallId}
                   onInspect={onInspectTool}
                   onStop={onStopTool}
                 />,

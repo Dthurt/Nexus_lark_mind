@@ -146,13 +146,14 @@ def create_kernel_app() -> FastAPI:
 
     @app.post("/rpc/settings/models/test")
     async def test_models(body: Dict[str, Any]):
-        from src.adapters.channels.probe import test_openai_compat
+        from src.adapters.channels.probe import test_anthropic_messages, test_openai_compat
 
         gateway: ModelGateway = state["gateway"]
         base_url = str(body.get("base_url") or "").strip()
         api_key = str(body.get("api_key") or "")
         model = str(body.get("model") or "").strip()
         provider_id = str(body.get("provider_id") or "").strip().lower()
+        api_kind = str(body.get("api") or "").strip().lower()
         if provider_id:
             custom = gateway.registry.store.providers.get(provider_id)
             if custom:
@@ -172,10 +173,11 @@ def create_kernel_app() -> FastAPI:
                 prov = gateway.registry._providers.get(provider_id)
                 if prov is not None and not api_key:
                     api_key = getattr(prov, "api_key", "") or ""
-                if meta.get("api") == "anthropic-messages":
-                    from src.common.errors import ValidationAppError
-
-                    raise ValidationAppError("Anthropic builtin: connectivity test not supported yet; use OpenAI-compat providers")
+                if not api_kind:
+                    api_kind = str(meta.get("api") or "")
+        if api_kind == "anthropic-messages" or provider_id == "anthropic":
+            data = await test_anthropic_messages(base_url=base_url, api_key=api_key, model=model)
+            return RpcEnvelope(ok=True, data=data)
         data = await test_openai_compat(base_url=base_url, api_key=api_key, model=model)
         return RpcEnvelope(ok=True, data=data)
 
@@ -388,6 +390,11 @@ def create_kernel_app() -> FastAPI:
                         "auto_accept": bool((task.metadata or {}).get("auto_accept")),
                         "plan_status": (task.metadata or {}).get("plan_status") or "idle",
                         "multitask": bool((task.metadata or {}).get("multitask", True)),
+                        "permission_preset": (task.metadata or {}).get("permission_preset")
+                        or "workspace-write",
+                        "plan_enforcement": (task.metadata or {}).get("plan_enforcement") or "hard",
+                        "experience_tier": (task.metadata or {}).get("experience_tier") or "balanced",
+                        "reasoning_effort": (task.metadata or {}).get("reasoning_effort") or "medium",
                     },
                     allow_subagents=bool((task.metadata or {}).get("multitask", True)),
                     parent_session_id=task.session_id,

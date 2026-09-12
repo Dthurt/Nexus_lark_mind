@@ -68,6 +68,14 @@ class WebAdapter(BaseAdapter):
             meta["auto_accept"] = bool(payload.get("auto_accept"))
         if payload.get("multitask") is not None:
             meta["multitask"] = bool(payload.get("multitask"))
+        if payload.get("permission_preset") is not None:
+            meta["permission_preset"] = str(payload.get("permission_preset") or "").strip().lower()
+        if payload.get("plan_enforcement") is not None:
+            meta["plan_enforcement"] = str(payload.get("plan_enforcement") or "").strip().lower()
+        if payload.get("experience_tier") is not None:
+            meta["experience_tier"] = str(payload.get("experience_tier") or "").strip().lower()
+        if payload.get("reasoning_effort") is not None:
+            meta["reasoning_effort"] = str(payload.get("reasoning_effort") or "").strip().lower()
         task = StandardTask(
             session_id=session_id,
             channel=ChannelType.WEB,
@@ -103,6 +111,7 @@ class WebAdapter(BaseAdapter):
         async with self._lock:
             subs = list(self._subscribers.get(event.session_id, set()))
         payload = {
+            "event_id": event.event_id,
             "event_type": event.event_type.value,
             "task_id": event.task_id,
             "session_id": event.session_id,
@@ -115,10 +124,29 @@ class WebAdapter(BaseAdapter):
             except asyncio.QueueFull:
                 logger.warning("SSE queue full for session %s", event.session_id)
 
-    async def sse_stream(self, session_id: str) -> AsyncIterator[bytes]:
+    async def sse_stream(
+        self,
+        session_id: str,
+        *,
+        after_event_id: str = "",
+    ) -> AsyncIterator[bytes]:
+        # Replay missed events from the ring buffer before live subscribe.
+        try:
+            missed = await self.redis.list_session_events_after(session_id, after_event_id)
+        except Exception:
+            logger.exception("list_session_events_after failed for %s", session_id)
+            missed = []
         queue = await self.subscribe(session_id)
         try:
-            yield b"data: " + orjson.dumps({"event_type": "session.ready", "session_id": session_id}) + b"\n\n"
+            yield b"data: " + orjson.dumps(
+                {
+                    "event_type": "session.ready",
+                    "session_id": session_id,
+                    "replay_count": len(missed),
+                }
+            ) + b"\n\n"
+            for ev in missed:
+                yield b"data: " + orjson.dumps(ev) + b"\n\n"
             while True:
                 try:
                     item = await asyncio.wait_for(queue.get(), timeout=15.0)

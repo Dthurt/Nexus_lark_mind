@@ -48,6 +48,10 @@ class WebChatRequest(BaseModel):
     agent_mode: Optional[str] = None
     auto_accept: Optional[bool] = None
     multitask: Optional[bool] = None
+    permission_preset: Optional[str] = None
+    plan_enforcement: Optional[str] = None
+    experience_tier: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
 
 class GateResolveRequest(BaseModel):
@@ -63,6 +67,10 @@ class InteractionPatchRequest(BaseModel):
     agent_mode: Optional[str] = None
     auto_accept: Optional[bool] = None
     plan_status: Optional[str] = None
+    permission_preset: Optional[str] = None
+    plan_enforcement: Optional[str] = None
+    experience_tier: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
 
 class AcceptPlanRequest(BaseModel):
@@ -135,7 +143,7 @@ def create_adapters_app() -> FastAPI:
         kernel = RpcClient(settings.kernel_rpc_url)
         await kernel.start()
 
-        feishu = FeishuAdapter(orchestrator, redis_client, settings)
+        feishu = FeishuAdapter(orchestrator, redis_client, settings, kernel=kernel)
         web = WebAdapter(orchestrator, redis_client, settings)
 
         stop_event = asyncio.Event()
@@ -405,15 +413,44 @@ def create_adapters_app() -> FastAPI:
         return RpcEnvelope(ok=True, data={"source": content, "raw": data})
 
     @app.post("/api/chat/{task_id}/cancel")
-    async def cancel_chat(task_id: str):
+    async def cancel_chat(task_id: str, request: Request):
         orch: RpcClient = state["orchestrator"]
-        data = await orch.call("POST", f"/rpc/tasks/{task_id}/cancel")
+        body: dict = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await orch.call("POST", f"/rpc/tasks/{task_id}/cancel", json=body or {})
         return RpcEnvelope(ok=True, data=data)
 
     @app.post("/api/sessions/{session_id}/cancel")
-    async def cancel_session(session_id: str):
+    async def cancel_session(session_id: str, request: Request):
         orch: RpcClient = state["orchestrator"]
-        data = await orch.call("POST", f"/rpc/sessions/{session_id}/cancel")
+        body: dict = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await orch.call("POST", f"/rpc/sessions/{session_id}/cancel", json=body or {})
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/sessions/{session_id}/inbox")
+    async def get_session_inbox(session_id: str):
+        orch: RpcClient = state["orchestrator"]
+        data = await orch.call("GET", f"/rpc/sessions/{session_id}/inbox")
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/sessions/{session_id}/inbox")
+    async def post_session_inbox(session_id: str, request: Request):
+        orch: RpcClient = state["orchestrator"]
+        body = await request.json()
+        data = await orch.call("POST", f"/rpc/sessions/{session_id}/inbox", json=body)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.delete("/api/sessions/{session_id}/inbox/{item_id}")
+    async def delete_session_inbox_item(session_id: str, item_id: str):
+        orch: RpcClient = state["orchestrator"]
+        data = await orch.call("DELETE", f"/rpc/sessions/{session_id}/inbox/{item_id}")
         return RpcEnvelope(ok=True, data=data)
 
     @app.post("/api/sessions/{session_id}/files")
@@ -426,10 +463,10 @@ def create_adapters_app() -> FastAPI:
         return RpcEnvelope(ok=True, data=data)
 
     @app.get("/api/chat/stream")
-    async def web_sse(session_id: str):
+    async def web_sse(session_id: str, after: str = ""):
         web: WebAdapter = state["web"]
         return StreamingResponse(
-            web.sse_stream(session_id),
+            web.sse_stream(session_id, after_event_id=(after or "").strip()),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -836,6 +873,158 @@ def create_adapters_app() -> FastAPI:
         kernel: RpcClient = state["kernel"]
         body = await request.json()
         data = await kernel.call("PUT", f"/rpc/plugins/{plugin_id}/config", json=body)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/plugins/install")
+    async def install_plugin_package(request: Request):
+        """Install a local plugin package (directory path or uploaded zip)."""
+        from src.common.plugin_package import PluginPackageError, install_from_directory, install_from_zip
+
+        ctype = (request.headers.get("content-type") or "").lower()
+        try:
+            if "multipart/form-data" in ctype:
+                form = await request.form()
+                upload = form.get("file")
+                if upload is None:
+                    raise ValidationAppError("file required")
+                staging = Path("data") / "plugin_uploads"
+                staging.mkdir(parents=True, exist_ok=True)
+                dest = staging / Path(getattr(upload, "filename", None) or "plugin.zip").name
+                dest.write_bytes(await upload.read())  # type: ignore[misc]
+                data = install_from_zip(dest)
+            else:
+                body = await request.json()
+                path_str = str(body.get("path") or "").strip()
+                if not path_str:
+                    raise ValidationAppError("path required")
+                path = Path(path_str)
+                if path.suffix.lower() == ".zip":
+                    data = install_from_zip(path)
+                else:
+                    data = install_from_directory(path)
+        except PluginPackageError as exc:
+            raise ValidationAppError(str(exc)) from exc
+
+        kernel: RpcClient = state["kernel"]
+        try:
+            await kernel.call("POST", "/rpc/plugins/reload", json={})
+            data["reloaded"] = True
+        except Exception:
+            data["reloaded"] = False
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/teams/{team_id}")
+    async def team_snapshot(team_id: str):
+        from src.core_kernel.teams import get_team_dag, get_team_mailbox
+
+        mbox = get_team_mailbox().snapshot(team_id)
+        dag = get_team_dag().snapshot(team_id)
+        return RpcEnvelope(
+            ok=True,
+            data={
+                "enabled": bool(settings.nlm_experimental_teams),
+                "mailbox": mbox,
+                "dag": dag,
+            },
+        )
+
+    @app.post("/api/teams/{team_id}/dag")
+    async def team_dag_add(team_id: str, request: Request):
+        from src.core_kernel.teams import get_team_dag
+
+        body = await request.json()
+        node = get_team_dag().add_node(
+            team_id,
+            label=str(body.get("label") or ""),
+            depends_on=list(body.get("depends_on") or []),
+            node_id=body.get("node_id"),
+            meta=body.get("meta") if isinstance(body.get("meta"), dict) else None,
+        )
+        return RpcEnvelope(ok=True, data=node.to_dict())
+
+    @app.post("/api/teams/{team_id}/dag/{node_id}/mark")
+    async def team_dag_mark(team_id: str, node_id: str, request: Request):
+        from src.core_kernel.teams import get_team_dag
+
+        body = await request.json()
+        status = str(body.get("status") or "done")
+        node = get_team_dag().mark(team_id, node_id, status)
+        if not node:
+            raise NotFoundError("dag node not found")
+        return RpcEnvelope(ok=True, data=node.to_dict())
+
+    @app.get("/api/acp/backends")
+    async def acp_backends():
+        from src.core_kernel.subagent.backend import list_subagent_backends
+
+        return RpcEnvelope(ok=True, data={"backends": list_subagent_backends()})
+
+    @app.post("/api/acp/sessions")
+    async def acp_create_session(request: Request):
+        """Thin ACP-style session create → existing session API."""
+        body = await request.json()
+        orch: RpcClient = state["orchestrator"]
+        data = await orch.call(
+            "POST",
+            "/rpc/sessions",
+            json={
+                "cwd": body.get("cwd"),
+                "workspace_id": body.get("workspace_id"),
+                "title": body.get("title") or "ACP session",
+            },
+        )
+        return RpcEnvelope(ok=True, data={"sessionId": data.get("id") or data.get("session_id"), "raw": data})
+
+    @app.post("/api/acp/sessions/{session_id}/prompt")
+    async def acp_prompt(session_id: str, request: Request):
+        """Map ACP prompt → /api/chat queue (HTTP+SSE workbench bridge)."""
+        body = await request.json()
+        prompt = str(body.get("prompt") or body.get("text") or "").strip()
+        if not prompt:
+            raise ValidationAppError("prompt required")
+        web: WebAdapter = state["web"]
+        task = await web.handle_inbound(
+            {
+                "content": prompt,
+                "session_id": session_id,
+                "user_id": str(body.get("user_id") or "acp-user"),
+                "model_provider": body.get("model_provider"),
+                "model_name": body.get("model_name"),
+                "cwd": body.get("cwd"),
+                "stream": True,
+            }
+        )
+        if task is None:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "prompt required"})
+        return RpcEnvelope(
+            ok=True,
+            data={
+                "task_id": task.task_id,
+                "session_id": task.session_id,
+                "status": "queued",
+            },
+        )
+
+    @app.post("/api/acp/backends/{backend}/spawn")
+    async def acp_backend_spawn(backend: str, request: Request):
+        from src.core_kernel.subagent.backend import get_subagent_backend
+
+        body = await request.json()
+        try:
+            be = get_subagent_backend(backend)
+        except KeyError as exc:
+            raise ValidationAppError(str(exc)) from exc
+        prompt = str(body.get("prompt") or "").strip()
+        session_id = str(body.get("session_id") or "").strip()
+        if not prompt or not session_id:
+            raise ValidationAppError("prompt and session_id required")
+        data = await be.spawn(
+            prompt=prompt,
+            session_id=session_id,
+            cwd=body.get("cwd"),
+            model=body.get("model"),
+            label=body.get("label"),
+        )
         return RpcEnvelope(ok=True, data=data)
 
     @app.get("/api/generated-images/{name}")

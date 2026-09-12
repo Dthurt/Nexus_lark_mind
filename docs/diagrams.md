@@ -7,7 +7,7 @@ The workbench renders fenced diagrams in assistant messages.
 | Fence | When to use | Engine |
 |-------|-------------|--------|
 | ` ```mermaid ` | Default: flows, sequences, ER, state, mind maps | Local Mermaid v11 |
-| ` ```drawio ` / ` ```diagrams ` / ` ```mxfile ` | Precise layout, swimlanes, richer architecture boards | [embed.diagrams.net](https://embed.diagrams.net) (needs network) |
+| ` ```drawio ` / ` ```diagrams ` / ` ```mxfile ` | Precise layout, swimlanes, richer architecture boards | **Offline SVG preview** by default; optional local `/drawio/` embed or remote diagrams.net |
 | ` ```xml ` | Only if body is `<mxfile>` / `<mxGraphModel>` | Same as Draw.io |
 
 Agent guidance lives in the kernel system prompt (`## Diagrams`): the model **chooses** Mermaid vs Draw.io by complexity.
@@ -41,7 +41,8 @@ Example:
 ````
 
 - Toolbar: fold, copy XML, open in diagrams.net, fullscreen, view/source.
-- Offline / blocked CDN: use **源码** or **外链** until a self-hosted viewer is packaged (see experience tiers).
+- Offline: built-in mxCell → SVG preview (no CDN). Drop a diagrams.net embed build into `web/public/drawio/` for full local viewer, or set `localStorage.nlm_drawio_embed`.
+- Fast experience tier: Draw.io fences render as blocked source (Mermaid only).
 
 ## Related
 

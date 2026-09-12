@@ -44,9 +44,53 @@ export function postChat(body: ChatSendBody): Promise<ChatQueued> {
   return apiPost<ChatQueued>("/api/chat", body);
 }
 
-export function cancelChatTask(taskId: string): Promise<unknown> {
-  return apiPost(`/api/chat/${encodeURIComponent(taskId)}/cancel`);
+export function cancelChatTask(
+  taskId: string,
+  body?: { keep_inbox?: boolean },
+): Promise<unknown> {
+  return apiPost(`/api/chat/${encodeURIComponent(taskId)}/cancel`, body || {});
 }
+
+export function cancelSession(
+  sessionId: string,
+  body?: { keep_inbox?: boolean },
+): Promise<unknown> {
+  return apiPost(
+    `/api/sessions/${encodeURIComponent(sessionId)}/cancel`,
+    body || {},
+  );
+}
+
+export function getSessionInbox(sessionId: string): Promise<{
+  session_id: string;
+  items: InboxItem[];
+}> {
+  return apiGet(`/api/sessions/${encodeURIComponent(sessionId)}/inbox`);
+}
+
+export function postSessionInbox(
+  sessionId: string,
+  body: { kind: "steer" | "queue"; content: string; source?: string },
+): Promise<{ item: InboxItem; items: InboxItem[] }> {
+  return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/inbox`, body);
+}
+
+export function deleteSessionInboxItem(
+  sessionId: string,
+  itemId: string,
+): Promise<{ removed: InboxItem | null; items: InboxItem[] }> {
+  return apiDelete(
+    `/api/sessions/${encodeURIComponent(sessionId)}/inbox/${encodeURIComponent(itemId)}`,
+  );
+}
+
+export type InboxItem = {
+  id: string;
+  kind: "steer" | "queue" | string;
+  content: string;
+  source?: string;
+  created_at?: string;
+};
 
 export function repairMermaid(body: MermaidRepairBody): Promise<MermaidRepairResult> {
   return apiPost<MermaidRepairResult>("/api/mermaid/repair", body);
@@ -60,10 +104,10 @@ export function repairDrawio(body: DrawioRepairBody): Promise<DrawioRepairResult
   return apiPost<DrawioRepairResult>("/api/drawio/repair", body);
 }
 
-export function openChatStream(sessionId: string): EventSource {
-  return new EventSource(
-    `/api/chat/stream?session_id=${encodeURIComponent(sessionId)}`,
-  );
+export function openChatStream(sessionId: string, afterEventId?: string): EventSource {
+  const q = new URLSearchParams({ session_id: sessionId });
+  if (afterEventId) q.set("after", afterEventId);
+  return new EventSource(`/api/chat/stream?${q.toString()}`);
 }
 
 // ----- sessions -----
@@ -104,10 +148,6 @@ export function patchInteraction(
     `/api/sessions/${encodeURIComponent(sessionId)}/interaction`,
     body,
   );
-}
-
-export function cancelSession(sessionId: string): Promise<unknown> {
-  return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`);
 }
 
 export function postSessionFile(
@@ -354,4 +394,36 @@ export function testFeishu(body: {
 
 export function reloadFeishu(): Promise<ChannelDoc> {
   return apiPost<ChannelDoc>("/api/settings/channels/feishu/reload");
+}
+
+// ----- teams / acp / plugin packages -----
+
+export function getTeamSnapshot(teamId: string): Promise<any> {
+  return apiGet(`/api/teams/${encodeURIComponent(teamId)}`);
+}
+
+export function postTeamDagNode(
+  teamId: string,
+  body: { label?: string; depends_on?: string[]; node_id?: string; meta?: Record<string, unknown> },
+): Promise<any> {
+  return apiPost(`/api/teams/${encodeURIComponent(teamId)}/dag`, body);
+}
+
+export function markTeamDagNode(
+  teamId: string,
+  nodeId: string,
+  status: string,
+): Promise<any> {
+  return apiPost(
+    `/api/teams/${encodeURIComponent(teamId)}/dag/${encodeURIComponent(nodeId)}/mark`,
+    { status },
+  );
+}
+
+export function installPluginPackage(body: { path: string }): Promise<any> {
+  return apiPost("/api/plugins/install", body);
+}
+
+export function listAcpBackends(): Promise<{ backends: string[] }> {
+  return apiGet("/api/acp/backends");
 }

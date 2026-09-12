@@ -344,6 +344,39 @@ export function useChatTimeline() {
       if (merged.duration_ms == null && clientMs != null) merged.duration_ms = clientMs;
 
       const list = itemsRef.current.slice();
+      // Wave D1: mark mid-turn tools/subagents + thinking for process fold.
+      let turnStart = 0;
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        const it = list[i];
+        if (it.id === bot.id) continue;
+        if (it.kind === "msg" && it.role === "user") {
+          turnStart = i + 1;
+          break;
+        }
+      }
+      let toolCount = 0;
+      for (let i = turnStart; i < list.length; i += 1) {
+        const it = list[i];
+        if (it.id === bot.id) break;
+        if (it.kind === "tool" || it.kind === "subagent") {
+          it.foldInto = bot.id;
+          toolCount += 1;
+        }
+      }
+      const hasThinking = !!(bot.reasoning || "").trim();
+      if (hasThinking || toolCount > 0) {
+        const summary = hasThinking
+          ? toolCount > 0
+            ? `思考片刻 · ${toolCount} 工具`
+            : "思考片刻"
+          : `${toolCount} 工具`;
+        bot.processFold = {
+          summary,
+          toolCount,
+          hasThinking,
+        };
+      }
+
       if (!(bot.content || "").trim()) {
         const idx = list.findIndex((x) => x.id === bot.id);
         if (idx >= 0) list.splice(idx, 1);
@@ -354,6 +387,12 @@ export function useChatTimeline() {
           prev.usage = { ...(prev.usage || {}), ...merged };
           if (meta?.modelName) prev.modelName = meta.modelName;
           if (meta?.modelProvider) prev.modelProvider = meta.modelProvider;
+          if (bot.processFold) {
+            prev.processFold = bot.processFold;
+            for (const it of list) {
+              if (it.foldInto === bot.id) it.foldInto = prev.id;
+            }
+          }
         }
         commit(list);
       } else {
@@ -683,7 +722,7 @@ export function useChatTimeline() {
   const renderApproval = useCallback(
     (payload: any, activityId?: string | null) => {
       sealLiveAssistantBeforeTools();
-      const callId = payload?.id || mid();
+      const callId = payload?.call_id || payload?.id || mid();
       const list = itemsRef.current.slice();
       const tool = list.find((x) => x.kind === "tool" && x.callId === callId);
       if (tool) {

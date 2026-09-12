@@ -85,25 +85,124 @@ def create_orchestrator_app() -> FastAPI:
         )
 
     @app.post("/rpc/tasks/{task_id}/cancel")
-    async def cancel_task(task_id: str):
+    async def cancel_task(task_id: str, request: Request):
         dispatcher: TaskDispatcher = state["dispatcher"]
+        body: Dict[str, Any] = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        keep_inbox = True if body.get("keep_inbox") is None else bool(body.get("keep_inbox"))
         active = dispatcher.request_cancel(task_id)
-        return RpcEnvelope(ok=True, data={"task_id": task_id, "cancel_requested": True, "was_active": active})
+        return RpcEnvelope(
+            ok=True,
+            data={
+                "task_id": task_id,
+                "cancel_requested": True,
+                "was_active": active,
+                "keep_inbox": keep_inbox,
+            },
+        )
 
     @app.post("/rpc/sessions/{session_id}/cancel")
-    async def cancel_session(session_id: str):
+    async def cancel_session(session_id: str, request: Request):
         dispatcher: TaskDispatcher = state["dispatcher"]
+        sessions: SessionContext = state["sessions"]
+        body: Dict[str, Any] = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        keep_inbox = True if body.get("keep_inbox") is None else bool(body.get("keep_inbox"))
         task_id = dispatcher.cancel_session(session_id)
-        # Best-effort: ask kernel to deny pending approval/ask gates
+        cleared: list = []
+        if not keep_inbox:
+            try:
+                cleared = await sessions.clear_inbox_items(session_id)
+            except Exception:
+                logger.exception("clear inbox on cancel failed for %s", session_id)
         kernel: RpcClient = state["kernel"]
         try:
-            await kernel.call("POST", f"/rpc/gates/deny-session", json={"session_id": session_id})
+            await kernel.call("POST", "/rpc/gates/deny-session", json={"session_id": session_id})
         except Exception:
             logger.exception("deny-session gates failed for %s", session_id)
         return RpcEnvelope(
             ok=True,
-            data={"session_id": session_id, "task_id": task_id, "cancel_requested": bool(task_id)},
+            data={
+                "session_id": session_id,
+                "task_id": task_id,
+                "cancel_requested": bool(task_id),
+                "keep_inbox": keep_inbox,
+                "cleared_inbox": cleared,
+            },
         )
+
+    @app.get("/rpc/sessions/{session_id}/inbox")
+    async def get_inbox(session_id: str):
+        sessions: SessionContext = state["sessions"]
+        items = await sessions.get_inbox(session_id)
+        return RpcEnvelope(ok=True, data={"session_id": session_id, "items": items})
+
+    @app.post("/rpc/sessions/{session_id}/inbox")
+    async def post_inbox(session_id: str, request: Request):
+        from src.common.errors import NotFoundError, ValidationAppError
+        from src.common.schemas import BusEvent, ChannelType, EventType
+
+        body = await request.json()
+        sessions: SessionContext = state["sessions"]
+        redis_client = state["redis"]
+        await sessions.ensure(
+            session_id,
+            user_id=str(body.get("user_id") or "web-user"),
+            channel=str(body.get("channel") or "web"),
+        )
+        kind = str(body.get("kind") or "queue").strip().lower()
+        content = str(body.get("content") or "")
+        try:
+            item = await sessions.push_inbox_item(
+                session_id,
+                kind=kind,
+                content=content,
+                source=str(body.get("source") or "user"),
+            )
+        except ValueError as exc:
+            raise ValidationAppError(str(exc)) from exc
+        except KeyError as exc:
+            raise NotFoundError(session_id) from exc
+        items = await sessions.get_inbox(session_id)
+        await redis_client.publish_event(
+            BusEvent(
+                event_type=EventType.TASK_INBOX,
+                task_id="",
+                session_id=session_id,
+                channel=ChannelType.WEB,
+                payload={"action": "pushed", "item": item, "items": items},
+            )
+        )
+        return RpcEnvelope(ok=True, data={"item": item, "items": items})
+
+    @app.delete("/rpc/sessions/{session_id}/inbox/{item_id}")
+    async def delete_inbox_item(session_id: str, item_id: str):
+        from src.common.errors import NotFoundError
+        from src.common.schemas import BusEvent, ChannelType, EventType
+
+        sessions: SessionContext = state["sessions"]
+        redis_client = state["redis"]
+        try:
+            removed = await sessions.remove_inbox_item(session_id, item_id)
+        except KeyError as exc:
+            raise NotFoundError(session_id) from exc
+        items = await sessions.get_inbox(session_id)
+        await redis_client.publish_event(
+            BusEvent(
+                event_type=EventType.TASK_INBOX,
+                task_id="",
+                session_id=session_id,
+                channel=ChannelType.WEB,
+                payload={"action": "removed", "item": removed, "items": items},
+            )
+        )
+        return RpcEnvelope(ok=True, data={"removed": removed, "items": items})
 
     @app.post("/rpc/sessions/{session_id}/files")
     async def append_session_file(session_id: str, request: Request):
@@ -216,6 +315,10 @@ def create_orchestrator_app() -> FastAPI:
                 agent_mode=body.get("agent_mode"),
                 auto_accept=body.get("auto_accept"),
                 plan_status=body.get("plan_status"),
+                permission_preset=body.get("permission_preset"),
+                plan_enforcement=body.get("plan_enforcement"),
+                experience_tier=body.get("experience_tier"),
+                reasoning_effort=body.get("reasoning_effort"),
             )
         except ValueError as exc:
             from src.common.errors import ValidationAppError

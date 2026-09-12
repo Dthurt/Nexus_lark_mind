@@ -1,37 +1,32 @@
-# Experience tiers (roadmap)
+# Experience tiers
 
-Goal: a **Codex-like** control that raises or lowers “experience quality” for a conversation — not only model size, but **which diagram fidelity** (and later other UX) the agent is allowed to use.
+Codex-like session control for diagram fidelity (and later other UX). Wired in Wave D.
 
-> Status: **documented / agent-hinted**. UI slider and hard coupling to model routing are **not shipped yet**.
-
-## Proposed ladder (low → high)
+## Ladder (low → high)
 
 | Tier | UX feel | Diagrams | Model expectation |
 |------|---------|----------|-------------------|
-| **1 · Fast** | Snappy, good enough | **Mermaid only** | Small / fast models OK |
-| **2 · Balanced** (default) | Clear structure | Mermaid default; Draw.io when layout matters | Mid-tier |
-| **3 · High** | Polished boards | Prefer **Draw.io XML** for architecture / multi-lane | Stronger models required |
-| **4 · Max** (future) | Publication-grade | Draw.io + optional export PNG/SVG, stricter validation | Best available model |
+| **fast** | Snappy | **Mermaid only** (Draw.io fences → source banner) | Small / fast models OK |
+| **balanced** (default) | Clear structure | Mermaid default; Draw.io when layout matters | Mid-tier |
+| **high** | Polished boards | Prefer **Draw.io XML** for architecture / multi-lane | Stronger models |
 
-Rules of thumb:
+## Shipped
 
-- Higher tiers **must** route to stronger models — weak models produce broken or empty `mxfile` XML.
-- Lower tiers **forbid** Draw.io fences (or rewrite them to Mermaid) so latency and token cost stay down.
-- The agent already self-selects Mermaid vs Draw.io by complexity; the tier control will **constrain** that choice.
+- Session field `experience_tier` via `PATCH /api/sessions/{id}/interaction` (+ chat body)
+- Composer **+** menu → **体验档**
+- Kernel prompt injects tier constraints (`src/common/experience_tiers.py` + `agent_prompts.py`)
+- Companion control: `reasoning_effort` (`low` \| `medium` \| `high`) → `ModelRequest.reasoning_effort`
+- Soft model-floor hint when raising tier
+- **Fast render gate**: `allowDrawio: false` in markdown → blocked Draw.io host (no viewer)
 
-## UI sketch (TODO)
+## Model floor (soft)
 
-- Composer or session header: stepped control (like Codex effort / experience), e.g. `Fast | Balanced | High`.
-- Persist per session; show current tier next to model picker.
-- When user raises tier, optionally suggest / auto-switch to a stronger provider model if the current one is below a floor.
+Raising the Composer **体验档** does **not** block the request. When the current model looks below the tier floor, the UI toasts a hint and offers a one-click switch.
 
-## Implementation checklist
+## Still optional
 
-- [ ] Session/composer `experience_tier` field (API + UI)
-- [ ] Kernel prompt injects tier constraints (allowed fence languages)
-- [ ] Model floor map per tier in settings
-- [ ] Optional: reject or convert Draw.io on tier 1
-- [ ] Self-host or vendor diagrams.net viewer for offline High tier
-- [ ] Telemetry: which format was used vs tier
+- [x] Soft model-floor hint when raising tier
+- [x] Reject / convert Draw.io fences on `fast` at render time
+- [ ] Telemetry: format used vs tier
 
-See also: [diagrams.md](./diagrams.md).
+See also: [diagrams.md](./diagrams.md), [interaction-modes.md](./interaction-modes.md).

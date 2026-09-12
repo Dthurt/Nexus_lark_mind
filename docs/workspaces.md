@@ -15,6 +15,7 @@ Models never see workspace registry IDs as a separate product concept beyond the
 1. Empty chat hero → **Workspace picker** (本机 / 远程 SSH)
 2. Sidebar **工作目录** → click to open a new session bound to that workspace
 3. Topbar chip shows active cwd (`SSH ·` prefix for remote)
+4. Composer **blocks send** until a cwd is bound (Wave E)
 
 See also: [ssh-workspaces.md](./ssh-workspaces.md)
 
@@ -37,7 +38,13 @@ Chat may also pass `workspace_id` / `cwd` on `POST /api/chat` so the first messa
 - System prompt includes active workspace path when `task.metadata.cwd` is set
 - Tool invoke context carries cwd (`NLM_WORKSPACE_CWD` for CLI plugins too)
 - Paths cannot escape the workspace root
-- Tool loop allows up to **20** rounds when a workspace is bound (parallel tool calls in a round)
+- Tool loop allows up to **64** rounds when a workspace is bound (see `AGENT_MAX_ROUNDS_WORKSPACE`)
+- **Parallel tools (Wave E):** non-approval tools in a round run concurrently up to
+  `AGENT_MAX_PARALLEL_TOOL_CALLS` (default **8**, barrier within each batch).
+  Tools that need ApprovalDock / Feishu cards run **exclusive** (one gate at a time).
+  Ask-user / plan-review are also exclusive.
+- **`run_code` (Wave F):** execute a short Python snippet with `cwd=workspace` (approval like shell).
+  Not DSH PTC — no nested tool SDK inside the snippet.
 - OpenAI tool names for workspace tools are short (`grep`, `glob`, …) so models behave like DSH coding agents
 - NLM extras stay available: Feishu channels, MCP/CLI plugins, web_search, Trajectory + right dock
 

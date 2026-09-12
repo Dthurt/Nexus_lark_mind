@@ -8,7 +8,13 @@ from typing import Any, Dict, Optional
 
 from src.adapters.base_adapter import BaseAdapter
 from src.adapters.channels import resolve_feishu
-from src.adapters.feishu.cards import build_streaming_card, build_text_card
+from src.adapters.feishu.cards import (
+    build_approval_card,
+    build_ask_card,
+    build_gate_resolved_card,
+    build_streaming_card,
+    build_text_card,
+)
 from src.adapters.feishu.client import FeishuClient
 from src.adapters.feishu.crypto import AESCipher, verify_request_signature, verify_token
 from src.adapters.feishu.events import classify_payload, strip_mention_placeholders
@@ -20,6 +26,14 @@ from src.infrastructure.redis_client import RedisClient
 logger = logging.getLogger(__name__)
 
 
+def _feishu_chat_id(session_id: str) -> str:
+    """Parse chat id from `feishu:{chat_id}:{user_id}` session keys."""
+    parts = str(session_id or "").split(":", 2)
+    if len(parts) >= 3 and parts[0] == "feishu":
+        return parts[1]
+    return ""
+
+
 class FeishuAdapter(BaseAdapter):
     channel = ChannelType.FEISHU
 
@@ -28,11 +42,14 @@ class FeishuAdapter(BaseAdapter):
         orchestrator: RpcClient,
         redis_client: RedisClient,
         settings: Optional[Settings] = None,
+        kernel: Optional[RpcClient] = None,
     ) -> None:
         super().__init__(orchestrator, redis_client)
         self.settings = settings or get_settings()
+        self.kernel = kernel
         self.client = FeishuClient(self.settings)
         self._card_messages: Dict[str, str] = {}  # task_id -> feishu message_id
+        self._gate_messages: Dict[str, str] = {}  # call_id -> feishu message_id
         self._buffers: Dict[str, str] = {}
         self._lock = asyncio.Lock()
 
@@ -47,6 +64,10 @@ class FeishuAdapter(BaseAdapter):
             logger.debug("Ignore feishu app/bot echo message")
             return None
         if kind == "card_action":
+            # Wave E1: approval / ask_user → Kernel gate resolve (same as Web HITL)
+            if data.kind in {"approval", "ask_user"} and data.call_id:
+                await self._resolve_hitl_card(data)
+                return None
             action = data.action
             text = f"[card_action:{action}] {data.payload}".strip()
             task = StandardTask(
@@ -105,6 +126,52 @@ class FeishuAdapter(BaseAdapter):
         logger.debug("Ignored feishu payload kind=%s", kind)
         return None
 
+    async def _resolve_hitl_card(self, data: Any) -> None:
+        if self.kernel is None:
+            logger.warning("Feishu HITL resolve skipped — kernel RPC not wired")
+            return
+        action = str(data.action or "deny").strip().lower()
+        call_id = str(data.call_id or "").strip()
+        if data.kind == "approval":
+            payload: Dict[str, Any] = {"action": action, "reason": "feishu_card"}
+            if action in {"allow_session", "always"}:
+                payload["action"] = "allow_session"
+                # Best-effort session auto_accept via orchestrator when session known
+            elif action not in {"allow", "deny"}:
+                payload["action"] = "deny"
+        else:
+            payload = {
+                "action": action if action in {"submit", "deny"} else "submit",
+                "answers": data.answers if isinstance(data.answers, dict) else {},
+                "reason": "feishu_card",
+            }
+            if action == "deny":
+                payload["action"] = "deny"
+        try:
+            await self.kernel.call(
+                "POST",
+                "/rpc/gates/resolve",
+                json={"call_id": call_id, "payload": payload},
+            )
+        except Exception:
+            logger.exception("Feishu gate resolve failed call_id=%s", call_id)
+            return
+        message_id = data.open_message_id or self._gate_messages.pop(call_id, "")
+        if message_id:
+            label = {
+                "allow": "已允许",
+                "allow_session": "已允许（本会话自动接受）",
+                "deny": "已拒绝",
+                "submit": "已提交回答",
+            }.get(payload.get("action") or action, "已处理")
+            try:
+                await self.client.update_message_card(
+                    message_id,
+                    build_gate_resolved_card("已处理", label),
+                )
+            except Exception:
+                logger.exception("Failed to update Feishu gate card %s", message_id)
+
     def decode_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         creds = resolve_feishu(self.settings)
         if "encrypt" in payload and creds.encrypt_key:
@@ -122,12 +189,46 @@ class FeishuAdapter(BaseAdapter):
             body=body,
         )
 
+    async def _send_gate_card(self, session_id: str, call_id: str, card: Dict[str, Any]) -> None:
+        chat_id = _feishu_chat_id(session_id)
+        if not chat_id:
+            logger.warning("No Feishu chat_id for session %s — cannot send HITL card", session_id)
+            return
+        try:
+            sent = await self.client.send_card_to_chat(chat_id, card)
+            message_id = (
+                ((sent.get("data") or {}).get("message_id")) if isinstance(sent, dict) else None
+            )
+            if message_id and call_id:
+                self._gate_messages[call_id] = message_id
+        except Exception:
+            logger.exception("Failed to send Feishu HITL card call_id=%s", call_id)
+
     async def on_bus_event(self, event: BusEvent) -> None:
         # Hard channel isolation: web/system tasks must never update Feishu cards.
         channel = event.channel.value if hasattr(event.channel, "value") else str(event.channel)
         if channel != ChannelType.FEISHU.value:
             return
         task_id = event.task_id
+        if event.event_type == EventType.TASK_TOOL_APPROVAL:
+            call_id = str(event.payload.get("call_id") or event.payload.get("id") or "")
+            card = build_approval_card(
+                call_id=call_id,
+                name=str(event.payload.get("name") or ""),
+                base=str(event.payload.get("base") or ""),
+                arguments=event.payload.get("arguments"),
+            )
+            await self._send_gate_card(event.session_id, call_id, card)
+            return
+        if event.event_type == EventType.TASK_ASK_USER:
+            call_id = str(event.payload.get("call_id") or event.payload.get("id") or "")
+            card = build_ask_card(
+                call_id=call_id,
+                title=str(event.payload.get("title") or ""),
+                questions=event.payload.get("questions") or [],
+            )
+            await self._send_gate_card(event.session_id, call_id, card)
+            return
         if event.event_type == EventType.TASK_STATUS:
             message = event.payload.get("message") or "处理中…"
             # Keep prior streamed text if any, append status line for visibility

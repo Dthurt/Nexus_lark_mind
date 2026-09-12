@@ -33,6 +33,7 @@ SKIP_DIR_NAMES = {
     "web-static",
     ".cursor",
     ".tox",
+    ".nlm_run",
 }
 
 TOOLS: List[Dict[str, Any]] = [
@@ -114,6 +115,23 @@ TOOLS: List[Dict[str, Any]] = [
                 "timeout_seconds": {"type": "number", "default": 60},
             },
             "required": ["command"],
+        },
+    },
+    {
+        "name": "run_code",
+        "description": (
+            "Execute a short Python snippet in the session workspace (local). "
+            "Prefer this over run_shell for quick calculations / parsing. "
+            "Code runs with cwd=workspace; stdout/stderr are captured. "
+            "Not a full PTC sandbox — no nested tool calls from inside the snippet."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Python source to run"},
+                "timeout_seconds": {"type": "number", "default": 30},
+            },
+            "required": ["code"],
         },
     },
     {
@@ -327,6 +345,12 @@ class WorkspaceToolsPlugin(BasePlugin):
                 str(arguments.get("command") or ""),
                 timeout=float(arguments.get("timeout_seconds") or 60),
             )
+        if tool_name == "run_code":
+            return await self._run_code(
+                cwd,
+                str(arguments.get("code") or ""),
+                timeout=float(arguments.get("timeout_seconds") or 30),
+            )
         if tool_name == "ask_user":
             raise PluginError("ask_user is handled by the agent runner, not invoked directly")
         if tool_name == "exit_plan_mode":
@@ -412,6 +436,18 @@ class WorkspaceToolsPlugin(BasePlugin):
                 str(arguments.get("command") or ""),
                 timeout=float(arguments.get("timeout_seconds") or 60),
             )
+        if tool_name == "run_code":
+            code = str(arguments.get("code") or "")
+            timeout = float(arguments.get("timeout_seconds") or 30)
+            # Remote: run via python -c (escaped) through SSH shell
+            import base64
+
+            b64 = base64.b64encode(code.encode("utf-8")).decode("ascii")
+            cmd = (
+                "python -c \"import base64,sys; "
+                f"exec(base64.b64decode('{b64}').decode())\""
+            )
+            return await fs.run_shell(cmd, timeout=timeout)
         if tool_name == "todo_write":
             return self._todo_write(arguments.get("items") or [])
         if tool_name == "glob":
@@ -608,6 +644,66 @@ class WorkspaceToolsPlugin(BasePlugin):
             "kind": "local",
         }
 
+    async def _run_code(self, cwd: str, code: str, *, timeout: float) -> Dict[str, Any]:
+        """Run Python snippet in workspace cwd (local process)."""
+        import sys
+        import tempfile
+
+        code = (code or "").strip()
+        if not code:
+            raise ValidationAppError("code required")
+        if len(code) > 80_000:
+            raise ValidationAppError("code too large (max 80k chars)")
+        root = resolve_under_workspace(cwd, ".")
+        run_dir = root / ".nlm_run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        # Write temp script under workspace so relative imports/paths stay sandboxed to cwd.
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".py",
+            dir=str(run_dir),
+            delete=False,
+        ) as fh:
+            fh.write(code)
+            script = fh.name
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                script,
+                cwd=str(root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=max(3.0, timeout)
+                )
+            except asyncio.TimeoutError as exc:
+                proc.kill()
+                raise PluginError(f"run_code timeout after {timeout}s") from exc
+        finally:
+            try:
+                Path(script).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        def _trim(s: str, n: int = 12000) -> str:
+            return s if len(s) <= n else s[:n] + "\n…[truncated]"
+
+        out = stdout.decode("utf-8", errors="replace")
+        err = stderr.decode("utf-8", errors="replace")
+        return {
+            "ok": proc.returncode == 0,
+            "exit_code": proc.returncode,
+            "cwd": str(root),
+            "stdout": _trim(out),
+            "stderr": _trim(err),
+            "kind": "run_code",
+            "runtime": "python",
+        }
+
     def _glob(self, cwd: str, pattern: str, rel: str) -> Dict[str, Any]:
         pattern = (pattern or "").strip()
         if not pattern:
@@ -708,6 +804,6 @@ def workspace_tools_manifest() -> PluginManifest:
         name="Workspace",
         kind="inprocess",
         version="1.2.0",
-        description="Session workspace tools (local or SSH): glob/grep/list/read/write/edit/run_shell/ask_user/exit_plan_mode/todo_write.",
+        description="Session workspace tools (local or SSH): glob/grep/list/read/write/edit/run_shell/run_code/ask_user/exit_plan_mode/todo_write.",
         tools=list(TOOLS),
     )

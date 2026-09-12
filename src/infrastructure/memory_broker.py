@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable, Dict, List, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 import orjson
 
@@ -26,6 +26,8 @@ class MemoryBroker:
         self._subscribers: Set[asyncio.Queue[bytes]] = set()
         self._sessions: Dict[str, dict] = {}
         self._session_order: List[str] = []
+        self._kv: Dict[str, Any] = {}
+        self._event_logs: Dict[str, List[dict]] = {}
         self._lock = asyncio.Lock()
         self._connected = False
 
@@ -142,6 +144,50 @@ class MemoryBroker:
         session.setdefault("messages", []).append(message)
         await self.set_session(session_id, session, ttl=ttl)
         return session
+
+    # ----- Generic KV + SSE event ring (Wave C) -----
+
+    async def kv_set(self, key: str, value: dict, ttl: int = 86400) -> None:
+        self._kv[key] = dict(value)
+
+    async def kv_get(self, key: str) -> Optional[dict]:
+        raw = self._kv.get(key)
+        return dict(raw) if isinstance(raw, dict) else None
+
+    async def kv_delete(self, key: str) -> None:
+        self._kv.pop(key, None)
+
+    async def append_session_event(
+        self,
+        session_id: str,
+        event: dict,
+        *,
+        maxlen: int = 300,
+    ) -> None:
+        log = self._event_logs.setdefault(session_id, [])
+        log.append(dict(event))
+        if len(log) > maxlen:
+            del log[: len(log) - maxlen]
+
+    async def list_session_events_after(
+        self,
+        session_id: str,
+        after_event_id: str = "",
+    ) -> List[dict]:
+        log = list(self._event_logs.get(session_id) or [])
+        if not after_event_id:
+            return log
+        out: List[dict] = []
+        seen = False
+        for ev in log:
+            eid = str(ev.get("event_id") or "")
+            if not seen:
+                if eid == after_event_id:
+                    seen = True
+                continue
+            out.append(ev)
+        # If after_id not found, return full log (client may have stale cursor)
+        return out if seen else log
 
 
 _SHARED: Optional[MemoryBroker] = None

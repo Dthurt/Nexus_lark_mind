@@ -1,6 +1,6 @@
-# Interaction modes (Plan · Auto-accept · Ask)
+# Interaction modes (Plan · Auto-accept · Ask · Inbox)
 
-Claude Code–style controls for the Web workbench.
+Claude Code–style controls for the Web workbench, plus DSH-inspired mid-turn inbox.
 
 ## Composer toggles
 
@@ -11,6 +11,57 @@ Claude Code–style controls for the Web workbench.
 | **工具** | on | Existing tools-enabled flag |
 
 Flags persist in `localStorage` (`nlm_agent_mode`, `nlm_auto_accept`) and Redis session via `PATCH /api/sessions/{id}/interaction`.
+
+## Permission presets
+
+Composer **+** menu → **权限**:
+
+| Preset | Effect |
+|--------|--------|
+| **只读** (`read-only`) | Mutating tools (`write_file` / `edit_file` / `run_shell` …) filtered & blocked |
+| **工作区可写** (`workspace-write`, default) | Mutating tools need ApprovalDock unless Accept is on |
+| **全权限** (`danger-full-access`) | Accept forced on — no approval prompts |
+
+Selecting a preset writes `permission_preset` + derived `auto_accept` via `PATCH /api/sessions/{id}/interaction`.
+
+Paths stay sandboxed to session cwd (local + SSH); escapes raise `PermissionError`.
+
+## Plan soft / hard
+
+When Plan Mode is on, **Plan 硬约束** toggle:
+
+| Mode | Effect |
+|------|--------|
+| **hard** (default) | Write/shell tools hidden & blocked until plan accepted |
+| **soft** | Prompt guidance only — tools still available if the permission preset allows |
+
+Persisted as `plan_enforcement` (`localStorage.nlm_plan_enforcement`).
+
+## Busy inbox (Steer · Queue)
+
+While a turn is running, the composer stays editable.
+
+| Action | Behavior |
+|--------|----------|
+| **Enter** (busy + draft) | Push to session inbox — default **queue** (or **steer** if `nlm_busy_enter=steer`) |
+| **Ctrl/Cmd+Enter** | Flip kind for this send (queue ↔ steer) |
+| **Primary button** | Draft present → send to inbox; empty → **Stop** |
+| **QueueDock** | Lists pending steer/queue items; **撤销** removes one |
+
+Semantics:
+
+- **steer** — claimed at the next agent **step** boundary (before the next model call); injected as a user message into the live turn.
+- **queue** — claimed after the turn **completes** successfully; starts a new task with that content.
+
+APIs:
+
+- `GET/POST /api/sessions/{id}/inbox`
+- `DELETE /api/sessions/{id}/inbox/{item_id}`
+- SSE `task.inbox` (`action`: `pushed` \| `removed` \| `claimed`)
+
+Cancel: `POST .../cancel` body `{ "keep_inbox": true }` (default) keeps pending inbox; `false` clears it.
+
+Local preference: `localStorage.nlm_busy_enter` = `queue` \| `steer`.
 
 ## Plan mode
 
@@ -55,11 +106,40 @@ Resolve: `POST /api/sessions/{id}/ask-answers`.
 
 ## Gates
 
-Pending approvals/asks block inside the Kernel process (`src/core_kernel/user_gate.py`).  
-Session cancel calls `POST /rpc/gates/deny-session` so waiters do not hang.
+Pending approvals/asks block inside the Kernel process (`src/core_kernel/user_gate.py`),
+with a Redis/KV **mirror** so orphans can be detected after a Kernel restart.
+
+- Live waiters use in-process Futures.
+- Mirror keys: `gate:{call_id}` + session index `gates:sess:{session_id}`.
+- If the Kernel restarts mid-gate, `await_gate` / resolve clears the mirror and returns `deny` (`kernel_restart`).
+- Session cancel still calls `POST /rpc/gates/deny-session`.
+
+## Long-session reliability (Wave C)
+
+| Concern | Behavior |
+|---------|----------|
+| **Context overflow** | Detect provider overflow errors → aggressive compact → **one** model retry |
+| **SSE gaps** | Orchestrator appends events to a ring buffer; `GET /api/chat/stream?session_id=&after=` replays missed `event_id`s; client reconnects with last cursor |
+| **Subagents** | Continuable snapshots in KV (`subagent:{id}`); `list_agents` / `send_message` hydrate after restart |
+| **Chat DOM** | Timeline renders the last ~60 blocks; **加载更早的消息** expands the window |
+
+## Information architecture (Wave D)
+
+| Control | Where | Effect |
+|---------|-------|--------|
+| **Turn process fold** | After `finalizeBot` | Mid-turn thinking + tools collapse to 「思考片刻 · N 工具」 |
+| **体验档** `experience_tier` | Composer + session | Constrains Mermaid vs Draw.io in the system prompt |
+| **推理强度** `reasoning_effort` | Composer + session | Passed on `ModelRequest` (OpenAI-compat `reasoning_effort`) |
+| **Jobs** tab | RightDock | Running / recent tools & subagents from the timeline |
 
 ## Feishu
 
-Interactive cards for approval/ask are **deferred**; Web is the supported channel for these flows.
+Interactive cards for **tool approval** and **ask_user** are shipped (Wave E):
 
-See also: [experience-tiers.md](./experience-tiers.md), [deferred.md](./deferred.md).
+- Bus events `task.tool_approval` / `task.ask_user` → Feishu interactive cards
+- Card button callbacks → Kernel `/rpc/gates/resolve` (same payload shape as Web)
+- Approval timeouts match Web (`src/common/approval_timeouts.py` ↔ `web/src/lib/approvalTimeout.ts`)
+
+Streaming reply cards + retry/clear remain as before.
+
+See also: [experience-tiers.md](./experience-tiers.md), [deferred.md](./deferred.md), [subagents.md](./subagents.md).

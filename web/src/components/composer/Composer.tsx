@@ -22,6 +22,11 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  suggestStrongerModel,
+  tierMeetsModelFloor,
+  type ExperienceTierId,
+} from "@/lib/experienceTier";
+import {
   cacheHitRate,
   estimateCostCny,
   formatCny,
@@ -53,6 +58,14 @@ export type ComposerProps = {
   onAutoAcceptChange?: (v: boolean) => void;
   multitask?: boolean;
   onMultitaskChange?: (v: boolean) => void;
+  permissionPreset?: "read-only" | "workspace-write" | "danger-full-access" | string;
+  onPermissionPresetChange?: (v: "read-only" | "workspace-write" | "danger-full-access") => void;
+  planEnforcement?: "hard" | "soft" | string;
+  onPlanEnforcementChange?: (v: "hard" | "soft") => void;
+  experienceTier?: "fast" | "balanced" | "high" | string;
+  onExperienceTierChange?: (v: "fast" | "balanced" | "high") => void;
+  reasoningEffort?: "low" | "medium" | "high" | string;
+  onReasoningEffortChange?: (v: "low" | "medium" | "high") => void;
   sessionUsage?: Record<string, any>;
   items?: any[];
   tools?: any[];
@@ -63,9 +76,10 @@ export type ComposerProps = {
   gitInsertions?: number;
   gitDeletions?: number;
   busy?: boolean;
+  busyEnterMode?: "queue" | "steer";
   onProviderChange?: (v: string) => void;
   onModelChange?: (v: string) => void;
-  onSend?: () => void;
+  onSend?: (opts?: { alternate?: boolean }) => void;
   onStop?: () => void;
   className?: string;
 };
@@ -96,6 +110,14 @@ export function Composer({
   onAutoAcceptChange,
   multitask = true,
   onMultitaskChange,
+  permissionPreset = "workspace-write",
+  onPermissionPresetChange,
+  planEnforcement = "hard",
+  onPlanEnforcementChange,
+  experienceTier = "balanced",
+  onExperienceTierChange,
+  reasoningEffort = "medium",
+  onReasoningEffortChange,
   sessionUsage = {},
   items = [],
   tools = [],
@@ -106,6 +128,7 @@ export function Composer({
   gitInsertions = 0,
   gitDeletions = 0,
   busy = false,
+  busyEnterMode = "queue",
   onProviderChange,
   onModelChange,
   onSend,
@@ -130,9 +153,47 @@ export function Composer({
     !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   const tokenStat = formatUsage(sessionUsage);
-  const actionTitle = busy ? "终止" : "发送";
-  const canSend = !busy && !!(value || "").trim();
+  const hasDraft = !!(value || "").trim();
+  const needsWorkspace = !(cwd || "").trim();
+  const needsModel = !(providerId || "").trim() || !(modelName || "").trim();
+  const sendBlockedHint = needsWorkspace
+    ? "请先绑定工作目录（空态选择器或侧栏工作区）"
+    : needsModel
+      ? "请先在下方选择 Provider / 模型"
+      : "";
+  const canSend = hasDraft && !needsWorkspace && !needsModel;
+  const actionTitle = busy
+    ? hasDraft
+      ? "发送到收件箱"
+      : "终止"
+    : sendBlockedHint || "发送";
   const planOn = agentMode === "plan";
+  const busyHint =
+    busyEnterMode === "steer"
+      ? "可输入中途引导 · Enter 引导 · Ctrl+Enter 改为排队 · 空内容点按钮终止"
+      : "可先输入下一条 · Enter 排队 · Ctrl+Enter 改为引导 · 空内容点按钮终止";
+
+  const applyExperienceTier = useCallback(
+    (id: ExperienceTierId) => {
+      onExperienceTierChange?.(id);
+      if (tierMeetsModelFloor(id, modelName)) return;
+      const stronger = suggestStrongerModel(modelOptions, modelName);
+      if (stronger) {
+        toast.message(`体验档 ${id} 建议更强模型`, {
+          description: `当前 ${modelName || "未选"} 偏弱，可一键切换`,
+          action: {
+            label: `用 ${stronger}`,
+            onClick: () => onModelNameChange?.(stronger),
+          },
+        });
+      } else {
+        toast.message(`体验档 ${id} 建议更强模型`, {
+          description: "当前模型偏弱，请在 Composer 中切换 Provider / 模型",
+        });
+      }
+    },
+    [modelName, modelOptions, onExperienceTierChange, onModelNameChange],
+  );
 
   const modelLabel = useMemo(() => {
     const m = (modelName || "").trim();
@@ -288,8 +349,16 @@ export function Composer({
 
   function onPrimary(e?: FormEvent) {
     e?.preventDefault();
-    if (busy) onStop?.();
-    else onSend?.();
+    if (busy) {
+      if (hasDraft) onSend?.();
+      else onStop?.();
+      return;
+    }
+    if (!canSend) {
+      if (sendBlockedHint) toast.error(sendBlockedHint);
+      return;
+    }
+    onSend?.();
   }
 
   function onTextareaKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -299,7 +368,16 @@ export function Composer({
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!busy) onSend?.();
+      const alternate = e.ctrlKey || e.metaKey;
+      if (busy) {
+        if (hasDraft) onSend?.({ alternate });
+        return;
+      }
+      if (!canSend) {
+        if (sendBlockedHint) toast.error(sendBlockedHint);
+        return;
+      }
+      onSend?.({ alternate });
     }
   }
 
@@ -381,6 +459,14 @@ export function Composer({
                   checked={planOn}
                   onChange={(on) => onAgentModeChange?.(on ? "plan" : "agent")}
                 />
+                {planOn ? (
+                  <MenuToggle
+                    label="Plan 硬约束"
+                    hint={planEnforcement === "soft" ? "当前：软提示" : "当前：禁写/shell"}
+                    checked={planEnforcement !== "soft"}
+                    onChange={(on) => onPlanEnforcementChange?.(on ? "hard" : "soft")}
+                  />
+                ) : null}
                 <MenuToggle
                   label="Accept"
                   hint="自动接受写/shell"
@@ -393,6 +479,84 @@ export function Composer({
                   checked={multitask}
                   onChange={(on) => onMultitaskChange?.(on)}
                 />
+
+                <div className="my-1 h-px bg-border" />
+                <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  权限
+                </div>
+                {(
+                  [
+                    ["read-only", "只读", "禁写/shell"],
+                    ["workspace-write", "工作区可写", "写需审批"],
+                    ["danger-full-access", "全权限", "不问了"],
+                  ] as const
+                ).map(([id, label, hint]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="menuitem"
+                    className={cn(
+                      "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-muted",
+                      permissionPreset === id && "bg-muted",
+                    )}
+                    onClick={() => onPermissionPresetChange?.(id)}
+                  >
+                    <span className="font-medium">{label}</span>
+                    <span className="text-muted-foreground text-[11px]">{hint}</span>
+                  </button>
+                ))}
+
+                <div className="my-1 h-px bg-border" />
+                <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  体验档
+                </div>
+                {(
+                  [
+                    ["fast", "Fast", "仅 Mermaid"],
+                    ["balanced", "Balanced", "默认"],
+                    ["high", "High", "偏 Draw.io"],
+                  ] as const
+                ).map(([id, label, hint]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="menuitem"
+                    className={cn(
+                      "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-muted",
+                      experienceTier === id && "bg-muted",
+                    )}
+                    onClick={() => applyExperienceTier(id)}
+                  >
+                    <span className="font-medium">{label}</span>
+                    <span className="text-muted-foreground text-[11px]">{hint}</span>
+                  </button>
+                ))}
+
+                <div className="my-1 h-px bg-border" />
+                <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  推理强度
+                </div>
+                {(
+                  [
+                    ["low", "Low", "简短"],
+                    ["medium", "Medium", "默认"],
+                    ["high", "High", "更深"],
+                  ] as const
+                ).map(([id, label, hint]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="menuitem"
+                    className={cn(
+                      "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-muted",
+                      reasoningEffort === id && "bg-muted",
+                    )}
+                    onClick={() => onReasoningEffortChange?.(id)}
+                  >
+                    <span className="font-medium">{label}</span>
+                    <span className="text-muted-foreground text-[11px]">{hint}</span>
+                  </button>
+                ))}
 
                 <div className="my-1 h-px bg-border" />
                 <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -511,8 +675,12 @@ export function Composer({
               value={value}
               placeholder={
                 busy
-                  ? "可先输入下一条草稿（当前回复完成后发送）"
-                  : "输入消息 · Enter 发送 · Shift+Enter 换行"
+                  ? busyHint
+                  : needsWorkspace
+                    ? "先绑定工作目录，再输入消息…"
+                    : needsModel
+                      ? "先选择 Provider / 模型，再输入消息…"
+                      : "输入消息 · Enter 发送 · Shift+Enter 换行"
               }
               onChange={(e) => {
                 onChange?.(e.target.value);
@@ -534,7 +702,7 @@ export function Composer({
                   "size-[30px] rounded-full text-muted-foreground",
                   listening && "animate-pulse border-destructive/50 bg-destructive/75 text-white",
                 )}
-                disabled={busy}
+                disabled={busy && !hasDraft}
                 title={listening ? "停止语音输入" : "语音输入"}
                 aria-label={listening ? "停止语音输入" : "语音输入"}
                 onClick={toggleVoice}
@@ -548,7 +716,7 @@ export function Composer({
               size="icon"
               className={cn(
                 "size-[30px] rounded-full",
-                busy
+                busy && !hasDraft
                   ? "border-destructive/45 bg-destructive/15 text-destructive hover:bg-destructive/25 hover:text-destructive"
                   : canSend
                     ? "border-primary/40 bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary"
@@ -558,7 +726,11 @@ export function Composer({
               title={actionTitle}
               aria-label={actionTitle}
             >
-              {busy ? <Square className="size-3 fill-current" /> : <ArrowUp className="size-3.5" strokeWidth={2.25} />}
+              {busy && !hasDraft ? (
+                <Square className="size-3 fill-current" />
+              ) : (
+                <ArrowUp className="size-3.5" strokeWidth={2.25} />
+              )}
             </Button>
           </div>
         </div>

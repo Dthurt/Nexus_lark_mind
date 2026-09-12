@@ -28,6 +28,7 @@ export type UseChatStreamOpts = {
     | "setBotActivity"
     | "markPlanReady"
     | "clearPlanReadyFlags"
+    | "beginAssistantTurn"
   >;
   trajectory: Pick<
     TrajectoryApi,
@@ -37,6 +38,7 @@ export type UseChatStreamOpts = {
     | "addToolResult"
     | "addAssistant"
     | "addError"
+    | "addUser"
     | "endTurn"
   >;
   modelName?: string;
@@ -49,6 +51,7 @@ export type UseChatStreamOpts = {
   onCompleted?: () => void;
   onModeChange?: (mode: string) => void;
   onSyncInteraction?: (patch: Record<string, unknown>) => void;
+  onInbox?: (items: any[]) => void;
 };
 
 function shortToolName(name: string) {
@@ -80,10 +83,13 @@ export function useChatStream(opts: UseChatStreamOpts) {
     onCompleted,
     onModeChange,
     onSyncInteraction,
+    onInbox,
   } = opts;
 
   const esRef = useRef<EventSource | null>(null);
   const turnOpenRef = useRef(false);
+  const lastEventIdRef = useRef("");
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef(sessionId);
   const agentModeRef = useRef(agentMode);
   const modelNameRef = useRef(modelName);
@@ -98,6 +104,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
     onCompleted,
     onModeChange,
     onSyncInteraction,
+    onInbox,
   });
 
   sessionIdRef.current = sessionId;
@@ -114,6 +121,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
     onCompleted,
     onModeChange,
     onSyncInteraction,
+    onInbox,
   };
 
   const setBusy = useCallback((b: boolean) => {
@@ -129,6 +137,10 @@ export function useChatStream(opts: UseChatStreamOpts) {
   }, []);
 
   const disconnect = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
@@ -138,6 +150,9 @@ export function useChatStream(opts: UseChatStreamOpts) {
   const handleMessage = useCallback((ev: MessageEvent) => {
     try {
       const data = JSON.parse(ev.data);
+      if (data.event_id) {
+        lastEventIdRef.current = String(data.event_id);
+      }
       const type = data.event_type;
       const payload = data.payload || {};
       const tl = timelineRef.current;
@@ -152,9 +167,30 @@ export function useChatStream(opts: UseChatStreamOpts) {
           tr.startTurn();
           turnOpenRef.current = true;
         }
+        tl.beginAssistantTurn?.({
+          phase: "model",
+          label: "正在调用模型…",
+          detail: modelNameRef.current || "",
+          startedAt: Date.now(),
+        });
         setBusy(true);
         setStatus("thinking…");
         setActivity("model", "正在调用模型…", modelNameRef.current || "");
+      } else if (type === "task.inbox") {
+        if (Array.isArray(payload.items)) {
+          cbs.onInbox?.(payload.items);
+        }
+        const claimed = payload.items_claimed;
+        if (Array.isArray(claimed)) {
+          for (const item of claimed) {
+            if (!item || item.kind !== "steer") continue;
+            const text = String(item.content || "").trim();
+            if (!text) continue;
+            // Queue items already appear when the user enqueued them.
+            tl.appendMessage("user", `〔引导〕 ${text}`, { rich: false });
+            tr.addUser?.(text);
+          }
+        }
       } else if (type === "task.status") {
         tl.showRetry(payload.message || "处理中…");
         tr.addStatus(payload.message || "处理中…");
@@ -327,15 +363,33 @@ export function useChatStream(opts: UseChatStreamOpts) {
   }, [setActivity, setBusy, setStatus]);
 
   const connect = useCallback(
-    (sid?: string) => {
+    (sid?: string, afterEventId?: string) => {
       const id = sid || sessionIdRef.current;
       if (!id) return;
-      if (esRef.current && esRef.current.readyState !== EventSource.CLOSED) return;
       disconnect();
-      const es = openChatStream(id);
+      const after =
+        afterEventId !== undefined
+          ? afterEventId
+          : lastEventIdRef.current || undefined;
+      const es = openChatStream(id, after || undefined);
       esRef.current = es;
       es.onopen = () => setStatus("connected");
-      es.onerror = () => setStatus("sse reconnecting…");
+      es.onerror = () => {
+        setStatus("sse reconnecting…");
+        // Native EventSource retries the same URL (without cursor). Close and
+        // reconnect with last event_id so the ring buffer can replay gaps.
+        const afterId = lastEventIdRef.current;
+        if (esRef.current === es) {
+          es.close();
+          esRef.current = null;
+        }
+        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          if (!sessionIdRef.current) return;
+          connect(sessionIdRef.current, afterId);
+        }, 1200);
+      };
       es.onmessage = handleMessage;
     },
     [disconnect, handleMessage, setStatus],
@@ -361,8 +415,9 @@ export function useChatStream(opts: UseChatStreamOpts) {
   // Reconnect when sessionId changes
   useEffect(() => {
     if (!sessionId) return;
+    lastEventIdRef.current = "";
     disconnect();
-    connect(sessionId);
+    connect(sessionId, "");
     return () => {
       disconnect();
     };

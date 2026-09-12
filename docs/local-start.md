@@ -18,6 +18,15 @@ cd E:\cursor\open_program\Nexus_lark_mind
 .\scripts\start_local.ps1
 ```
 
+或（Wave E/F）`nlm` / 模块入口：
+
+```bat
+scripts\nlm.cmd web --open
+python -m src chat --cwd E:\proj "hello"
+```
+
+详见 [headless-sdk.md](./headless-sdk.md)。
+
 脚本会自动：创建 venv → 安装依赖 → 用内存总线拉起三服务。启动前会释放已被占用的 8000/8001/8002。
 
 ## 停止

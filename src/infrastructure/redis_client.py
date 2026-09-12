@@ -210,3 +210,56 @@ class RedisClient:
         session.setdefault("messages", []).append(message)
         await self.set_session(session_id, session, ttl=ttl)
         return session
+
+    # ----- Generic KV + SSE event ring (Wave C) -----
+
+    def _kv_key(self, key: str) -> str:
+        return f"{self.settings.redis_session_prefix}kv:{key}"
+
+    def _events_key(self, session_id: str) -> str:
+        return f"{self.settings.redis_session_prefix}events:{session_id}"
+
+    async def kv_set(self, key: str, value: dict, ttl: int = 86400) -> None:
+        await self.r.set(self._kv_key(key), orjson.dumps(value), ex=ttl)
+
+    async def kv_get(self, key: str) -> Optional[dict]:
+        raw = await self.r.get(self._kv_key(key))
+        if not raw:
+            return None
+        return orjson.loads(raw)
+
+    async def kv_delete(self, key: str) -> None:
+        await self.r.delete(self._kv_key(key))
+
+    async def append_session_event(
+        self,
+        session_id: str,
+        event: dict,
+        *,
+        maxlen: int = 300,
+    ) -> None:
+        key = self._events_key(session_id)
+        await self.r.rpush(key, orjson.dumps(event))
+        await self.r.ltrim(key, -int(maxlen), -1)
+        await self.r.expire(key, 86400)
+
+    async def list_session_events_after(
+        self,
+        session_id: str,
+        after_event_id: str = "",
+    ) -> list:
+        key = self._events_key(session_id)
+        raw_list = await self.r.lrange(key, 0, -1)
+        log = [orjson.loads(x) for x in raw_list or []]
+        if not after_event_id:
+            return log
+        out = []
+        seen = False
+        for ev in log:
+            eid = str(ev.get("event_id") or "")
+            if not seen:
+                if eid == after_event_id:
+                    seen = True
+                continue
+            out.append(ev)
+        return out if seen else log

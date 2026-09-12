@@ -38,5 +38,10 @@ Plugin id: `builtin.subagent` (enabled by default). OpenAI tool names are short 
 
 ## Notes
 
-- In-process only (same model gateway + workspace cwd/SSH meta as parent).
-- Continuable children stay in an in-memory registry for `send_message` / `interrupt_agent` until process restart.
+- Same model gateway + workspace cwd/SSH meta as parent.
+- Continuable children are snapshotted to Redis/KV (`subagent:{id}` + session index).
+  After Kernel restart, `list_agents` / `send_message` **hydrate** idle children (mid-run
+  `running` snapshots are treated as `idle`). Live cancel still needs the in-process
+  `cancel_event` (interrupt after restart only marks status).
+- Experimental **Agent Teams** mailbox: [agent-teams.md](./agent-teams.md).
+- Multi-backend / ACP: [multi-backend-subagents.md](./multi-backend-subagents.md).

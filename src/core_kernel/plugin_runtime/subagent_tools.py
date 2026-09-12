@@ -96,6 +96,42 @@ TOOLS: List[Dict[str, Any]] = [
 ]
 
 
+TEAM_TOOLS: List[Dict[str, Any]] = [
+    {
+        "name": "team_send",
+        "description": (
+            "EXPERIMENTAL (NLM_EXPERIMENTAL_TEAMS): post a message to the in-process team mailbox "
+            "for another agent id (or '*' broadcast). Not durable across restarts."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "team_id": {"type": "string", "description": "Team / session scope id"},
+                "to_id": {"type": "string", "description": "Target agent id or *"},
+                "payload": {"type": "object"},
+                "from_id": {"type": "string", "description": "Optional sender id"},
+            },
+            "required": ["team_id", "to_id"],
+        },
+    },
+    {
+        "name": "team_recv",
+        "description": (
+            "EXPERIMENTAL: claim pending team mailbox messages addressed to this agent (or *)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "team_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "max_n": {"type": "integer", "default": 8},
+            },
+            "required": ["team_id", "agent_id"],
+        },
+    },
+]
+
+
 class SubagentToolsPlugin(BasePlugin):
     """Schemas only for control tools; spawn/fork streaming is handled in agent_runner."""
 
@@ -103,7 +139,12 @@ class SubagentToolsPlugin(BasePlugin):
         return None
 
     async def _on_ready(self) -> None:
-        self.manifest.tools = list(TOOLS)
+        from src.common.config import get_settings
+
+        tools = list(TOOLS)
+        if get_settings().nlm_experimental_teams:
+            tools.extend(TEAM_TOOLS)
+        self.manifest.tools = tools
 
     async def _on_invoke(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
         registry = get_subagent_registry()
@@ -111,7 +152,11 @@ class SubagentToolsPlugin(BasePlugin):
             # parent_session_id injected by runner into arguments when available
             session_id = str(arguments.get("_parent_session_id") or "").strip()
             scope = str(arguments.get("scope") or "children")
-            agents = registry.list_for_session(session_id, descendants=scope == "descendants") if session_id else []
+            agents = (
+                await registry.list_for_session_async(session_id, descendants=scope == "descendants")
+                if session_id
+                else []
+            )
             return {
                 "agents": [a.public() for a in agents],
                 "count": len(agents),
@@ -124,10 +169,61 @@ class SubagentToolsPlugin(BasePlugin):
             agent_id = str(arguments.get("agent_id") or "").strip()
             if not agent_id:
                 raise ValidationAppError("agent_id required")
-            ok = registry.interrupt(agent_id)
+            rec = await registry.hydrate(agent_id)
+            ok = registry.interrupt(agent_id) if rec else False
+            if rec:
+                try:
+                    await registry.persist(rec)
+                except Exception:
+                    pass
             if not ok:
                 raise ValidationAppError(f"subagent not found: {agent_id}")
             return {"accepted": True, "agent_id": agent_id, "render": f"interrupt requested for agent {agent_id}"}
+        if tool_name == "team_send":
+            from src.common.config import get_settings
+            from src.core_kernel.teams import get_team_mailbox
+
+            if not get_settings().nlm_experimental_teams:
+                raise ValidationAppError("team_send requires NLM_EXPERIMENTAL_TEAMS=true")
+            team_id = str(arguments.get("team_id") or "").strip()
+            to_id = str(arguments.get("to_id") or "*").strip() or "*"
+            from_id = str(arguments.get("from_id") or arguments.get("_parent_session_id") or "parent").strip()
+            payload = arguments.get("payload") if isinstance(arguments.get("payload"), dict) else {}
+            if not team_id:
+                raise ValidationAppError("team_id required")
+            msg = get_team_mailbox().post(team_id, from_id=from_id, to_id=to_id, payload=payload)
+            return {
+                "ok": True,
+                "message_id": msg.id,
+                "render": f"posted {msg.id} → {to_id}",
+            }
+        if tool_name == "team_recv":
+            from src.common.config import get_settings
+            from src.core_kernel.teams import get_team_mailbox
+
+            if not get_settings().nlm_experimental_teams:
+                raise ValidationAppError("team_recv requires NLM_EXPERIMENTAL_TEAMS=true")
+            team_id = str(arguments.get("team_id") or "").strip()
+            agent_id = str(arguments.get("agent_id") or "").strip()
+            max_n = int(arguments.get("max_n") or 8)
+            if not team_id or not agent_id:
+                raise ValidationAppError("team_id and agent_id required")
+            msgs = get_team_mailbox().claim(team_id, agent_id, max_n=max_n)
+            return {
+                "ok": True,
+                "count": len(msgs),
+                "messages": [
+                    {
+                        "id": m.id,
+                        "from_id": m.from_id,
+                        "to_id": m.to_id,
+                        "payload": m.payload,
+                        "created_at": m.created_at,
+                    }
+                    for m in msgs
+                ],
+                "render": f"claimed {len(msgs)} message(s)",
+            }
         if tool_name in {"subagent", "subagent_fork", "send_message"}:
             # Streaming path should intercept before invoke; fallback message:
             raise PluginError(
@@ -140,11 +236,19 @@ class SubagentToolsPlugin(BasePlugin):
 
 
 def subagent_tools_manifest() -> PluginManifest:
+    from src.common.config import get_settings
+
+    tools = list(TOOLS)
+    try:
+        if get_settings().nlm_experimental_teams:
+            tools.extend(TEAM_TOOLS)
+    except Exception:
+        pass
     return PluginManifest(
         plugin_id="builtin.subagent",
         name="Subagent",
         kind="inprocess",
-        version="1.0.0",
+        version="1.1.0",
         description="Delegate work to spawn/fork subagents with streaming UI (DSH-inspired).",
-        tools=list(TOOLS),
+        tools=tools,
     )

@@ -1,13 +1,17 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   acceptPlan,
   cancelChatTask,
   cancelSession,
+  deleteSessionInboxItem,
+  getSessionInbox,
   patchInteraction,
   postApprovals,
   postAskAnswers,
   postChat,
+  postSessionInbox,
+  type InboxItem,
 } from "@/api/endpoints";
 import type { ChatStreamApi } from "@/hooks/useChatStream";
 import type { ChatTimelineApi } from "@/hooks/useChatTimeline";
@@ -19,6 +23,22 @@ const AGENT_MODE_KEY = "nlm_agent_mode";
 const AUTO_ACCEPT_KEY = "nlm_auto_accept";
 const MULTITASK_KEY = "nlm_multitask";
 const SESSION_KEY = "nlm_session_id";
+const BUSY_ENTER_KEY = "nlm_busy_enter";
+const PERMISSION_PRESET_KEY = "nlm_permission_preset";
+const PLAN_ENFORCEMENT_KEY = "nlm_plan_enforcement";
+const EXPERIENCE_TIER_KEY = "nlm_experience_tier";
+const REASONING_EFFORT_KEY = "nlm_reasoning_effort";
+
+export type BusyEnterMode = "queue" | "steer";
+export type PermissionPreset = "read-only" | "workspace-write" | "danger-full-access";
+export type PlanEnforcement = "hard" | "soft";
+export type ExperienceTier = "fast" | "balanced" | "high";
+export type ReasoningEffort = "low" | "medium" | "high";
+
+export type SendChatOpts = {
+  /** Flip default busy-enter mode for this send (Ctrl+Enter). */
+  alternate?: boolean;
+};
 
 export type UseChatActionsOpts = {
   sessionId: string;
@@ -95,11 +115,62 @@ export function useChatActions(opts: UseChatActionsOpts) {
     () => typeof localStorage === "undefined" || localStorage.getItem(MULTITASK_KEY) !== "0",
   );
   const [input, setInput] = useState("");
+  const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
+  const [busyEnterMode, setBusyEnterModeState] = useState<BusyEnterMode>(() =>
+    typeof localStorage !== "undefined" && localStorage.getItem(BUSY_ENTER_KEY) === "steer"
+      ? "steer"
+      : "queue",
+  );
+  const [permissionPreset, setPermissionPresetState] = useState<PermissionPreset>(() => {
+    const v =
+      typeof localStorage !== "undefined" ? localStorage.getItem(PERMISSION_PRESET_KEY) || "" : "";
+    if (v === "read-only" || v === "danger-full-access") return v;
+    return "workspace-write";
+  });
+  const [planEnforcement, setPlanEnforcementState] = useState<PlanEnforcement>(() =>
+    typeof localStorage !== "undefined" && localStorage.getItem(PLAN_ENFORCEMENT_KEY) === "soft"
+      ? "soft"
+      : "hard",
+  );
+  const [experienceTier, setExperienceTierState] = useState<ExperienceTier>(() => {
+    const v =
+      typeof localStorage !== "undefined" ? localStorage.getItem(EXPERIENCE_TIER_KEY) || "" : "";
+    if (v === "fast" || v === "high") return v;
+    return "balanced";
+  });
+  const [reasoningEffort, setReasoningEffortState] = useState<ReasoningEffort>(() => {
+    const v =
+      typeof localStorage !== "undefined" ? localStorage.getItem(REASONING_EFFORT_KEY) || "" : "";
+    if (v === "low" || v === "high") return v;
+    return "medium";
+  });
 
   const sessionIdRef = useRef(sessionId);
   const busyRef = useRef(busy);
   sessionIdRef.current = sessionId;
   busyRef.current = busy;
+
+  const setBusyEnterMode = useCallback((mode: BusyEnterMode) => {
+    setBusyEnterModeState(mode);
+    try {
+      localStorage.setItem(BUSY_ENTER_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const refreshInbox = useCallback(async () => {
+    try {
+      const data = await getSessionInbox(sessionIdRef.current);
+      setInboxItems(Array.isArray(data?.items) ? data.items : []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshInbox();
+  }, [sessionId, refreshInbox]);
 
   const syncInteraction = useCallback(async (patch: Record<string, unknown>) => {
     try {
@@ -108,6 +179,81 @@ export function useChatActions(opts: UseChatActionsOpts) {
       /* ignore */
     }
   }, []);
+
+  const setPermissionPreset = useCallback(
+    (preset: PermissionPreset) => {
+      setPermissionPresetState(preset);
+      try {
+        localStorage.setItem(PERMISSION_PRESET_KEY, preset);
+      } catch {
+        /* ignore */
+      }
+      let auto = false;
+      if (preset === "danger-full-access") {
+        auto = true;
+        setAutoAcceptState(true);
+        try {
+          localStorage.setItem(AUTO_ACCEPT_KEY, "1");
+        } catch {
+          /* ignore */
+        }
+      } else if (preset === "read-only") {
+        auto = false;
+        setAutoAcceptState(false);
+        try {
+          localStorage.setItem(AUTO_ACCEPT_KEY, "0");
+        } catch {
+          /* ignore */
+        }
+      } else {
+        auto = !!autoAccept;
+      }
+      void syncInteraction({
+        permission_preset: preset,
+        auto_accept: auto,
+      });
+    },
+    [autoAccept, syncInteraction],
+  );
+
+  const setPlanEnforcement = useCallback(
+    (mode: PlanEnforcement) => {
+      setPlanEnforcementState(mode);
+      try {
+        localStorage.setItem(PLAN_ENFORCEMENT_KEY, mode);
+      } catch {
+        /* ignore */
+      }
+      void syncInteraction({ plan_enforcement: mode });
+    },
+    [syncInteraction],
+  );
+
+  const setExperienceTier = useCallback(
+    (tier: ExperienceTier) => {
+      setExperienceTierState(tier);
+      try {
+        localStorage.setItem(EXPERIENCE_TIER_KEY, tier);
+      } catch {
+        /* ignore */
+      }
+      void syncInteraction({ experience_tier: tier });
+    },
+    [syncInteraction],
+  );
+
+  const setReasoningEffort = useCallback(
+    (effort: ReasoningEffort) => {
+      setReasoningEffortState(effort);
+      try {
+        localStorage.setItem(REASONING_EFFORT_KEY, effort);
+      } catch {
+        /* ignore */
+      }
+      void syncInteraction({ reasoning_effort: effort });
+    },
+    [syncInteraction],
+  );
 
   const setAgentModeLocal = useCallback((v: string) => {
     setAgentModeState(v);
@@ -133,6 +279,8 @@ export function useChatActions(opts: UseChatActionsOpts) {
 
   const setAutoAccept = useCallback(
     (v: boolean) => {
+      if (permissionPreset === "read-only" && v) return;
+      if (permissionPreset === "danger-full-access" && !v) return;
       setAutoAcceptState(v);
       try {
         localStorage.setItem(AUTO_ACCEPT_KEY, v ? "1" : "0");
@@ -141,7 +289,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
       }
       syncInteraction({ auto_accept: !!v });
     },
-    [syncInteraction],
+    [permissionPreset, syncInteraction],
   );
 
   const setMultitask = useCallback((v: boolean) => {
@@ -302,13 +450,15 @@ export function useChatActions(opts: UseChatActionsOpts) {
   ]);
 
   const stopGeneration = useCallback(
-    async (taskId?: string | null) => {
+    async (taskId?: string | null, opts?: { keepInbox?: boolean }) => {
+      const keepInbox = opts?.keepInbox !== false;
       try {
-        if (taskId) {
-          await cancelChatTask(taskId);
+        if (taskId && keepInbox) {
+          await cancelChatTask(taskId, { keep_inbox: true });
         } else {
-          await cancelSession(sessionIdRef.current);
+          await cancelSession(sessionIdRef.current, { keep_inbox: keepInbox });
         }
+        if (!keepInbox) setInboxItems([]);
         timeline.markRunningToolsStopped();
         stream.setStatus("正在停止…");
         stream.setActivity("stop", "正在停止…");
@@ -321,10 +471,55 @@ export function useChatActions(opts: UseChatActionsOpts) {
     [onBusyChange, stream, timeline],
   );
 
+  const removeInboxItem = useCallback(async (itemId: string) => {
+    try {
+      const data = await deleteSessionInboxItem(sessionIdRef.current, itemId);
+      setInboxItems(Array.isArray(data?.items) ? data.items : []);
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "撤销失败"));
+    }
+  }, []);
+
+  const applyInboxSnapshot = useCallback((items: InboxItem[]) => {
+    setInboxItems(Array.isArray(items) ? items : []);
+  }, []);
+
   const sendChat = useCallback(
-    async (contentOverride?: string) => {
+    async (contentOverride?: string, sendOpts?: SendChatOpts) => {
       const content = (contentOverride ?? input).trim();
-      if (!content || busyRef.current) return;
+      if (!content) return;
+      if (!busyRef.current && !(cwd || "").trim()) {
+        toast.error("请先绑定工作目录");
+        return;
+      }
+
+      // Busy: push to session inbox (steer or queue) instead of blocking.
+      if (busyRef.current) {
+        let kind: BusyEnterMode = busyEnterMode;
+        if (sendOpts?.alternate) {
+          kind = kind === "queue" ? "steer" : "queue";
+        }
+        stream.ensureSSE();
+        const draft = content;
+        setInput(""); // optimistic
+        try {
+          const data = await postSessionInbox(sessionIdRef.current, {
+            kind,
+            content: draft,
+          });
+          setInboxItems(Array.isArray(data?.items) ? data.items : []);
+          if (kind === "queue") {
+            timeline.appendMessage("user", draft, { rich: false });
+            trajectory.addUser(draft);
+          }
+          stream.setStatus(kind === "steer" ? "已加入中途引导" : "已加入排队");
+        } catch (err: any) {
+          setInput((cur) => (cur.trim() ? cur : draft));
+          toast.error(String(err?.message || err || "加入收件箱失败"));
+        }
+        return;
+      }
+
       stream.ensureSSE();
       const draft = content;
       setInput("");
@@ -363,6 +558,10 @@ export function useChatActions(opts: UseChatActionsOpts) {
           agent_mode: agentMode || "agent",
           auto_accept: !!autoAccept,
           multitask: !!multitask,
+          permission_preset: permissionPreset,
+          plan_enforcement: planEnforcement,
+          experience_tier: experienceTier,
+          reasoning_effort: reasoningEffort,
           model_provider: providerId || undefined,
           model_name: modelName || undefined,
           workspace_id: workspaceId || undefined,
@@ -397,6 +596,11 @@ export function useChatActions(opts: UseChatActionsOpts) {
     [
       agentMode,
       autoAccept,
+      busyEnterMode,
+      permissionPreset,
+      planEnforcement,
+      experienceTier,
+      reasoningEffort,
       cwd,
       input,
       modelName,
@@ -435,5 +639,19 @@ export function useChatActions(opts: UseChatActionsOpts) {
     resolveAsk,
     resolvePlanReview,
     acceptPlan: acceptPlanAction,
+    inboxItems,
+    setInboxItems: applyInboxSnapshot,
+    refreshInbox,
+    removeInboxItem,
+    busyEnterMode,
+    setBusyEnterMode,
+    permissionPreset,
+    setPermissionPreset,
+    planEnforcement,
+    setPlanEnforcement,
+    experienceTier,
+    setExperienceTier,
+    reasoningEffort,
+    setReasoningEffort,
   };
 }

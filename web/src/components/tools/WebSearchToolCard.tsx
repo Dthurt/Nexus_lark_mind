@@ -32,6 +32,7 @@ function parseSearchPayload(raw: unknown) {
 export function WebSearchToolCard({
   item,
   nested = false,
+  highlighted = false,
   onInspect,
   onOpenChange,
   onStop,
@@ -44,6 +45,7 @@ export function WebSearchToolCard({
       <GenericToolCard
         item={item}
         nested={nested}
+        highlighted={highlighted}
         onInspect={onInspect}
         onOpenChange={onOpenChange}
         onStop={onStop}
@@ -64,7 +66,9 @@ export function WebSearchToolCard({
       className={cn(
         "tool-card ok w-full max-w-full self-stretch rounded-lg border border-border/80 bg-card/40 text-sm",
         nested && "ml-0 border-dashed",
+        highlighted && "ring-2 ring-amber-400/70 border-amber-400/50",
       )}
+      data-approval-call={item.callId || undefined}
     >
       <CollapsibleTrigger asChild>
         <button

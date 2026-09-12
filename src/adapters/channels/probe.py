@@ -55,6 +55,49 @@ async def test_openai_compat(
     }
 
 
+async def test_anthropic_messages(
+    *,
+    base_url: str,
+    api_key: str = "",
+    model: str = "",
+) -> Dict[str, Any]:
+    """Probe Anthropic Messages API with a tiny non-stream request."""
+    if not api_key:
+        raise ValidationAppError("Anthropic API Key required")
+    root = (base_url or "https://api.anthropic.com").rstrip("/")
+    use_model = model or "claude-3-5-haiku-20241022"
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+    }
+    payload = {
+        "model": use_model,
+        "max_tokens": 8,
+        "messages": [{"role": "user", "content": "ping"}],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{root}/v1/messages", headers=headers, json=payload)
+    except httpx.HTTPError as exc:
+        raise UpstreamError(f"anthropic unreachable: {exc}") from exc
+    if resp.status_code >= 400:
+        raise UpstreamError(f"anthropic HTTP {resp.status_code}: {resp.text[:300]}")
+    data = resp.json() if resp.content else {}
+    text = ""
+    for b in data.get("content") or []:
+        if isinstance(b, dict) and b.get("type") == "text":
+            text += b.get("text") or ""
+    return {
+        "ok": True,
+        "models_ok": True,
+        "chat_ok": True,
+        "chat_model": use_model,
+        "message": f"Anthropic Messages 连通成功（model={use_model}）",
+        "sample": (text or "")[:80],
+    }
+
+
 async def test_feishu_app(*, app_id: str, app_secret: str) -> Dict[str, Any]:
     if not app_id or not app_secret:
         raise ValidationAppError("app_id and app_secret required")

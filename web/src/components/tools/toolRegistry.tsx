@@ -35,6 +35,7 @@ export function getToolView(
 export function ToolCallView({
   item,
   nested,
+  highlighted,
   onInspect,
   onOpenChange,
   onStop,
@@ -44,6 +45,7 @@ export function ToolCallView({
     <View
       item={item}
       nested={nested}
+      highlighted={highlighted}
       onInspect={onInspect}
       onOpenChange={onOpenChange}
       onStop={onStop}

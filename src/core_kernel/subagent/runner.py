@@ -146,6 +146,11 @@ async def run_subagent_turn(
     rec.messages = messages + [ChatMessage(role=ChatRole.ASSISTANT, content=collected or "")]
     rec.updated_at = time.time()
 
+    try:
+        await registry.persist(rec)
+    except Exception:
+        pass
+
     yield {
         "subagent": {
             "phase": "end",

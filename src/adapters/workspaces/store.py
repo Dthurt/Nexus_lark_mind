@@ -276,16 +276,28 @@ _SAFE_REL = re.compile(r"^[^\x00]+$")
 
 
 def resolve_under_workspace(cwd: str, rel_path: str = ".") -> Path:
-    """Resolve a path against workspace cwd; reject escapes outside cwd."""
+    """Resolve a path against workspace cwd; reject escapes outside cwd.
+
+    Absolute paths are allowed only when they still resolve under ``cwd``.
+    ``..`` segments that climb above the workspace raise ``PermissionError``.
+    """
     root = canonicalize_path(cwd)
     if not root.exists() or not root.is_dir():
         raise FileNotFoundError(f"workspace cwd missing: {root}")
     rel = (rel_path or ".").strip() or "."
     if not _SAFE_REL.match(rel):
         raise ValueError("invalid path")
-    candidate = (root / rel).resolve(strict=False) if not Path(rel).is_absolute() else Path(rel).resolve(strict=False)
+    # Disallow Windows drive-hopping / UNC tricks that look relative but aren't.
+    if rel.startswith("\\\\") or (len(rel) >= 2 and rel[1] == ":" and rel[0].isalpha()):
+        candidate = Path(rel).resolve(strict=False)
+    elif Path(rel).is_absolute():
+        candidate = Path(rel).resolve(strict=False)
+    else:
+        candidate = (root / rel).resolve(strict=False)
     try:
         candidate.relative_to(root)
     except ValueError as exc:
-        raise PermissionError(f"path escapes workspace: {candidate}") from exc
+        raise PermissionError(
+            f"path escapes workspace sandbox (cwd={root}): {candidate}"
+        ) from exc
     return candidate

@@ -15,7 +15,7 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { openMermaidFullscreen } from "./mermaidFullscreen";
-import { drawioMarkdownHtml, isDrawioLang, looksLikeDrawioXml, renderDrawioIn } from "./drawio";
+import { drawioBlockedMarkdownHtml, drawioMarkdownHtml, isDrawioLang, looksLikeDrawioXml, renderDrawioIn } from "./drawio";
 import {
   echartsMarkdownHtml,
   isEchartsLang,
@@ -93,6 +93,17 @@ function escapeHtml(s: string) {
     .replace(/"/g, "&quot;");
 }
 
+/** Mutable gate for Fast-tier Draw.io rejection during marked render. */
+let _allowDrawio = true;
+
+export function setMarkdownAllowDrawio(allow: boolean) {
+  _allowDrawio = !!allow;
+}
+
+export function getMarkdownAllowDrawio() {
+  return _allowDrawio;
+}
+
 const renderer = new marked.Renderer();
 const baseCode =
   typeof (renderer as any).code === "function" ? (renderer as any).code.bind(renderer) : null;
@@ -122,7 +133,7 @@ const baseCode =
     return echartsMarkdownHtml(text);
   }
   if (isDrawioLang(langKey) || (langKey === "xml" && looksLikeDrawioXml(text))) {
-    return drawioMarkdownHtml(text);
+    return _allowDrawio ? drawioMarkdownHtml(text) : drawioBlockedMarkdownHtml(text);
   }
   if (isMindmapLang(langKey)) {
     return mindmapMarkdownHtml(text);
@@ -229,13 +240,22 @@ function sanitizeHtml(html: string) {
 }
 
 /** Sync markdown → HTML (math left as %%NLM_MATH_n%% placeholders). */
-export function renderMarkdown(text: string, { streaming = false }: { streaming?: boolean } = {}) {
-  const normalized = normalizeEchartsMarkdown(text || "");
-  const { text: protectedMd } = protectMath(normalized);
-  let html = marked.parse(protectedMd) as string;
-  html = sanitizeHtml(html);
-  if (streaming) html += '<span class="streaming-caret" aria-hidden="true"></span>';
-  return html;
+export function renderMarkdown(
+  text: string,
+  { streaming = false, allowDrawio = true }: { streaming?: boolean; allowDrawio?: boolean } = {},
+) {
+  const prev = _allowDrawio;
+  _allowDrawio = allowDrawio !== false;
+  try {
+    const normalized = normalizeEchartsMarkdown(text || "");
+    const { text: protectedMd } = protectMath(normalized);
+    let html = marked.parse(protectedMd) as string;
+    html = sanitizeHtml(html);
+    if (streaming) html += '<span class="streaming-caret" aria-hidden="true"></span>';
+    return html;
+  } finally {
+    _allowDrawio = prev;
+  }
 }
 
 /**
@@ -258,17 +278,23 @@ export function renderMarkdownLight(text: string) {
 /** Full pipeline including KaTeX (preferred for chat body). */
 export async function renderMarkdownWithMath(
   text: string,
-  { streaming = false }: { streaming?: boolean } = {}
+  { streaming = false, allowDrawio = true }: { streaming?: boolean; allowDrawio?: boolean } = {},
 ) {
-  const normalized = normalizeEchartsMarkdown(text || "");
-  const { text: protectedMd, slots } = protectMath(normalized);
-  let html = marked.parse(protectedMd) as string;
-  html = sanitizeHtml(html);
-  html = await applyMathPlaceholders(html, slots);
-  // Sanitize again after KaTeX injects spans
-  html = sanitizeHtml(html);
-  if (streaming) html += '<span class="streaming-caret" aria-hidden="true"></span>';
-  return html;
+  const prev = _allowDrawio;
+  _allowDrawio = allowDrawio !== false;
+  try {
+    const normalized = normalizeEchartsMarkdown(text || "");
+    const { text: protectedMd, slots } = protectMath(normalized);
+    let html = marked.parse(protectedMd) as string;
+    html = sanitizeHtml(html);
+    html = await applyMathPlaceholders(html, slots);
+    // Sanitize again after KaTeX injects spans
+    html = sanitizeHtml(html);
+    if (streaming) html += '<span class="streaming-caret" aria-hidden="true"></span>';
+    return html;
+  } finally {
+    _allowDrawio = prev;
+  }
 }
 
 export function decorateMarkdownLinks(root: HTMLElement | null) {
@@ -328,7 +354,17 @@ async function ensureMermaid() {
       // Throw instead of injecting the giant "Syntax error in text" SVG
       suppressErrorRendering: true,
       fontFamily: "IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif",
-      flowchart: { htmlLabels: true, curve: "basis" },
+      // Prefer pixel width/height attrs so inline layout does not collapse.
+      flowchart: { htmlLabels: true, curve: "basis", useMaxWidth: false },
+      sequence: { useMaxWidth: false },
+      gantt: { useMaxWidth: false },
+      journey: { useMaxWidth: false },
+      timeline: { useMaxWidth: false },
+      class: { useMaxWidth: false },
+      state: { useMaxWidth: false },
+      er: { useMaxWidth: false },
+      pie: { useMaxWidth: false },
+      mindmap: { useMaxWidth: false },
     });
     mermaidThemeApplied = theme;
   }
@@ -923,7 +959,8 @@ function setMermaidStatus(block: HTMLElement, text: string, isError = false, ful
   el.classList.toggle("is-error", !!isError);
 }
 
-function normalizeMermaidSvgSize(svg: SVGSVGElement) {
+/** Keep pixel width/height so inline SVG does not collapse under height:auto. */
+export function normalizeMermaidSvgSize(svg: SVGSVGElement) {
   try {
     const vb = svg.viewBox?.baseVal;
     let w = parseFloat(svg.getAttribute("width") || "") || 0;
@@ -944,11 +981,14 @@ function normalizeMermaidSvgSize(svg: SVGSVGElement) {
         }
       }
     }
-    if (w > 0) svg.setAttribute("width", String(w));
-    if (h > 0) svg.setAttribute("height", String(h));
+    if (w > 0) svg.setAttribute("width", String(Math.round(w)));
+    if (h > 0) svg.setAttribute("height", String(Math.round(h)));
+    // Keep intrinsic pixel size; CSS max-width:100% scales down without collapsing height.
+    svg.style.width = "";
+    svg.style.height = "";
     svg.style.maxWidth = "100%";
-    svg.style.height = "auto";
     svg.style.display = "block";
+    svg.style.marginInline = "auto";
   } catch {
     /* ignore measurement errors off-DOM */
   }

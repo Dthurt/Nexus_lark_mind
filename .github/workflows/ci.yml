@@ -37,6 +37,13 @@ jobs:
           mkdir -p data logs
           pytest -q --tb=short
 
+      - name: Perf smoke (compaction budget)
+        env:
+          PYTHONPATH: .
+          REDIS_URL: memory://local
+        run: |
+          pytest -q --tb=short tests/test_perf_smoke.py
+
   build-web:
     name: Build React UI
     runs-on: ubuntu-latest

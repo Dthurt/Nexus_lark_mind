@@ -41,6 +41,7 @@ export type MessageBubbleProps = {
   item: MessageBubbleItem;
   modelProvider?: string;
   modelName?: string;
+  experienceTier?: "fast" | "balanced" | "high" | string;
   onAcceptPlan?: (item: MessageBubbleItem) => void;
   className?: string;
 };
@@ -49,6 +50,7 @@ export const MessageBubble = memo(function MessageBubble({
   item,
   modelProvider = "",
   modelName = "",
+  experienceTier = "balanced",
   onAcceptPlan,
   className,
 }: MessageBubbleProps) {
@@ -141,7 +143,9 @@ export const MessageBubble = memo(function MessageBubble({
         className,
       )}
     >
-      {!isUser && (item.reasoning || (item.streaming && !(content || "").trim())) ? (
+      {!isUser &&
+      !item.hideReasoning &&
+      (item.reasoning || (item.streaming && !(content || "").trim())) ? (
         <ThinkingFold
           text={item.reasoning || ""}
           streaming={!!item.streaming && !(content || "").trim()}
@@ -159,6 +163,7 @@ export const MessageBubble = memo(function MessageBubble({
           plain={!item.rich}
           modelProvider={resolvedProvider}
           modelName={resolvedModel}
+          experienceTier={experienceTier}
           onMermaidFixed={onMermaidFixed}
         />
       ) : null}

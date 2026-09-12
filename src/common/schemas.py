@@ -48,6 +48,7 @@ class EventType(str, Enum):
     TASK_PLAN_READY = "task.plan_ready"
     TASK_PLAN_MODE = "task.plan_mode"
     TASK_SUBAGENT = "task.subagent"
+    TASK_INBOX = "task.inbox"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
     SESSION_UPDATED = "session.updated"
@@ -117,6 +118,7 @@ class ModelRequest(BaseModel):
     stream: bool = True
     temperature: float = 0.7
     max_tokens: Optional[int] = None
+    reasoning_effort: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 

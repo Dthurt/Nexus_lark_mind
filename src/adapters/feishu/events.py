@@ -25,6 +25,9 @@ class ParsedCardAction(BaseModel):
     open_message_id: str
     action: str
     payload: str = ""
+    kind: str = ""
+    call_id: str = ""
+    answers: Dict[str, Any] = Field(default_factory=dict)
     raw: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -162,6 +165,9 @@ def parse_card_action(payload: Dict[str, Any]) -> Optional[ParsedCardAction]:
         open_message_id=payload.get("open_message_id") or "",
         action=str(value.get("action") or "noop"),
         payload=str(value.get("payload") or ""),
+        kind=str(value.get("kind") or ""),
+        call_id=str(value.get("call_id") or ""),
+        answers=value.get("answers") if isinstance(value.get("answers"), dict) else {},
         raw=payload,
     )
 

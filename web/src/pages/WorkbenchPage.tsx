@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApprovalDock } from "@/components/chat/ApprovalDock";
+import { QueueDock } from "@/components/chat/QueueDock";
 import { ChatMessages } from "@/components/chat/ChatMessages";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { Composer } from "@/components/composer/Composer";
@@ -51,6 +52,7 @@ export function WorkbenchPage({
   const [toolsEnabled, setToolsEnabled] = useState(true);
   const [centerView, setCenterView] = useState<CenterViewId>("chat");
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  const [activeApprovalCallId, setActiveApprovalCallId] = useState<string | null>(null);
   const [layout, setLayout] = useState<LayoutState>({
     sidebarCollapsed: false,
     sidebarOpen: false,
@@ -133,6 +135,9 @@ export function WorkbenchPage({
     },
     onSyncInteraction: (patch) => {
       void actionsRef.current?.syncInteraction(patch);
+    },
+    onInbox: (items) => {
+      actionsRef.current?.setInboxItems?.(items as any);
     },
   });
 
@@ -540,6 +545,8 @@ export function WorkbenchPage({
                 showWorkspacePicker={!cwd}
                 modelProvider={providerId}
                 modelName={modelName}
+                experienceTier={actions.experienceTier}
+                highlightCallId={activeApprovalCallId}
                 onInspectTool={onInspectTool}
                 onStopTool={() => void actions.stopGeneration(currentTaskId)}
                 onPickWorkspace={(ws) => void onPickWorkspace(ws)}
@@ -563,6 +570,13 @@ export function WorkbenchPage({
             <ApprovalDock
               items={timeline.items.filter((it) => it.kind === "approval") as any}
               onResolve={(p) => void actions.resolveApproval(p)}
+              onActiveCallIdChange={setActiveApprovalCallId}
+            />
+
+            <QueueDock
+              items={actions.inboxItems}
+              busyEnterMode={actions.busyEnterMode}
+              onRemove={(id) => void actions.removeInboxItem(id)}
             />
 
             <Composer
@@ -582,6 +596,14 @@ export function WorkbenchPage({
               onAutoAcceptChange={actions.setAutoAccept}
               multitask={actions.multitask}
               onMultitaskChange={actions.setMultitask}
+              permissionPreset={actions.permissionPreset}
+              onPermissionPresetChange={actions.setPermissionPreset}
+              planEnforcement={actions.planEnforcement}
+              onPlanEnforcementChange={actions.setPlanEnforcement}
+              experienceTier={actions.experienceTier}
+              onExperienceTierChange={actions.setExperienceTier}
+              reasoningEffort={actions.reasoningEffort}
+              onReasoningEffortChange={actions.setReasoningEffort}
               sessionUsage={sessionUsage}
               items={timeline.items}
               tools={tools}
@@ -592,9 +614,10 @@ export function WorkbenchPage({
               gitInsertions={gitInsertions}
               gitDeletions={gitDeletions}
               busy={busy}
+              busyEnterMode={actions.busyEnterMode}
               onProviderIdChange={onProviderChange}
               onModelNameChange={onModelChange}
-              onSend={() => void actions.sendChat()}
+              onSend={(opts) => void actions.sendChat(undefined, opts)}
               onStop={() => void actions.stopGeneration(currentTaskId)}
             />
           </section>
@@ -605,6 +628,7 @@ export function WorkbenchPage({
           plugins={plugins}
           tools={tools}
           activity={timeline.activityLog}
+          jobs={timeline.items.filter((it) => it.kind === "tool" || it.kind === "subagent")}
           usage={sessionUsage}
           pluginError={pluginError || null}
           reloading={reloading}
@@ -615,6 +639,9 @@ export function WorkbenchPage({
           cwd={cwd}
           workspaceTitle={workspaceTitle}
           draft={actions.input}
+          teamId={sessionId}
+          onInspectJob={onInspectTool}
+          onStopJob={() => void actions.stopGeneration(currentTaskId)}
           onTogglePlugin={async (id, enabled) => {
             try {
               await togglePlugin(id, enabled);

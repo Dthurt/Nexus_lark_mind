@@ -300,9 +300,10 @@ html.code-fs-open {
 
 .nlm-md .mermaid-stage,
 .msg .body.md .mermaid-stage {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  /* Block (not flex): Mermaid emits width=100% with no height; flex + height:auto
+     collapses SVG clientHeight to ~0 while fullscreen remounts with pixel sizes. */
+  display: block;
+  text-align: center;
   width: 100%;
   min-width: 0;
   min-height: 80px;
@@ -312,9 +313,11 @@ html.code-fs-open {
 
 .nlm-md .mermaid-stage svg,
 .msg .body.md .mermaid-stage svg {
-  max-width: 100%;
-  height: auto;
   display: block;
+  margin-inline: auto;
+  max-width: 100%;
+  width: auto;
+  height: auto;
 }
 
 .nlm-md .mermaid-source,
@@ -629,11 +632,39 @@ html.mermaid-fs-open {
 /* Draw.io */
 .nlm-md .drawio-block,
 .msg .body.md .drawio-block {
+  position: relative;
   margin: 0.55em 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: hsl(var(--foreground) / 0.04);
   overflow: hidden;
+}
+
+.nlm-md .drawio-blocked-banner,
+.msg .body.md .drawio-blocked-banner {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.45);
+  color: hsl(var(--muted-foreground));
+  font-size: var(--fs-xs);
+}
+
+.nlm-md .drawio-offline-host,
+.msg .body.md .drawio-offline-host {
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 4px;
+  overflow: auto;
+}
+
+.nlm-md .drawio-offline-host svg,
+.msg .body.md .drawio-offline-host svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin-inline: auto;
 }
 
 .nlm-md .drawio-toolbar,

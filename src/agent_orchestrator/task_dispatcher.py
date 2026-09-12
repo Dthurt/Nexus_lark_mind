@@ -17,6 +17,7 @@ from src.common.schemas import (
     EventType,
     StandardTask,
     TaskStatus,
+    new_id,
 )
 from src.infrastructure.redis_client import RedisClient
 
@@ -133,12 +134,36 @@ class TaskDispatcher:
         multitask = (task.metadata or {}).get("multitask")
         if multitask is None:
             multitask = True
+        permission_preset = (
+            (task.metadata or {}).get("permission_preset")
+            or session.get("permission_preset")
+            or "workspace-write"
+        )
+        plan_enforcement = (
+            (task.metadata or {}).get("plan_enforcement")
+            or session.get("plan_enforcement")
+            or "hard"
+        )
+        experience_tier = (
+            (task.metadata or {}).get("experience_tier")
+            or session.get("experience_tier")
+            or "balanced"
+        )
+        reasoning_effort = (
+            (task.metadata or {}).get("reasoning_effort")
+            or session.get("reasoning_effort")
+            or "medium"
+        )
         task.metadata = {
             **(task.metadata or {}),
             "agent_mode": str(agent_mode).strip().lower() if agent_mode else "agent",
             "auto_accept": bool(auto_accept),
             "multitask": bool(multitask),
             "plan_status": session.get("plan_status") or "idle",
+            "permission_preset": str(permission_preset).strip().lower(),
+            "plan_enforcement": str(plan_enforcement).strip().lower(),
+            "experience_tier": str(experience_tier).strip().lower(),
+            "reasoning_effort": str(reasoning_effort).strip().lower(),
         }
         if cwd:
             task.metadata = {
@@ -310,6 +335,35 @@ class TaskDispatcher:
                 await self._publish(task, EventType.TASK_SUBAGENT, subagent)
                 continue
 
+            inbox_claimed = chunk.get("inbox_claimed")
+            if inbox_claimed:
+                items = inbox_claimed if isinstance(inbox_claimed, list) else [inbox_claimed]
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    text = str(item.get("content") or "").strip()
+                    if not text:
+                        continue
+                    await self.sessions.append(
+                        task.session_id,
+                        ChatMessage(
+                            role=ChatRole.USER,
+                            content=text,
+                            metadata={
+                                "kind": "inbox_steer",
+                                "inbox_id": item.get("id"),
+                                "inbox_kind": "steer",
+                            },
+                        ),
+                    )
+                remaining = await self.sessions.get_inbox(task.session_id)
+                await self._publish(
+                    task,
+                    EventType.TASK_INBOX,
+                    {"action": "claimed", "items_claimed": items, "items": remaining},
+                )
+                continue
+
             reasoning_delta = chunk.get("reasoning_delta") or ""
             if reasoning_delta:
                 await self._publish(
@@ -369,6 +423,53 @@ class TaskDispatcher:
                 "session_usage": session_usage,
             },
         )
+        await self._drain_queue_followup(task)
+
+    async def _drain_queue_followup(self, parent: StandardTask) -> None:
+        """After a successful turn, enqueue the next queued inbox message as a new task."""
+        try:
+            item = await self.sessions.claim_next_queued(parent.session_id)
+        except Exception:
+            logger.exception("claim queue inbox failed for %s", parent.session_id)
+            return
+        if not item:
+            return
+        remaining = await self.sessions.get_inbox(parent.session_id)
+        await self._publish(
+            parent,
+            EventType.TASK_INBOX,
+            {"action": "claimed", "items_claimed": [item], "items": remaining},
+        )
+        follow = StandardTask(
+            task_id=new_id("task_"),
+            session_id=parent.session_id,
+            channel=parent.channel,
+            user_id=parent.user_id,
+            content=str(item.get("content") or ""),
+            stream=True,
+            tools_enabled=parent.tools_enabled,
+            model_provider=parent.model_provider,
+            model_name=parent.model_name,
+            metadata={
+                **(parent.metadata or {}),
+                "from_inbox": item.get("id"),
+                "inbox_kind": "queue",
+            },
+        )
+        try:
+            await self.queue.enqueue(follow)
+        except Exception:
+            logger.exception("enqueue queue-followup failed for %s", parent.session_id)
+            # Best-effort restore so the user can retry
+            try:
+                await self.sessions.push_inbox_item(
+                    parent.session_id,
+                    kind="queue",
+                    content=str(item.get("content") or ""),
+                    source=str(item.get("source") or "user"),
+                )
+            except Exception:
+                logger.exception("restore queue item failed")
 
     async def _publish(self, task: StandardTask, event_type: EventType, payload: dict) -> None:
         event = BusEvent(
@@ -378,4 +479,16 @@ class TaskDispatcher:
             channel=task.channel if isinstance(task.channel, ChannelType) else ChannelType(task.channel),
             payload=payload,
         )
+        try:
+            wire = {
+                "event_id": event.event_id,
+                "event_type": event.event_type.value,
+                "task_id": event.task_id,
+                "session_id": event.session_id,
+                "payload": event.payload,
+                "ts": event.ts.isoformat() if hasattr(event.ts, "isoformat") else str(event.ts),
+            }
+            await self.redis.append_session_event(task.session_id, wire)
+        except Exception:
+            logger.exception("append_session_event failed for %s", task.session_id)
         await self.redis.publish_event(event)

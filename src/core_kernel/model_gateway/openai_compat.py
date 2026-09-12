@@ -95,6 +95,10 @@ class OpenAICompatProvider(BaseModelProvider):
             payload["max_tokens"] = request.max_tokens
         if request.tools:
             payload["tools"] = request.tools
+        effort = (request.reasoning_effort or request.metadata.get("reasoning_effort") or "").strip()
+        if effort:
+            # OpenAI o-series / compatible gateways accept reasoning_effort.
+            payload["reasoning_effort"] = effort
         if stream:
             # Ask providers that support it to return usage on the final SSE chunk.
             payload["stream_options"] = {"include_usage": True}

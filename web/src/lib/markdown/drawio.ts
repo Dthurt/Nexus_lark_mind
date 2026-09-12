@@ -56,8 +56,73 @@ export function drawioMarkdownHtml(text: string) {
   return `<div class="drawio-block" data-drawio-host="1"><pre class="drawio-source">${escapeHtml(text)}</pre></div>`;
 }
 
-const EMBED_URL =
+/** Fast tier: keep source, do not mount viewer. */
+export function drawioBlockedMarkdownHtml(text: string) {
+  return `<div class="drawio-block drawio-blocked" data-drawio-host="1" data-drawio-blocked="1" data-processed="blocked"><div class="drawio-blocked-banner">Fast 体验档仅支持 Mermaid — Draw.io 已降级为源码</div><pre class="drawio-source is-visible">${escapeHtml(text)}</pre></div>`;
+}
+
+/** Prefer local viewer under /drawio/, else offline SVG preview, else remote embed. */
+function resolveEmbedUrl(): string | null {
+  try {
+    const custom = localStorage.getItem("nlm_drawio_embed");
+    if (custom) return custom;
+  } catch {
+    /* ignore */
+  }
+  // Same-origin bundled viewer (drop diagrams.net export into web/public/drawio/)
+  return "/drawio/index.html?embed=1&proto=json&spin=1&ui=min&libraries=1&nav=1&layers=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&toolbar=0";
+}
+
+const REMOTE_EMBED_URL =
   "https://embed.diagrams.net/?embed=1&proto=json&spin=1&ui=min&libraries=1&nav=1&layers=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&toolbar=0";
+
+/** Parse mxGraph cells into a simple offline SVG (no network). */
+export function mxfileToOfflineSvg(xml: string): string {
+  const src = String(xml || "");
+  const cells: Array<{ x: number; y: number; w: number; h: number; label: string }> = [];
+  const re =
+    /<mxCell\b[^>]*\bvalue="([^"]*)"[^>]*\bvertex="1"[^>]*>[\s\S]*?<mxGeometry\b([^/]*)\/>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) && cells.length < 80) {
+    const label = String(m[1] || "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&#xa;/gi, " ")
+      .replace(/<[^>]+>/g, "")
+      .trim()
+      .slice(0, 48);
+    const geo = m[2] || "";
+    const num = (k: string, d = 0) => {
+      const hit = new RegExp(`\\b${k}="([\\d.]+)"`).exec(geo);
+      return hit ? parseFloat(hit[1]) : d;
+    };
+    cells.push({
+      x: num("x"),
+      y: num("y"),
+      w: Math.max(num("width", 80), 40),
+      h: Math.max(num("height", 40), 24),
+      label: label || "node",
+    });
+  }
+  if (!cells.length) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="64" viewBox="0 0 320 64"><rect width="320" height="64" fill="#1a1f26" rx="8"/><text x="16" y="38" fill="#9aa4b2" font-size="13" font-family="ui-sans-serif,system-ui">Offline preview — open source or external editor</text></svg>`;
+  }
+  let maxX = 0;
+  let maxY = 0;
+  for (const c of cells) {
+    maxX = Math.max(maxX, c.x + c.w);
+    maxY = Math.max(maxY, c.y + c.h);
+  }
+  const W = Math.max(Math.ceil(maxX + 24), 200);
+  const H = Math.max(Math.ceil(maxY + 24), 80);
+  const rects = cells
+    .map((c) => {
+      const tx = escapeHtml(c.label);
+      return `<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="6" fill="#243041" stroke="#5b8def" stroke-width="1.2"/><text x="${c.x + c.w / 2}" y="${c.y + c.h / 2 + 4}" text-anchor="middle" fill="#e8eef7" font-size="11" font-family="ui-sans-serif,system-ui">${tx}</text>`;
+    })
+    .join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="max-width:100%;height:auto;display:block;margin-inline:auto">${rects}</svg>`;
+}
 
 function setStatus(block: HTMLElement, text: string, isError = false) {
   const el = block.querySelector(".drawio-status-inline") as HTMLElement | null;
@@ -95,9 +160,13 @@ function ensureChrome(block: HTMLElement, xml: string) {
   if (!block.querySelector(".drawio-viewport")) {
     const viewport = document.createElement("div");
     viewport.className = "drawio-viewport";
+    const offline = document.createElement("div");
+    offline.className = "drawio-offline-host";
+    viewport.appendChild(offline);
     const frame = document.createElement("iframe");
     frame.className = "drawio-frame";
     frame.title = "Draw.io diagram";
+    frame.hidden = true;
     frame.setAttribute("referrerpolicy", "no-referrer");
     frame.setAttribute(
       "sandbox",
@@ -201,7 +270,33 @@ function mountFrame(
   iframe.onload = () => {
     setTimeout(() => postLoad(iframe, xml), 400);
   };
-  iframe.src = EMBED_URL;
+  const prefer = resolveEmbedUrl();
+  iframe.src = prefer || REMOTE_EMBED_URL;
+}
+
+function mountOfflinePreview(block: HTMLElement, xml: string) {
+  const iframe = ensureChrome(block, xml);
+  iframe.hidden = true;
+  const host = block.querySelector(".drawio-offline-host") as HTMLElement | null;
+  if (host) {
+    host.hidden = false;
+    host.innerHTML = mxfileToOfflineSvg(xml);
+  }
+  setStatus(block, "离线预览");
+  block.setAttribute("data-processed", "ok");
+  block.dataset.drawioMode = "offline";
+  applyMode(block, "view");
+}
+
+async function probeLocalEmbed(): Promise<boolean> {
+  try {
+    const url = resolveEmbedUrl();
+    if (!url || url.startsWith("http")) return false;
+    const res = await fetch(url.split("?")[0], { method: "HEAD", cache: "no-store" });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function copyXml(block: HTMLElement) {
@@ -335,24 +430,35 @@ export async function renderDrawioIn(
 
   const blocks = [...root.querySelectorAll(".drawio-block")] as any[];
   for (const block of blocks) {
+    if (block.getAttribute("data-drawio-blocked") === "1") continue;
     if (
       block.getAttribute("data-processed") === "ok" &&
-      (block.querySelector("iframe.drawio-frame") as HTMLIFrameElement)?.src
+      (block.querySelector(".drawio-offline-host svg") ||
+        (block.querySelector("iframe.drawio-frame") as HTMLIFrameElement)?.src)
     ) {
       continue;
     }
     const pre = block.querySelector("pre.drawio-source");
     const original = block.dataset.drawioSource || pre?.textContent || "";
 
-    const mountOk = (xml: string) => {
+    const mountOk = async (xml: string) => {
       const iframe = ensureChrome(block, xml);
       applyMode(block, "view");
+      const hasLocal = await probeLocalEmbed();
+      if (!hasLocal) {
+        mountOfflinePreview(block, xml);
+        return;
+      }
+      iframe.hidden = false;
+      const host = block.querySelector(".drawio-offline-host") as HTMLElement | null;
+      if (host) host.hidden = true;
       mountFrame(block, iframe, xml, {
         onError: (msg) => {
           void (async () => {
+            // Fall back to offline SVG if iframe embed fails
+            mountOfflinePreview(block, xml);
             if (block._nlmDrawioRepaired || typeof repair !== "function") {
-              setStatus(block, msg, true);
-              applyMode(block, "source");
+              setStatus(block, `${msg} · 已用离线预览`, true);
               return;
             }
             block._nlmDrawioRepaired = true;
@@ -362,20 +468,12 @@ export async function renderDrawioIn(
               const fixed = extractDrawioSource(fixedRaw || "");
               if (!fixed || !looksLikeDrawioXml(fixed)) {
                 setStatus(block, msg, true);
-                applyMode(block, "source");
                 return;
               }
               if (fixed !== original && typeof onFixed === "function") {
                 onFixed({ from: original, to: fixed });
               }
-              const nextFrame = ensureChrome(block, fixed);
-              applyMode(block, "view");
-              mountFrame(block, nextFrame, fixed, {
-                onError: (m2) => {
-                  setStatus(block, m2, true);
-                  applyMode(block, "source");
-                },
-              });
+              mountOfflinePreview(block, fixed);
             } catch (err: any) {
               setStatus(block, `修复失败：${err?.message || err}`, true);
               applyMode(block, "source");
@@ -414,6 +512,6 @@ export async function renderDrawioIn(
       block.setAttribute("data-processed", "error");
       continue;
     }
-    mountOk(xml);
+    await mountOk(xml);
   }
 }

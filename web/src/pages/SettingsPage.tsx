@@ -474,9 +474,7 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
                       type="button"
                       variant="ghost"
                       size="sm"
-                      disabled={
-                        testingModel || !p.configured || p.api === "anthropic-messages"
-                      }
+                      disabled={testingModel || !p.configured}
                       onClick={() => void runModelTest(p.id)}
                     >
                       测试连通性

@@ -289,6 +289,10 @@ export type ChatSendBody = {
   agent_mode?: "agent" | "plan" | string;
   auto_accept?: boolean;
   multitask?: boolean;
+  permission_preset?: "read-only" | "workspace-write" | "danger-full-access" | string;
+  plan_enforcement?: "hard" | "soft" | string;
+  experience_tier?: "fast" | "balanced" | "high" | string;
+  reasoning_effort?: "low" | "medium" | "high" | string;
   model_provider?: string;
   model_name?: string;
   workspace_id?: string;
@@ -324,6 +328,10 @@ export type InteractionPatchBody = {
   agent_mode?: "agent" | "plan" | string;
   auto_accept?: boolean;
   plan_status?: "idle" | "drafting" | "accepted" | string;
+  permission_preset?: "read-only" | "workspace-write" | "danger-full-access" | string;
+  plan_enforcement?: "hard" | "soft" | string;
+  experience_tier?: "fast" | "balanced" | "high" | string;
+  reasoning_effort?: "low" | "medium" | "high" | string;
 };
 
 export type WorkspacePatchBody = {

@@ -55,6 +55,7 @@ const BADGE_MAP: Record<string, string> = {
 export function WorkspaceToolCard({
   item,
   nested = false,
+  highlighted = false,
   onInspect,
   onOpenChange,
   onStop,
@@ -169,7 +170,9 @@ export function WorkspaceToolCard({
         "tool-card relative w-full max-w-full self-stretch overflow-hidden rounded-lg border text-sm",
         statusShellClass(runStatus),
         nested && "ml-0",
+        highlighted && "ring-2 ring-amber-400/70 border-amber-400/50 shadow-[0_0_0_1px_rgba(251,191,36,0.25)]",
       )}
+      data-approval-call={item.callId || undefined}
     >
       <div className={cn("absolute inset-y-0 left-0 w-0.5", statusAccentBar(runStatus))} aria-hidden />
       <div className="flex items-center gap-1 pr-1.5">

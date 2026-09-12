@@ -218,6 +218,23 @@ def build_system_prompt(
     cwd = (meta.get("cwd") or "").strip()
     agent_mode = str(meta.get("agent_mode") or "agent").strip().lower()
     auto_accept = bool(meta.get("auto_accept"))
+    from src.common.experience_tiers import (
+        experience_tier_prompt_block,
+        normalize_experience_tier,
+        normalize_reasoning_effort,
+        reasoning_effort_hint,
+    )
+    from src.common.permission_presets import (
+        normalize_plan_enforcement,
+        normalize_preset,
+        preset_config,
+    )
+
+    permission_preset = normalize_preset(meta.get("permission_preset"))
+    plan_enforcement = normalize_plan_enforcement(meta.get("plan_enforcement"))
+    experience_tier = normalize_experience_tier(meta.get("experience_tier"))
+    reasoning_effort = normalize_reasoning_effort(meta.get("reasoning_effort"))
+    preset = preset_config(permission_preset)
 
     # Callers may pass a custom base; empty/default → harness identity.
     custom = (base_prompt or "").strip()
@@ -242,8 +259,27 @@ def build_system_prompt(
         if instr:
             parts.append(instr)
 
+    parts.append(
+        "## Permission preset\n"
+        f"- preset: `{preset['id']}` ({preset['label']})\n"
+        f"- {preset['hint']}\n"
+        "- Paths must stay inside the active workspace cwd; escapes are rejected.\n"
+    )
+
     if agent_mode == "plan":
         parts.append(PLAN_MODE)
+        if plan_enforcement == "soft":
+            parts.append(
+                "## Plan enforcement: soft\n"
+                "Plan mode is guidance only — write/shell tools remain available if the "
+                "permission preset allows them. Prefer read-only exploration and a clear plan "
+                "before mutating; use `exit_plan_mode` when ready for review.\n"
+            )
+        else:
+            parts.append(
+                "## Plan enforcement: hard\n"
+                "Write/shell tools are blocked until the user accepts the plan.\n"
+            )
     else:
         parts.append(
             AGENT_MODE_TEMPLATE.format(
@@ -256,6 +292,8 @@ def build_system_prompt(
         )
 
     parts.append(PLUGIN_HINTS)
+    parts.append(experience_tier_prompt_block(experience_tier))
+    parts.append(reasoning_effort_hint(reasoning_effort))
     parts.append(DIAGRAMS_MATH)
 
     # If caller supplied extra custom on top of builtin, append as operator note

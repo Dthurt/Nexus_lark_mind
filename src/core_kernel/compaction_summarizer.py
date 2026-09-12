@@ -165,13 +165,14 @@ async def compact_messages_async(
     provider: Optional[str] = None,
     task_id: Optional[str] = None,
     use_llm: bool = True,
+    aggressiveness: Optional[str] = None,
 ) -> tuple[List[ChatMessage], dict]:
     """Async compaction: soft-trim → optional LLM middle collapse → hard drop.
 
     Returns (messages, info) where info may include compacted_via / compacted_count.
     """
     info: dict = {}
-    params = resolve_compaction_params()
+    params = resolve_compaction_params(aggressiveness)
     soft_chars = int(params["soft_msg_chars"])
     target_ratio = float(params["target_ratio"])
     collapse_ratio = float(params["collapse_trigger_ratio"])
@@ -215,12 +216,22 @@ async def compact_messages_async(
             layer2 = [*system, *rest[:keep_head], stub, *rest[len(rest) - keep_tail :]]
             if sum(_msg_tokens(m) for m in layer2) <= target:
                 return layer2, info
-            layer2b = compact_messages(layer2, model_name=model_name, context_window=int(window * 0.7))
+            layer2b = compact_messages(
+                layer2,
+                model_name=model_name,
+                context_window=int(window * 0.7),
+                aggressiveness=aggressiveness,
+            )
             if sum(_msg_tokens(m) for m in layer2b) <= usable:
                 return layer2b, info
             return _layer3_hard_drop(layer2b, target), info
 
-    out = compact_messages(messages, model_name=model_name, context_window=context_window)
+    out = compact_messages(
+        messages,
+        model_name=model_name,
+        context_window=context_window,
+        aggressiveness=aggressiveness,
+    )
     if len(out) < len(messages):
         info = {"compacted_via": "heuristic"}
     return out, info

@@ -109,15 +109,21 @@ class ProviderRegistry:
                 continue
             models = p.model_ids()
             if p.api == "anthropic-messages":
-                # Reuse OpenAI-compat path only for now; anthropic custom later
-                pass
-            provider = OpenAICompatProvider(
-                name=p.id,
-                api_key=p.api_key,
-                base_url=p.base_url,
-                default_model=p.default_model or (models[0] if models else ""),
-                settings=self.settings,
-            )
+                provider = AnthropicProvider(
+                    self.settings,
+                    name=p.id,
+                    api_key=p.api_key,
+                    base_url=p.base_url,
+                    default_model=p.default_model or (models[0] if models else ""),
+                )
+            else:
+                provider = OpenAICompatProvider(
+                    name=p.id,
+                    api_key=p.api_key,
+                    base_url=p.base_url,
+                    default_model=p.default_model or (models[0] if models else ""),
+                    settings=self.settings,
+                )
             self.register(
                 provider,
                 label=p.label or p.id,

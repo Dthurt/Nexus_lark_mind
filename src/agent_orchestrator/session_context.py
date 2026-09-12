@@ -6,6 +6,15 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from src.common.schemas import ChatMessage
+from src.common.session_inbox import (
+    claim_kind,
+    claim_next_queue,
+    clear_inbox,
+    list_inbox,
+    new_inbox_item,
+    push_inbox,
+    remove_inbox,
+)
 from src.infrastructure.redis_client import RedisClient
 
 
@@ -70,9 +79,70 @@ class SessionContext:
             "agent_mode": "agent",
             "auto_accept": False,
             "plan_status": "idle",
+            "permission_preset": "workspace-write",
+            "plan_enforcement": "hard",
+            "experience_tier": "balanced",
+            "reasoning_effort": "medium",
+            "inbox": [],
         }
         await self.redis.set_session(session_id, payload)
         return payload
+
+    async def get_inbox(self, session_id: str) -> List[Dict[str, Any]]:
+        session = await self.redis.get_session(session_id)
+        if not session:
+            return []
+        return list_inbox(session)
+
+    async def push_inbox_item(
+        self,
+        session_id: str,
+        *,
+        kind: str,
+        content: str,
+        source: str = "user",
+    ) -> Dict[str, Any]:
+        session = await self.redis.get_session(session_id)
+        if not session:
+            raise KeyError(session_id)
+        item = new_inbox_item(kind=kind, content=content, source=source)  # type: ignore[arg-type]
+        push_inbox(session, item)
+        await self.redis.set_session(session_id, session)
+        return item
+
+    async def remove_inbox_item(self, session_id: str, item_id: str) -> Optional[Dict[str, Any]]:
+        session = await self.redis.get_session(session_id)
+        if not session:
+            raise KeyError(session_id)
+        removed = remove_inbox(session, item_id)
+        await self.redis.set_session(session_id, session)
+        return removed
+
+    async def clear_inbox_items(self, session_id: str) -> List[Dict[str, Any]]:
+        session = await self.redis.get_session(session_id)
+        if not session:
+            return []
+        prev = clear_inbox(session)
+        await self.redis.set_session(session_id, session)
+        return prev
+
+    async def claim_steers(self, session_id: str) -> List[Dict[str, Any]]:
+        session = await self.redis.get_session(session_id)
+        if not session:
+            return []
+        claimed = claim_kind(session, "steer")
+        if claimed:
+            await self.redis.set_session(session_id, session)
+        return claimed
+
+    async def claim_next_queued(self, session_id: str) -> Optional[Dict[str, Any]]:
+        session = await self.redis.get_session(session_id)
+        if not session:
+            return None
+        claimed = claim_next_queue(session)
+        if claimed:
+            await self.redis.set_session(session_id, session)
+        return claimed
 
     async def bind_workspace(
         self,
@@ -109,10 +179,28 @@ class SessionContext:
         agent_mode: Optional[str] = None,
         auto_accept: Optional[bool] = None,
         plan_status: Optional[str] = None,
+        permission_preset: Optional[str] = None,
+        plan_enforcement: Optional[str] = None,
+        experience_tier: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from src.common.experience_tiers import (
+            normalize_experience_tier,
+            normalize_reasoning_effort,
+        )
+        from src.common.permission_presets import (
+            apply_preset_to_session_fields,
+            normalize_plan_enforcement,
+            normalize_preset,
+        )
+
         session = await self.redis.get_session(session_id)
         if not session:
             raise KeyError(session_id)
+        if permission_preset is not None:
+            fields = apply_preset_to_session_fields(permission_preset)
+            session.update(fields)
+            # Preset owns auto_accept unless caller also passes auto_accept below.
         if agent_mode is not None:
             mode = str(agent_mode).strip().lower()
             if mode not in ("agent", "plan"):
@@ -123,12 +211,34 @@ class SessionContext:
             elif plan_status is None and session.get("plan_status") == "drafting":
                 session["plan_status"] = "idle"
         if auto_accept is not None:
-            session["auto_accept"] = bool(auto_accept)
+            # read-only forbids accept; danger forces accept
+            preset = normalize_preset(session.get("permission_preset"))
+            if preset == "read-only":
+                session["auto_accept"] = False
+            elif preset == "danger-full-access":
+                session["auto_accept"] = True
+            else:
+                session["auto_accept"] = bool(auto_accept)
         if plan_status is not None:
             status = str(plan_status).strip().lower()
             if status not in ("idle", "drafting", "accepted"):
                 raise ValueError("plan_status must be idle|drafting|accepted")
             session["plan_status"] = status
+        if plan_enforcement is not None:
+            session["plan_enforcement"] = normalize_plan_enforcement(plan_enforcement)
+        if experience_tier is not None:
+            session["experience_tier"] = normalize_experience_tier(experience_tier)
+        if reasoning_effort is not None:
+            session["reasoning_effort"] = normalize_reasoning_effort(reasoning_effort)
+        # Ensure defaults exist on older sessions
+        if not session.get("permission_preset"):
+            session["permission_preset"] = normalize_preset(None)
+        if not session.get("plan_enforcement"):
+            session["plan_enforcement"] = normalize_plan_enforcement(None)
+        if not session.get("experience_tier"):
+            session["experience_tier"] = normalize_experience_tier(None)
+        if not session.get("reasoning_effort"):
+            session["reasoning_effort"] = normalize_reasoning_effort(None)
         session["updated_at"] = datetime.now(timezone.utc).isoformat()
         await self.redis.set_session(session_id, session)
         return session

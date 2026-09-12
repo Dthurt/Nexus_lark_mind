@@ -26,6 +26,8 @@ export type MarkdownBodyProps = {
   plain?: boolean;
   modelProvider?: string;
   modelName?: string;
+  /** When `fast`, Draw.io fences render as blocked source (no viewer). */
+  experienceTier?: "fast" | "balanced" | "high" | string;
   className?: string;
   onMermaidFixed?: (args: { from: string; to: string }) => void;
   onEchartsFixed?: (args: { from: string; to: string }) => void;
@@ -44,6 +46,7 @@ export function MarkdownBody({
   plain = false,
   modelProvider = "",
   modelName = "",
+  experienceTier = "balanced",
   className,
   onMermaidFixed,
   onEchartsFixed,
@@ -63,6 +66,7 @@ export function MarkdownBody({
   onEchartsFixedRef.current = onEchartsFixed;
   const onDrawioFixedRef = useRef(onDrawioFixed);
   onDrawioFixedRef.current = onDrawioFixed;
+  const allowDrawio = String(experienceTier || "balanced").toLowerCase() !== "fast";
 
   useEffect(() => {
     const onTheme = () => setThemeTick((n) => n + 1);
@@ -122,7 +126,10 @@ export function MarkdownBody({
     let cancelled = false;
     const paint = async () => {
       const gen = ++genRef.current;
-      const nextHtml = await renderMarkdownWithMath(content, { streaming: false });
+      const nextHtml = await renderMarkdownWithMath(content, {
+        streaming: false,
+        allowDrawio,
+      });
       if (cancelled || gen !== genRef.current) return;
       disposeEchartsIn(rootRef.current);
       setHtml(nextHtml);
@@ -132,7 +139,7 @@ export function MarkdownBody({
     return () => {
       cancelled = true;
     };
-  }, [content, streaming, plain, themeTick]);
+  }, [content, streaming, plain, themeTick, allowDrawio]);
 
   useLayoutEffect(() => {
     if (plain || streaming || !html) return;
@@ -186,14 +193,16 @@ export function MarkdownBody({
         renderMindmapIn(root),
       ]);
       if (cancelled || gen !== genRef.current) return;
-      await renderDrawioIn(root, {
-        streaming: false,
-        repair: repairDrawio,
-        onFixed: (args) => {
-          onDrawioFixedRef.current?.(args);
-          toast.success("Draw.io 已自动修复语法");
-        },
-      });
+      if (allowDrawio) {
+        await renderDrawioIn(root, {
+          streaming: false,
+          repair: repairDrawio,
+          onFixed: (args) => {
+            onDrawioFixedRef.current?.(args);
+            toast.success("Draw.io 已自动修复语法");
+          },
+        });
+      }
     };
 
     void paintRich();
@@ -202,7 +211,7 @@ export function MarkdownBody({
       cancelled = true;
       disposeEchartsIn(root);
     };
-  }, [html, streaming, plain, modelProvider, modelName]);
+  }, [html, streaming, plain, modelProvider, modelName, allowDrawio]);
 
   if (plain) {
     return (

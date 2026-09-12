@@ -19,6 +19,8 @@ export type ApprovalDockProps = {
     item: ApprovalDockItem;
     action: "allow" | "allow_session" | "deny";
   }) => void;
+  /** Fires when the focused pending approval callId changes (for tool-card highlight). */
+  onActiveCallIdChange?: (callId: string | null) => void;
   className?: string;
 };
 
@@ -47,7 +49,7 @@ function timeoutSeconds(item: ApprovalDockItem | null) {
 }
 
 /** Floating approval panel above the composer — graduated countdown, auto-deny. */
-export function ApprovalDock({ items, onResolve, className }: ApprovalDockProps) {
+export function ApprovalDock({ items, onResolve, onActiveCallIdChange, className }: ApprovalDockProps) {
   const pending = useMemo(
     () => items.filter((it) => it.status === "pending" || !it.status),
     [items],
@@ -61,6 +63,12 @@ export function ApprovalDock({ items, onResolve, className }: ApprovalDockProps)
   const callIdRef = useRef<string | null>(null);
   const onResolveRef = useRef(onResolve);
   onResolveRef.current = onResolve;
+  const onActiveRef = useRef(onActiveCallIdChange);
+  onActiveRef.current = onActiveCallIdChange;
+
+  useEffect(() => {
+    onActiveRef.current?.(current?.callId || null);
+  }, [current?.callId]);
 
   useEffect(() => {
     if (!current) {

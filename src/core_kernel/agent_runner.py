@@ -19,7 +19,7 @@ SUBAGENT_ALL = SUBAGENT_STREAM_TOOLS | SUBAGENT_CONTROL_TOOLS
 ASK_USER_TOOL = "ask_user"
 TODO_WRITE_TOOL = "todo_write"
 EXIT_PLAN_MODE_TOOL = "exit_plan_mode"
-APPROVAL_TOOLS = {"run_shell", "write_file", "edit_file"}
+APPROVAL_TOOLS = {"run_shell", "run_code", "write_file", "edit_file"}
 # Read / search tools never require approval
 SAFE_TOOLS = {
     "glob",
@@ -218,15 +218,26 @@ def _filter_openai_tools(
     allow_subagents: bool,
     *,
     agent_mode: str = "agent",
+    plan_enforcement: str = "hard",
+    permission_preset: str = "workspace-write",
 ) -> List[Dict[str, Any]]:
+    from src.common.permission_presets import (
+        MUTATING_TOOLS,
+        blocks_mutating_tools,
+        plan_hard_enforcement,
+    )
+
     out = []
-    plan = agent_mode == "plan"
+    plan = agent_mode == "plan" and plan_hard_enforcement(plan_enforcement)
+    readonly = blocks_mutating_tools(permission_preset)
     for t in tools:
         name = ((t.get("function") or {}).get("name") or "")
         base = _base_tool_name(name)
         if not allow_subagents and base in SUBAGENT_ALL:
             continue
         if plan and base not in PLAN_ALLOWED_TOOLS:
+            continue
+        if readonly and (base in MUTATING_TOOLS or _tool_leaf_name(base) in MUTATING_TOOLS):
             continue
         out.append(t)
     return out
@@ -354,9 +365,31 @@ async def _run_agent_stream_inner(
     agent_mode = str(meta0.get("agent_mode") or "agent").strip().lower()
     if agent_mode not in ("agent", "plan"):
         agent_mode = "agent"
-    auto_accept = bool(meta0.get("auto_accept"))
+    from src.common.permission_presets import (
+        MUTATING_TOOLS,
+        blocks_mutating_tools,
+        effective_auto_accept,
+        normalize_preset,
+        plan_hard_enforcement,
+    )
+
+    permission_preset = normalize_preset(meta0.get("permission_preset"))
+    plan_enforcement = str(meta0.get("plan_enforcement") or "hard").strip().lower()
+    from src.common.experience_tiers import normalize_reasoning_effort
+
+    reasoning_effort = normalize_reasoning_effort(meta0.get("reasoning_effort"))
+    auto_accept = effective_auto_accept(
+        permission_preset=permission_preset,
+        auto_accept=meta0.get("auto_accept"),
+    )
     openai_tools = (
-        _filter_openai_tools(plugins.as_openai_tools(), allow_subagents, agent_mode=agent_mode)
+        _filter_openai_tools(
+            plugins.as_openai_tools(),
+            allow_subagents,
+            agent_mode=agent_mode,
+            plan_enforcement=plan_enforcement,
+            permission_preset=permission_preset,
+        )
         if tools_enabled
         else []
     )
@@ -384,7 +417,11 @@ async def _run_agent_stream_inner(
             tool_map = {}
             return
         openai_tools = _filter_openai_tools(
-            plugins.as_openai_tools(), allow_subagents, agent_mode=agent_mode
+            plugins.as_openai_tools(),
+            allow_subagents,
+            agent_mode=agent_mode,
+            plan_enforcement=plan_enforcement,
+            permission_preset=permission_preset,
         )
         tool_map = plugins.tool_name_map()
 
@@ -399,6 +436,45 @@ async def _run_agent_stream_inner(
                 "cancelled": True,
             }
             return
+
+        # Mid-turn steer: claim inbox steers before each model step.
+        sid = str(parent_session_id or (workspace_meta or {}).get("session_id") or "").strip()
+        if sid:
+            try:
+                from src.common.session_inbox import claim_kind
+
+                broker = workspace_meta.get("_session_broker") if workspace_meta else None
+                if broker is None:
+                    from src.common.config import get_settings
+                    from src.infrastructure.redis_client import create_broker
+
+                    broker = create_broker(get_settings())
+                    await broker.connect()
+                    if workspace_meta is not None:
+                        workspace_meta["_session_broker"] = broker
+                session = await broker.get_session(sid)
+                if session:
+                    claimed = claim_kind(session, "steer")
+                    if claimed:
+                        await broker.set_session(sid, session)
+                        for item in claimed:
+                            text = str(item.get("content") or "").strip()
+                            if not text:
+                                continue
+                            working.append(
+                                ChatMessage(
+                                    role=ChatRole.USER,
+                                    content=text,
+                                    metadata={
+                                        "kind": "inbox_steer",
+                                        "inbox_id": item.get("id"),
+                                    },
+                                )
+                            )
+                        yield {"delta": "", "done": False, "inbox_claimed": claimed}
+            except Exception:
+                # Inbox is best-effort; never fail the agent turn for it.
+                pass
 
         _refresh_tools()
         from src.core_kernel.compaction_summarizer import compact_messages_async
@@ -429,32 +505,92 @@ async def _run_agent_stream_inner(
             messages=working,
             tools=openai_tools or None,
             stream=True,
+            reasoning_effort=reasoning_effort,
         )
         collected = ""
         tool_acc: Dict[int, Dict[str, Any]] = {}
         round_usage: Dict[str, Any] = {}
+        overflow_retried = False
 
-        async for chunk in gateway.stream(req, task_id=task_id):
-            if cancel_event and cancel_event.is_set():
-                break
-            if chunk.notice:
-                yield {
-                    "delta": "",
-                    "done": False,
-                    "notice": chunk.notice,
-                    "retry_attempt": chunk.retry_attempt,
-                    "retry_wait_seconds": chunk.retry_wait_seconds,
-                }
-                continue
-            if chunk.content:
-                collected += chunk.content
-                yield {"delta": chunk.content, "done": False}
-            if getattr(chunk, "reasoning", None):
-                yield {"delta": "", "done": False, "reasoning_delta": chunk.reasoning}
-            if chunk.tool_calls:
-                _merge_tool_call_deltas(tool_acc, chunk.tool_calls)
-            if chunk.usage:
-                round_usage = _extract_usage(chunk.usage)
+        while True:
+            collected = ""
+            tool_acc = {}
+            round_usage = {}
+            stream_failed: Optional[BaseException] = None
+            try:
+                async for chunk in gateway.stream(req, task_id=task_id):
+                    if cancel_event and cancel_event.is_set():
+                        break
+                    if chunk.notice:
+                        yield {
+                            "delta": "",
+                            "done": False,
+                            "notice": chunk.notice,
+                            "retry_attempt": chunk.retry_attempt,
+                            "retry_wait_seconds": chunk.retry_wait_seconds,
+                        }
+                        continue
+                    if chunk.content:
+                        collected += chunk.content
+                        yield {"delta": chunk.content, "done": False}
+                    if getattr(chunk, "reasoning", None):
+                        yield {"delta": "", "done": False, "reasoning_delta": chunk.reasoning}
+                    if chunk.tool_calls:
+                        _merge_tool_call_deltas(tool_acc, chunk.tool_calls)
+                    if chunk.usage:
+                        round_usage = _extract_usage(chunk.usage)
+            except BaseException as exc:
+                stream_failed = exc
+
+            if stream_failed is not None:
+                from src.core_kernel.context_overflow import is_context_overflow_error
+
+                if not overflow_retried and is_context_overflow_error(stream_failed):
+                    overflow_retried = True
+                    yield {
+                        "delta": "",
+                        "done": False,
+                        "notice": "上下文溢出，正在强力压缩后重试…",
+                    }
+                    working, compact_info = await compact_messages_async(
+                        working,
+                        model_name=model,
+                        gateway=gateway,
+                        provider=provider,
+                        task_id=task_id,
+                        use_llm=True,
+                        aggressiveness="aggressive",
+                    )
+                    # Extra hard shrink if still large after aggressive profile.
+                    from src.core_kernel.context_compact import (
+                        compact_messages,
+                        resolve_context_window,
+                    )
+
+                    win = resolve_context_window(model)
+                    working = compact_messages(
+                        working,
+                        model_name=model,
+                        context_window=max(8_000, int(win * 0.45)),
+                        aggressiveness="aggressive",
+                    )
+                    if compact_info.get("compacted_via"):
+                        yield {
+                            "delta": "",
+                            "done": False,
+                            "notice": "溢出恢复压缩完成，重试模型调用",
+                        }
+                    req = ModelRequest(
+                        provider=provider,
+                        model=model,
+                        messages=working,
+                        tools=openai_tools or None,
+                        stream=True,
+                        reasoning_effort=reasoning_effort,
+                    )
+                    continue
+                raise stream_failed
+            break
 
         if cancel_event and cancel_event.is_set():
             yield {
@@ -571,7 +707,11 @@ async def _run_agent_stream_inner(
             base = item["base"]
             t0 = time.perf_counter()
 
-            if agent_mode == "plan" and base not in PLAN_ALLOWED_TOOLS:
+            if (
+                agent_mode == "plan"
+                and plan_hard_enforcement(plan_enforcement)
+                and base not in PLAN_ALLOWED_TOOLS
+            ):
                 return {
                     "id": call_id,
                     "name": name,
@@ -579,6 +719,20 @@ async def _run_agent_stream_inner(
                     "success": False,
                     "result": None,
                     "error": f"plan mode forbids tool `{base}`; accept the plan first",
+                    "duration_ms": 0,
+                    "kind": "blocked",
+                }
+
+            if blocks_mutating_tools(permission_preset) and (
+                base in MUTATING_TOOLS or _tool_leaf_name(base) in MUTATING_TOOLS
+            ):
+                return {
+                    "id": call_id,
+                    "name": name,
+                    "plugin_id": None,
+                    "success": False,
+                    "result": None,
+                    "error": f"permission preset `read-only` forbids tool `{base}`",
                     "duration_ms": 0,
                     "kind": "blocked",
                 }
@@ -629,20 +783,25 @@ async def _run_agent_stream_inner(
         ]
 
         if safe_items:
-            payloads = await asyncio.gather(*[_invoke_tool(item) for item in safe_items])
-            for payload, item in zip(payloads, safe_items):
-                if item["base"] == TODO_WRITE_TOOL and payload.get("success"):
-                    payload = {**payload, "kind": "todo"}
-                    items = ((payload.get("result") or {}) if isinstance(payload.get("result"), dict) else {}).get(
-                        "items"
-                    ) or []
-                    yield {
-                        "delta": "",
-                        "done": False,
-                        "todos": {"items": items, "call_id": payload.get("id")},
-                    }
-                yield {"delta": "", "done": False, "tool_result": payload}
-                _append_tool_result(payload)
+            from src.common.config import get_settings
+
+            max_parallel = max(1, int(get_settings().agent_max_parallel_tool_calls or 8))
+            for offset in range(0, len(safe_items), max_parallel):
+                batch = safe_items[offset : offset + max_parallel]
+                payloads = await asyncio.gather(*[_invoke_tool(item) for item in batch])
+                for payload, item in zip(payloads, batch):
+                    if item["base"] == TODO_WRITE_TOOL and payload.get("success"):
+                        payload = {**payload, "kind": "todo"}
+                        items = ((payload.get("result") or {}) if isinstance(payload.get("result"), dict) else {}).get(
+                            "items"
+                        ) or []
+                        yield {
+                            "delta": "",
+                            "done": False,
+                            "todos": {"items": items, "call_id": payload.get("id")},
+                        }
+                    yield {"delta": "", "done": False, "tool_result": payload}
+                    _append_tool_result(payload)
 
         for item in risky_items:
             if cancel_event and cancel_event.is_set():
@@ -654,6 +813,7 @@ async def _run_agent_stream_inner(
                 continue
             approval_payload = {
                 "id": item["call_id"],
+                "call_id": item["call_id"],
                 "name": item["name"],
                 "base": item["base"],
                 "arguments": item["args"],
@@ -666,7 +826,12 @@ async def _run_agent_stream_inner(
                 kind="approval",
                 meta=approval_payload,
             )
-            decision = await user_gate.await_gate(item["call_id"], timeout=600.0)
+            from src.common.approval_timeouts import approval_timeout_seconds
+
+            decision = await user_gate.await_gate(
+                item["call_id"],
+                timeout=approval_timeout_seconds(item.get("base") or item.get("name")),
+            )
             if cancel_event and cancel_event.is_set():
                 payload = {
                     "id": item["call_id"],
@@ -935,6 +1100,7 @@ async def _run_agent_stream_inner(
         messages=final_msgs,
         tools=openai_tools or None,
         stream=True,
+        reasoning_effort=reasoning_effort,
     )
     collected = ""
     async for chunk in gateway.stream(req, task_id=task_id):
@@ -995,7 +1161,7 @@ async def _execute_subagent_tool(
                 }
             }
             return
-        rec = registry.get(agent_id)
+        rec = await registry.hydrate(agent_id)
         if not rec:
             yield {
                 "tool_result": {
@@ -1102,6 +1268,10 @@ async def _execute_subagent_tool(
         workspace_meta=workspace_meta,
         seed_messages=seed,
     )
+    try:
+        await registry.persist(rec)
+    except Exception:
+        pass
 
     final_output = ""
     error = None

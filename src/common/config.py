@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     agent_max_rounds: int = 48
     agent_max_rounds_workspace: int = 64
     subagent_max_rounds: int = 32
+    # Max concurrent safe (non-approval) tool calls per round; risky tools stay exclusive.
+    agent_max_parallel_tool_calls: int = 8
     # Context compaction: conservative | balanced | aggressive
     compaction_aggressiveness: str = "balanced"
 
@@ -78,9 +80,14 @@ class Settings(BaseSettings):
     feishu_encrypt_key: str = ""
     feishu_use_long_connection: bool = True
 
+    # Wave F — experimental agent teams (mailbox + DAG)
+    nlm_experimental_teams: bool = False
+
     plugins_dir: str = "plugins_volume"
     plugin_isolation: bool = True
     cli_auto_register: bool = True
+    # Optional HMAC secret for signed plugin packages (PLUGIN_SIGNING_SECRET)
+    plugin_signing_secret: str = ""
 
     # Optional web search (Tavily). If empty, CLI web_search falls back to DuckDuckGo.
     tavily_api_key: str = ""

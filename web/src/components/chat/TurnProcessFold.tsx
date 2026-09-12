@@ -1,0 +1,90 @@
+import { useMemo, useState } from "react";
+import { ChevronRight } from "lucide-react";
+
+import { ThinkingFold } from "@/components/chat/ThinkingFold";
+import { ToolCallGroup } from "@/components/chat/ToolCallGroup";
+import { SubagentCard } from "@/components/chat/SubagentCard";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import type { TimelineItem } from "@/hooks/useChatTimeline";
+import { cn } from "@/lib/utils";
+
+export type TurnProcessFoldProps = {
+  summary: string;
+  reasoning?: string;
+  tools?: TimelineItem[];
+  subagents?: TimelineItem[];
+  highlightCallId?: string | null;
+  onInspectTool?: (activityId: string) => void;
+  onStopTool?: (callId?: string) => void;
+  className?: string;
+};
+
+/** Collapsed mid-turn process (thinking + tools) after the turn completes. */
+export function TurnProcessFold({
+  summary,
+  reasoning = "",
+  tools = [],
+  subagents = [],
+  highlightCallId = null,
+  onInspectTool,
+  onStopTool,
+  className,
+}: TurnProcessFoldProps) {
+  const [open, setOpen] = useState(false);
+  const hasBody = !!(reasoning || "").trim() || tools.length > 0 || subagents.length > 0;
+
+  const label = useMemo(() => summary || "本回合过程", [summary]);
+
+  if (!hasBody) return null;
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className={cn("w-full", className)}>
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "flex w-full items-center gap-1.5 rounded-lg border border-border/50 bg-muted/25 px-2.5 py-1.5",
+            "text-left text-[12px] text-muted-foreground hover:bg-muted/45 hover:text-foreground",
+          )}
+        >
+          <ChevronRight
+            className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
+          />
+          <span className="font-medium">{label}</span>
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-2 flex flex-col gap-2 pl-1">
+        {(reasoning || "").trim() ? <ThinkingFold text={reasoning} /> : null}
+        {tools.length === 1 ? (
+          <ToolCallGroup
+            tools={tools as any}
+            highlightCallId={highlightCallId}
+            onInspect={onInspectTool}
+            onStop={onStopTool}
+          />
+        ) : tools.length > 1 ? (
+          <ToolCallGroup
+            tools={tools as any}
+            highlightCallId={highlightCallId}
+            onInspect={onInspectTool}
+            onStop={onStopTool}
+          />
+        ) : null}
+        {subagents.map((item) => (
+          <SubagentCard
+            key={item.id}
+            item={item as any}
+            onInspect={onInspectTool}
+            onStop={onStopTool}
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+export default TurnProcessFold;
