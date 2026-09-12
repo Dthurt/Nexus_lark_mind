@@ -12,6 +12,7 @@ import {
   formatCompactTokens,
   formatSharePercent,
 } from "@/lib/contextEstimate";
+import { formatTokenCount } from "@/lib/pricing";
 import { pretty } from "@/lib/pretty";
 import type { Plugin, Tool, Usage } from "@/types/api";
 import { cn } from "@/lib/utils";
@@ -662,7 +663,8 @@ function UsagePanel({
             <HoverCardContent className="w-56 text-xs">
               <p className="m-0 font-medium text-foreground">Token 分布</p>
               <p className="mt-1 m-0 text-muted-foreground">
-                输入 {prompt} · 输出 {completion} · 缓存 {cached}
+                输入 {formatTokenCount(prompt)} · 输出 {formatTokenCount(completion)} · 缓存{" "}
+                {formatTokenCount(cached)}
               </p>
             </HoverCardContent>
           </HoverCard>
@@ -670,7 +672,7 @@ function UsagePanel({
 
         <div className="mb-1.5 flex justify-between text-[10.5px] text-muted-foreground">
           <span>输入 / 输出占比</span>
-          <span className="font-mono">{totalTokens}</span>
+          <span className="font-mono">{formatTokenCount(totalTokens)}</span>
         </div>
         <div className="mb-2 flex h-2 overflow-hidden rounded-full bg-muted" aria-hidden>
           {ioRows
@@ -694,16 +696,16 @@ function UsagePanel({
               <span className="mr-2 text-muted-foreground">
                 {formatSharePercent(row.value / ioTotal)}
               </span>
-              <strong className="font-mono font-medium">{row.value}</strong>
+              <strong className="font-mono font-medium">{formatTokenCount(row.value)}</strong>
             </span>
           </div>
         ))}
-        <UsageRow label="合计" value={totalTokens} />
+        <UsageRow label="合计" value={formatTokenCount(totalTokens)} />
         <div className="mt-1.5 flex items-center justify-between gap-2 py-0.5 text-xs">
           <span className="text-muted-foreground">缓存命中</span>
           <span className="tabular-nums">
             <span className="mr-2 text-muted-foreground">{formatSharePercent(cacheShare)}</span>
-            <strong className="font-mono font-medium">{cached}</strong>
+            <strong className="font-mono font-medium">{formatTokenCount(cached)}</strong>
           </span>
         </div>
         <div className="mt-1.5">

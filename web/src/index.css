@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./styles/diagrams.css";
+@import "./styles/markdown.css";
 
 @custom-variant dark (&:is([data-theme="night"] *, [data-theme="gray"] *, [data-theme="ocean"] *, [data-theme="rose"] *));
 

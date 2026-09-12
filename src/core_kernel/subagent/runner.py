@@ -31,7 +31,11 @@ async def run_subagent_turn(
     max_rounds: int = 16,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Run one subagent turn; yield parent-SSE-friendly subagent chunks + final tool payload bits."""
+    from src.common.config import get_settings
     from src.core_kernel.agent_runner import run_agent_stream
+
+    settings = get_settings()
+    child_rounds = max(int(max_rounds or 0), int(settings.subagent_max_rounds))
 
     registry = get_subagent_registry()
     rec = registry.get(record.id) or record
@@ -77,7 +81,7 @@ async def run_subagent_turn(
         model=rec.model,
         tools_enabled=True,
         task_id=task_id,
-        max_rounds=max_rounds,
+        max_rounds=child_rounds,
         workspace_cwd=rec.workspace_cwd,
         workspace_meta=meta,
         allow_subagents=rec.depth < MAX_SUBAGENT_DEPTH,

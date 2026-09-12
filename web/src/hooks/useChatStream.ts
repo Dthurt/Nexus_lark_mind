@@ -20,6 +20,8 @@ export type UseChatStreamOpts = {
     | "renderTodos"
     | "renderSubagentEvent"
     | "appendDelta"
+    | "appendReasoning"
+    | "hasRunningTools"
     | "finalizeBot"
     | "dismissLiveAssistant"
     | "appendMessage"
@@ -174,7 +176,17 @@ export function useChatStream(opts: UseChatStreamOpts) {
         tl.renderToolResult(payload, actId);
         tr.addToolResult(payload, actId);
         setStatus("tool result…");
-        setActivity("model", "正在调用模型…", modelNameRef.current || "");
+        // Keep tool/subagent activity while siblings are still running.
+        if (typeof tl.hasRunningTools === "function" && tl.hasRunningTools()) {
+          setActivity("tool", "工具运行中…", shortToolName(payload.name) || "");
+        } else {
+          setActivity("model", "正在调用模型…", modelNameRef.current || "");
+        }
+      } else if (type === "task.reasoning") {
+        tl.clearRetry();
+        tl.appendReasoning?.(payload.delta || payload.reasoning || "");
+        setStatus("thinking…");
+        setActivity("model", "思考中…", modelNameRef.current || "");
       } else if (type === "task.tool_approval") {
         tl.clearRetry();
         const actId = tl.pushActivity("APPROVE", payload);
@@ -247,12 +259,22 @@ export function useChatStream(opts: UseChatStreamOpts) {
         }
       } else if (type === "task.delta") {
         tl.clearRetry();
-        tl.appendDelta(payload.delta || "");
-        setStatus("streaming…");
-        setActivity("stream", "正在生成回复…");
+        if (payload.reasoning_delta) {
+          tl.appendReasoning?.(payload.reasoning_delta);
+        }
+        if (payload.delta) {
+          tl.appendDelta(payload.delta || "");
+          setStatus("streaming…");
+          setActivity("stream", "正在生成回复…");
+        } else if (payload.reasoning_delta) {
+          setStatus("thinking…");
+          setActivity("model", "思考中…", modelNameRef.current || "");
+        }
       } else if (type === "task.completed") {
         tl.clearRetry();
-        tl.finalizeBot(payload.content || undefined, payload.usage);
+        tl.finalizeBot(payload.content || undefined, payload.usage, {
+          modelName: modelNameRef.current || "",
+        });
         if (agentModeRef.current === "plan") tl.markPlanReady(payload.content || "");
         tr.addAssistant(payload.content || "", payload.usage);
         tr.endTurn(payload.session_usage || payload.usage);
@@ -267,7 +289,9 @@ export function useChatStream(opts: UseChatStreamOpts) {
         const err = payload.error || "unknown";
         if (payload.cancelled) {
           if (payload.partial) {
-            tl.finalizeBot(payload.partial);
+            tl.finalizeBot(payload.partial, undefined, {
+              modelName: modelNameRef.current || "",
+            });
             tr.addAssistant(payload.partial);
           } else {
             tl.dismissLiveAssistant();

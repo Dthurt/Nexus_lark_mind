@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { ToolCard } from "@/components/chat/ToolCard";
+import { ToolStatusBadge, ToolStopButton } from "@/components/tools/ToolStatusBadge";
 import { Badge } from "@/components/ui/badge";
 import {
   Collapsible,
@@ -9,11 +10,13 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import type { ToolCardItem } from "@/components/tools/toolRegistry";
+import { isToolPending, resolveToolStatus, statusShellClass } from "@/lib/toolStatus";
 import { cn } from "@/lib/utils";
 
 export type ToolCallGroupProps = {
   tools: ToolCardItem[];
   onInspect?: (activityId: string) => void;
+  onStop?: (callId?: string) => void;
   className?: string;
 };
 
@@ -22,7 +25,7 @@ function shortName(name?: string) {
   return raw.replace(/^builtin_workspace_/, "").replace(/^cli_/, "").split(".").pop();
 }
 
-export function ToolCallGroup({ tools, onInspect, className }: ToolCallGroupProps) {
+export function ToolCallGroup({ tools, onInspect, onStop, className }: ToolCallGroupProps) {
   const [open, setOpen] = useState(false);
 
   const summaryLabel = useMemo(() => {
@@ -34,64 +37,59 @@ export function ToolCallGroup({ tools, onInspect, className }: ToolCallGroupProp
     const preview = unique.slice(0, 4).join(" · ");
     const n = tools.length;
     if (n <= 1) return preview || "tool";
-    return `${n} 个工具 · ${preview}${unique.length > 4 ? "…" : ""}`;
+    return `${n} tools · ${preview}${unique.length > 4 ? "…" : ""}`;
   }, [tools]);
 
-  const hasFail = tools.some(
-    (t) => t.status === "fail" || t.error != null || (t as any).success === false,
-  );
-  const pending = tools.some(
-    (t) => t.result == null && t.error == null && (t as any).success == null,
-  );
+  const hasFail = tools.some((t) => resolveToolStatus(t) === "failed");
+  const pending = tools.some((t) => isToolPending(t));
+  const groupStatus = pending ? "running" : hasFail ? "failed" : "done";
 
   return (
     <Collapsible
       open={open}
       onOpenChange={setOpen}
       className={cn(
-        "tool-group w-fit max-w-[min(100%,560px)] self-start animate-in fade-in duration-150",
-        open &&
-          "w-[min(100%,560px)] rounded-lg border border-[hsl(var(--tool))]/25 bg-[hsl(var(--tool))]/5",
+        "tool-group w-full max-w-full self-stretch overflow-hidden rounded-lg border transition-colors",
+        statusShellClass(groupStatus as any),
         className,
       )}
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full border border-border bg-white/5 px-2.5 py-1 text-sm font-medium text-muted-foreground",
-            "hover:border-white/15 hover:text-foreground",
-            open && "flex w-full rounded-none border-0 bg-transparent text-foreground",
-            !hasFail && !pending && "border-teal/30",
-            hasFail && "border-destructive/35",
-            pending && "border-[hsl(var(--tool))]/35",
-          )}
-        >
-          <ChevronRight
-            className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
-            aria-hidden
-          />
-          <Badge
-            variant="outline"
-            className="h-5 border-0 bg-[hsl(var(--tool))]/15 px-1.5 font-mono text-[10px] text-[hsl(var(--tool))]"
+      <div className="flex items-center gap-1 pr-1.5">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "inline-flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5 text-left text-sm font-medium text-muted-foreground",
+              "hover:text-foreground",
+              open && "border-b border-border/40",
+            )}
           >
-            {pending ? "RUN" : hasFail ? "ERR" : "TOOLS"}
-          </Badge>
-          <span className="min-w-0 truncate font-mono text-sm">{summaryLabel}</span>
-          {pending ? (
-            <span className="ml-auto text-xs text-muted-foreground">运行中</span>
-          ) : hasFail ? (
-            <span className="ml-auto text-xs text-muted-foreground">有失败</span>
-          ) : null}
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="flex flex-col gap-1.5 px-2.5 pb-2.5 pt-0.5">
+            <ChevronRight
+              className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
+              aria-hidden
+            />
+            <Badge
+              variant="outline"
+              className="h-5 border-border/60 bg-background/30 px-1.5 font-mono text-[10px] text-muted-foreground"
+            >
+              {pending ? "RUN" : hasFail ? "ERR" : "TOOLS"}
+            </Badge>
+            <span className="min-w-0 truncate font-mono text-sm text-foreground/90">
+              {summaryLabel}
+            </span>
+            <ToolStatusBadge status={groupStatus as any} className="ml-auto" />
+          </button>
+        </CollapsibleTrigger>
+        {pending ? <ToolStopButton onStop={() => onStop?.()} /> : null}
+      </div>
+      <CollapsibleContent className="flex flex-col gap-1.5 px-2.5 pb-2.5 pt-1.5">
         {tools.map((t) => (
           <ToolCard
             key={(t as any).id || t.callId || t.name}
             item={t}
             nested
             onInspect={onInspect}
+            onStop={onStop}
           />
         ))}
       </CollapsibleContent>

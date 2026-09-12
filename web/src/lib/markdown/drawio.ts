@@ -57,7 +57,7 @@ export function drawioMarkdownHtml(text: string) {
 }
 
 const EMBED_URL =
-  "https://embed.diagrams.net/?embed=1&proto=json&spin=1&ui=dark&libraries=0&saveAndExit=0&noSaveBtn=1&noExitBtn=1&toolbar=0";
+  "https://embed.diagrams.net/?embed=1&proto=json&spin=1&ui=min&libraries=1&nav=1&layers=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&toolbar=0";
 
 function setStatus(block: HTMLElement, text: string, isError = false) {
   const el = block.querySelector(".drawio-status-inline") as HTMLElement | null;

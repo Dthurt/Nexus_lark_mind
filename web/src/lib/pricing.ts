@@ -131,17 +131,19 @@ export function formatUsageLine(
   const costText = formatCny(cost.yuan);
 
   if (compact) {
-    const parts = [`${est}in ${inn}`, `out ${out}`];
+    const parts = [`${est}in ${formatTokenCount(inn)}`, `out ${formatTokenCount(out)}`];
     if (dur) parts.push(dur);
     if (cache.cached > 0) parts.push(`${Math.round(cache.rate)}%缓存`);
     parts.push(costText);
+    if (modelName) parts.push(modelName);
     return parts.join(" · ");
   }
 
-  const parts = [`${est}in ${inn}`, `out ${out}`];
+  const parts = [`${est}in ${formatTokenCount(inn)}`, `out ${formatTokenCount(out)}`];
   if (dur) parts.push(dur);
   if (cache.cached > 0) parts.push(cache.text);
   else parts.push("缓存 0");
   parts.push(costText);
+  if (modelName) parts.push(modelName);
   return parts.join(" · ");
 }

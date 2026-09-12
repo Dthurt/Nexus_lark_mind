@@ -20,6 +20,23 @@ ASK_USER_TOOL = "ask_user"
 TODO_WRITE_TOOL = "todo_write"
 EXIT_PLAN_MODE_TOOL = "exit_plan_mode"
 APPROVAL_TOOLS = {"run_shell", "write_file", "edit_file"}
+# Read / search tools never require approval
+SAFE_TOOLS = {
+    "glob",
+    "grep",
+    "list_dir",
+    "read_file",
+    "kb_search",
+    "kb_get",
+    "kb_list",
+    "web_search",
+    "literature_search",
+    "image_search",
+    "web_crawl",
+    "todo_write",
+    "ask_user",
+    "exit_plan_mode",
+}
 PLAN_ALLOWED_TOOLS = {
     "glob",
     "grep",
@@ -229,6 +246,31 @@ def _base_tool_name(name: str) -> str:
     return raw
 
 
+def _requires_approval(base: str) -> bool:
+    """Mutating tools need UI approval unless Accept / auto_accept is on."""
+    b = (base or "").strip().lower()
+    if not b:
+        return False
+    if b in SAFE_TOOLS:
+        return False
+    if b in APPROVAL_TOOLS:
+        return True
+    # Catch aliases / mis-parsed OpenAI names so writes never silently skip the gate.
+    for needle in (
+        "write_file",
+        "edit_file",
+        "run_shell",
+        "apply_patch",
+        "str_replace",
+        "create_file",
+    ):
+        if needle in b:
+            return True
+    if b in {"bash", "shell", "terminal", "exec"}:
+        return True
+    return False
+
+
 async def run_agent_stream(
     *,
     gateway: ModelGateway,
@@ -247,9 +289,14 @@ async def run_agent_stream(
     parent_session_id: Optional[str] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Yield SSE-friendly dicts: notice / delta / tool_call / tool_result / subagent / done / error."""
-    rounds = max_rounds
+    from src.common.config import get_settings
+
+    settings = get_settings()
+    rounds = int(max_rounds or 0) or int(settings.agent_max_rounds)
     if workspace_cwd:
-        rounds = max(rounds, 20)
+        rounds = max(rounds, int(settings.agent_max_rounds_workspace))
+    else:
+        rounds = max(rounds, int(settings.agent_max_rounds))
     meta = dict(workspace_meta or {})
     session_id = parent_session_id or str(meta.get("session_id") or "")
     with workspace_cwd_scope(workspace_cwd, meta):
@@ -387,6 +434,8 @@ async def _run_agent_stream_inner(
             if chunk.content:
                 collected += chunk.content
                 yield {"delta": chunk.content, "done": False}
+            if getattr(chunk, "reasoning", None):
+                yield {"delta": "", "done": False, "reasoning_delta": chunk.reasoning}
             if chunk.tool_calls:
                 _merge_tool_call_deltas(tool_acc, chunk.tool_calls)
             if chunk.usage:
@@ -558,10 +607,10 @@ async def _run_agent_stream_inner(
             }
 
         safe_items = [
-            p for p in other_items if auto_accept or p["base"] not in APPROVAL_TOOLS
+            p for p in other_items if auto_accept or not _requires_approval(p["base"])
         ]
         risky_items = [
-            p for p in other_items if (not auto_accept) and p["base"] in APPROVAL_TOOLS
+            p for p in other_items if (not auto_accept) and _requires_approval(p["base"])
         ]
 
         if safe_items:
@@ -618,6 +667,8 @@ async def _run_agent_stream_inner(
                 _append_tool_result(payload)
                 break
             action = str((decision or {}).get("action") or "deny").lower()
+            # allow_session / always: only skip further gates THIS turn; Accept chip
+            # persists via client auto_accept for subsequent turns.
             if action in ("allow_session", "always"):
                 auto_accept = True
                 action = "allow"
@@ -872,6 +923,8 @@ async def _run_agent_stream_inner(
     )
     collected = ""
     async for chunk in gateway.stream(req, task_id=task_id):
+        if getattr(chunk, "reasoning", None):
+            yield {"delta": "", "done": False, "reasoning_delta": chunk.reasoning}
         if chunk.content:
             collected += chunk.content
             yield {"delta": chunk.content, "done": False}

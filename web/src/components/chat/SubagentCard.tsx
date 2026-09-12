@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
+import { ToolStatusBadge, ToolStopButton } from "@/components/tools/ToolStatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +11,12 @@ import {
 } from "@/components/ui/collapsible";
 import { Progress } from "@/components/ui/progress";
 import { pretty } from "@/lib/pretty";
+import {
+  resolveToolStatus,
+  statusAccentBar,
+  statusShellClass,
+  type ToolRunStatus,
+} from "@/lib/toolStatus";
 import { cn } from "@/lib/utils";
 
 export type SubagentChildTool = {
@@ -32,35 +39,48 @@ export type SubagentItem = {
   streamText?: string;
   childTools?: SubagentChildTool[];
   activityId?: string;
+  callId?: string;
 };
 
 export type SubagentCardProps = {
   item: SubagentItem;
   onInspect?: (activityId: string) => void;
   onOpenChange?: (open: boolean) => void;
+  onStop?: (callId?: string) => void;
   className?: string;
 };
 
-export function SubagentCard({ item, onInspect, onOpenChange, className }: SubagentCardProps) {
+function childStatus(t: SubagentChildTool): ToolRunStatus {
+  if (t.success === false || t.status === "fail") return "failed";
+  if (t.success === true || t.status === "ok") return "done";
+  return "running";
+}
+
+export function SubagentCard({
+  item,
+  onInspect,
+  onOpenChange,
+  onStop,
+  className,
+}: SubagentCardProps) {
   const [open, setOpen] = useState(!!item.open);
 
-  const statusLabel = useMemo(() => {
-    if (item.error) return "失败";
-    if (item.status === "running") return "运行中";
-    if (item.status === "interrupted") return "已中断";
-    if (item.status === "idle" || item.output) return "完成";
-    return item.status || "subagent";
-  }, [item.error, item.status, item.output]);
+  const runStatus = useMemo(() => {
+    if (item.error) return "failed" as const;
+    if (item.status === "interrupted" || item.status === "stopped") return "stopped" as const;
+    if (item.status === "running") return "running" as const;
+    if (item.status === "idle" || item.output || item.status === "ok") return "done" as const;
+    return resolveToolStatus(item);
+  }, [item]);
 
   const summary = useMemo(() => {
-    return [item.label || item.name || "subagent", item.mode ? String(item.mode) : null, statusLabel]
+    return [item.label || item.name || "subagent", item.mode ? String(item.mode) : null]
       .filter(Boolean)
       .join(" · ");
-  }, [item.label, item.name, item.mode, statusLabel]);
+  }, [item.label, item.name, item.mode]);
 
   const nestedTools = item.childTools || [];
-  const tone =
-    item.status || (item.error ? "fail" : item.output ? "ok" : "running");
+  const pending = runStatus === "running";
 
   return (
     <Collapsible
@@ -71,96 +91,94 @@ export function SubagentCard({ item, onInspect, onOpenChange, className }: Subag
         onOpenChange?.(next);
       }}
       className={cn(
-        "subagent-card w-fit max-w-[min(100%,560px)] self-start animate-in fade-in duration-150",
-        open && "w-[min(100%,560px)] rounded-lg border border-violet-400/35 bg-violet-400/10",
+        "subagent-card relative w-full max-w-full self-stretch overflow-hidden rounded-lg border transition-colors",
+        statusShellClass(runStatus),
         className,
       )}
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full border border-violet-400/35 bg-violet-400/10 px-2.5 py-1 text-sm font-medium text-violet-300",
-            "hover:border-violet-400/55 hover:text-violet-100",
-            open && "flex w-full rounded-none border-0 bg-transparent text-violet-100",
-            tone === "running" && "border-violet-400/55",
-            tone === "fail" && "border-destructive/45 text-[#f0a0a0]",
-          )}
-        >
-          <ChevronRight
-            className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
-            aria-hidden
-          />
-          <Badge
-            variant="outline"
-            className="h-5 border-0 bg-violet-400/20 px-1.5 font-mono text-[10px] text-violet-300"
+      <div className={cn("absolute inset-y-0 left-0 w-0.5", statusAccentBar(runStatus))} aria-hidden />
+      <div className="flex items-center gap-1 pr-1.5">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "inline-flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5 text-left text-sm font-medium",
+              "hover:bg-foreground/[0.03]",
+              open && "border-b border-border/40",
+            )}
           >
-            SUB
-          </Badge>
-          <span className="min-w-0 truncate font-mono text-sm">{summary}</span>
-          {item.subagentId ? (
-            <span className="ml-auto shrink-0 font-mono text-[10px] text-violet-300/70">
-              {item.subagentId}
-            </span>
-          ) : null}
-        </button>
-      </CollapsibleTrigger>
+            <ChevronRight
+              className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
+              aria-hidden
+            />
+            <Badge
+              variant="outline"
+              className="h-5 border-border/60 bg-background/30 px-1.5 font-mono text-[10px] text-muted-foreground"
+            >
+              SUB
+            </Badge>
+            <span className="min-w-0 truncate font-mono text-sm text-foreground/90">{summary}</span>
+            <ToolStatusBadge status={runStatus} />
+          </button>
+        </CollapsibleTrigger>
+        {pending ? <ToolStopButton onStop={() => onStop?.(item.callId || item.subagentId)} /> : null}
+      </div>
 
-      <CollapsibleContent className="grid gap-2 px-2.5 pb-2.5 pt-0.5">
-        {item.status === "running" ? <Progress value={58} className="h-0.5" /> : null}
+      <CollapsibleContent className="grid gap-2 px-2.5 pb-2.5 pt-1.5">
+        {pending ? <Progress value={58} className="h-0.5 opacity-70" /> : null}
         {item.prompt ? (
           <div>
-            <div className="mb-1 text-[10px] uppercase tracking-wide text-violet-300/75">Input</div>
-            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-violet-400/20 bg-black/30 p-2 font-mono text-xs">
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Input</div>
+            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/50 bg-background/35 p-2 font-mono text-xs">
               {item.prompt}
             </pre>
           </div>
         ) : null}
         {item.streamText ? (
           <div>
-            <div className="mb-1 text-[10px] uppercase tracking-wide text-violet-300/75">
-              Output{item.status === "running" ? " (streaming)" : ""}
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+              Output{pending ? " (streaming)" : ""}
             </div>
-            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-violet-400/20 bg-black/30 p-2 font-mono text-xs">
+            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/50 bg-background/35 p-2 font-mono text-xs">
               {item.streamText}
             </pre>
           </div>
         ) : null}
         {nestedTools.length ? (
           <div>
-            <div className="mb-1 text-[10px] uppercase tracking-wide text-violet-300/75">
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
               Child tools
             </div>
             <div className="flex flex-col gap-1">
-              {nestedTools.map((t, i) => (
-                <div
-                  key={t.id || i}
-                  className={cn(
-                    "flex justify-between gap-2 rounded-md border border-violet-400/15 px-2 py-1 font-mono text-[10px] text-muted-foreground",
-                    t.status === "ok" && "border-teal/30",
-                    t.status === "fail" && "border-destructive/35",
-                  )}
-                >
-                  <span>{t.name}</span>
-                  <span>
-                    {t.success === false ? "fail" : t.success ? "ok" : "…"}
-                  </span>
-                </div>
-              ))}
+              {nestedTools.map((t, i) => {
+                const st = childStatus(t);
+                return (
+                  <div
+                    key={t.id || i}
+                    className={cn(
+                      "flex items-center justify-between gap-2 rounded-md border px-2 py-1 font-mono text-[10px]",
+                      statusShellClass(st),
+                    )}
+                  >
+                    <span className="min-w-0 truncate text-foreground/85">{t.name}</span>
+                    <ToolStatusBadge status={st} />
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : null}
         {item.error ? (
           <div>
-            <div className="mb-1 text-[10px] uppercase tracking-wide text-violet-300/75">Error</div>
-            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-violet-400/20 bg-black/30 p-2 font-mono text-xs">
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-rose-300/80">Error</div>
+            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-rose-500/25 bg-rose-500/[0.04] p-2 font-mono text-xs">
               {pretty(item.error)}
             </pre>
           </div>
         ) : item.output && item.output !== item.streamText ? (
           <div>
-            <div className="mb-1 text-[10px] uppercase tracking-wide text-violet-300/75">Final</div>
-            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-violet-400/20 bg-black/30 p-2 font-mono text-xs">
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Final</div>
+            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/50 bg-background/35 p-2 font-mono text-xs">
               {item.output}
             </pre>
           </div>
@@ -171,13 +189,13 @@ export function SubagentCard({ item, onInspect, onOpenChange, className }: Subag
               type="button"
               variant="outline"
               size="sm"
-              className="h-6 border-violet-400/30 px-2 text-[10.5px] text-violet-300"
+              className="h-6 px-2 text-[10.5px]"
               onClick={(e) => {
                 e.stopPropagation();
                 onInspect(item.activityId!);
               }}
             >
-              查看活动
+              Inspect
             </Button>
           </div>
         ) : null}

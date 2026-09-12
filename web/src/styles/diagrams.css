@@ -384,9 +384,9 @@
 .nlm-md .katex-display-host,
 .msg .body.md .katex-display,
 .msg .body.md .katex-display-host {
+  /* Base layout; visual chrome overridden/extended in markdown.css */
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0.35em 0;
   max-width: 100%;
   text-align: center;
 }
@@ -398,7 +398,7 @@
 
 .nlm-md .katex,
 .msg .body.md .katex {
-  font-size: 1.05em;
+  font-size: 1.08em;
 }
 
 .nlm-md .katex-fallback,
@@ -646,3 +646,60 @@ html.mermaid-fs-open {
   min-height: 0;
   height: 100%;
 }
+
+/* Interactive mindmap */
+.nlm-md .mindmap-block,
+.msg .body.md .mindmap-block {
+  margin: 0.55em 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: hsl(var(--foreground) / 0.04);
+  overflow: hidden;
+}
+
+.nlm-md .mindmap-block.is-collapsed .mindmap-viewport,
+.nlm-md .mindmap-block.is-collapsed pre.mindmap-source,
+.msg .body.md .mindmap-block.is-collapsed .mindmap-viewport,
+.msg .body.md .mindmap-block.is-collapsed pre.mindmap-source {
+  display: none !important;
+}
+
+.nlm-md .mindmap-viewport,
+.msg .body.md .mindmap-viewport {
+  min-height: 160px;
+  max-height: 420px;
+  overflow: auto;
+  background: hsl(var(--background));
+  padding: 8px;
+}
+
+.nlm-md .mindmap-stage,
+.msg .body.md .mindmap-stage {
+  min-width: 100%;
+}
+
+.nlm-md .mindmap-svg,
+.msg .body.md .mindmap-svg {
+  display: block;
+  max-width: none;
+}
+
+.nlm-md pre.mindmap-source,
+.msg .body.md pre.mindmap-source {
+  display: none;
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  white-space: pre;
+  line-height: 1.45;
+}
+
+.nlm-md pre.mindmap-source.is-visible,
+.msg .body.md pre.mindmap-source.is-visible {
+  display: block;
+}
+

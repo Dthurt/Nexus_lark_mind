@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     model_circuit_failure_threshold: int = 5
     model_circuit_reset_seconds: int = 60
 
+    # Agent tool-loop budgets (context compaction still enforces the window red line)
+    agent_max_rounds: int = 48
+    agent_max_rounds_workspace: int = 64
+    subagent_max_rounds: int = 32
+
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
     feishu_verification_token: str = ""

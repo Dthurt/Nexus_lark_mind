@@ -274,8 +274,16 @@ class OpenAICompatProvider(BaseModelProvider):
                                 raise ModelGatewayError(f"{self.name} stream error: {msg}")
                             choice = (data.get("choices") or [{}])[0]
                             delta = choice.get("delta") or {}
+                            reasoning = (
+                                delta.get("reasoning_content")
+                                or delta.get("reasoning")
+                                or ""
+                            )
+                            if not isinstance(reasoning, str):
+                                reasoning = str(reasoning or "")
                             yield ModelChunk(
                                 content=delta.get("content") or "",
+                                reasoning=reasoning,
                                 finish_reason=choice.get("finish_reason"),
                                 tool_calls=delta.get("tool_calls"),
                                 usage=data.get("usage"),

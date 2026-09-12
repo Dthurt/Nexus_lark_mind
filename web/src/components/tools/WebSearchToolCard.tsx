@@ -34,6 +34,7 @@ export function WebSearchToolCard({
   nested = false,
   onInspect,
   onOpenChange,
+  onStop,
 }: GenericToolCardProps) {
   const searchPayload = useMemo(() => parseSearchPayload(item.result), [item.result]);
   const [open, setOpen] = useState(!!item.open);
@@ -45,6 +46,7 @@ export function WebSearchToolCard({
         nested={nested}
         onInspect={onInspect}
         onOpenChange={onOpenChange}
+        onStop={onStop}
       />
     );
   }
@@ -60,8 +62,8 @@ export function WebSearchToolCard({
         onOpenChange?.(next);
       }}
       className={cn(
-        "tool-card ok rounded-lg border border-border/80 bg-card/40 text-sm",
-        nested && "ml-2 border-dashed",
+        "tool-card ok w-full max-w-full self-stretch rounded-lg border border-border/80 bg-card/40 text-sm",
+        nested && "ml-0 border-dashed",
       )}
     >
       <CollapsibleTrigger asChild>

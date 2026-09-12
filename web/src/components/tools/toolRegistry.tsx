@@ -37,10 +37,17 @@ export function ToolCallView({
   nested,
   onInspect,
   onOpenChange,
+  onStop,
 }: ToolViewProps) {
   const View = getToolView(item.name, item.openaiName);
   return (
-    <View item={item} nested={nested} onInspect={onInspect} onOpenChange={onOpenChange} />
+    <View
+      item={item}
+      nested={nested}
+      onInspect={onInspect}
+      onOpenChange={onOpenChange}
+      onStop={onStop}
+    />
   );
 }
 

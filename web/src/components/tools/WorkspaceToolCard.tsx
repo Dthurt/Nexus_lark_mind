@@ -3,6 +3,8 @@ import { ChevronRight } from "lucide-react";
 
 import { FileDiffBlock } from "@/components/tools/FileDiffBlock";
 import { GenericToolCard, type GenericToolCardProps } from "@/components/tools/GenericToolCard";
+import { ToolStatusBadge, ToolStopButton } from "@/components/tools/ToolStatusBadge";
+import { ApprovalDecisionBadge } from "@/components/chat/ApprovalDock";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +14,7 @@ import {
 } from "@/components/ui/collapsible";
 import { lineDiff, writeFileAsDiff } from "@/lib/lineDiff";
 import { pretty } from "@/lib/pretty";
+import { resolveToolStatus, statusAccentBar, statusShellClass } from "@/lib/toolStatus";
 import { cn } from "@/lib/utils";
 
 function parseResult(raw: unknown) {
@@ -54,13 +57,24 @@ export function WorkspaceToolCard({
   nested = false,
   onInspect,
   onOpenChange,
+  onStop,
 }: GenericToolCardProps) {
   const result = useMemo(() => parseResult(item.result), [item.result]);
   const toolKey = resolveToolKey(item.name);
   const [open, setOpen] = useState(!!item.open);
 
   const badge = BADGE_MAP[toolKey] || item.badge || "TOOL";
-  const args = (item.arguments || {}) as Record<string, any>;
+  const args = useMemo(() => {
+    let raw: any = item.arguments;
+    if (typeof raw === "string") {
+      try {
+        raw = JSON.parse(raw);
+      } catch {
+        raw = {};
+      }
+    }
+    return (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  }, [item.arguments]);
 
   const fileChange = useMemo(() => {
     const path = args.path || result?.path || "";
@@ -77,7 +91,7 @@ export function WorkspaceToolCard({
 
   const summary = useMemo(() => {
     if (item.error) return String(item.error).slice(0, 120);
-    if (!result && item.status === "running") return "运行中…";
+    if (!result && (item.status === "running" || !item.status)) return "Running…";
     switch (toolKey) {
       case "grep":
         return `${args.pattern || ""} · ${result?.match_count ?? (result?.matches || []).length} 处`;
@@ -135,11 +149,13 @@ export function WorkspaceToolCard({
         nested={nested}
         onInspect={onInspect}
         onOpenChange={onOpenChange}
+        onStop={onStop}
       />
     );
   }
 
-  const status = item.status || (item.error ? "fail" : "ok");
+  const runStatus = resolveToolStatus(item);
+  const pending = runStatus === "running";
 
   return (
     <Collapsible
@@ -150,54 +166,57 @@ export function WorkspaceToolCard({
         onOpenChange?.(next);
       }}
       className={cn(
-        "tool-card w-fit max-w-[min(100%,560px)] self-start rounded-lg border border-border/80 bg-card/40 text-sm",
-        nested && "ml-0 w-full max-w-none border-dashed",
-        fileChange && "w-full max-w-[min(100%,720px)]",
-        status === "ok" && "data-[state=open]:border-teal/40 data-[state=open]:bg-teal/5",
-        status === "fail" && "data-[state=open]:border-destructive/40 data-[state=open]:bg-destructive/5",
+        "tool-card relative w-full max-w-full self-stretch overflow-hidden rounded-lg border text-sm",
+        statusShellClass(runStatus),
+        nested && "ml-0",
       )}
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "flex w-full items-center gap-1.5 px-2 py-1.5 text-left hover:bg-muted/40",
-            open && !nested && "border-b border-border/60",
-          )}
-        >
-          <ChevronRight
-            className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
-            aria-hidden
-          />
-          <Badge
-            variant="outline"
+      <div className={cn("absolute inset-y-0 left-0 w-0.5", statusAccentBar(runStatus))} aria-hidden />
+      <div className="flex items-center gap-1 pr-1.5">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
             className={cn(
-              "h-5 shrink-0 px-1.5 font-mono text-[10px] font-medium text-[hsl(var(--tool))]",
-              (toolKey === "write_file" || toolKey === "edit_file") &&
-                "border-emerald-400/35 bg-emerald-600/15 text-[#6ee7b7]",
+              "flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-2.5 text-left hover:bg-foreground/[0.03]",
+              open && !nested && "border-b border-border/40",
             )}
           >
-            {badge}
-          </Badge>
-          <span className="min-w-0 flex-1 truncate font-mono text-xs">{item.name}</span>
-          <span className="inline-flex min-w-0 shrink-0 items-center gap-2 font-mono text-[10px] text-muted-foreground">
-            <span className="min-w-0 truncate">{summary}</span>
+            <ChevronRight
+              className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
+              aria-hidden
+            />
+            <Badge
+              variant="outline"
+              className="h-5 shrink-0 border-border/60 bg-background/30 px-1.5 font-mono text-[10px] font-medium text-muted-foreground"
+            >
+              {badge}
+            </Badge>
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/90">{item.name}</span>
+            <ToolStatusBadge status={runStatus} />
+            <ApprovalDecisionBadge decision={(item as any).approvalDecision} />
             {mutationStats ? (
-              <span className="inline-flex shrink-0 gap-1.5 tabular-nums" aria-label="行变更统计">
+              <span
+                className="inline-flex shrink-0 gap-1.5 font-mono text-[11px] tabular-nums"
+                aria-label="line changes"
+              >
                 {mutationStats.adds ? (
-                  <span className="font-semibold text-[#3fb950]">+{mutationStats.adds}</span>
+                  <span className="font-semibold text-emerald-400">+{mutationStats.adds}</span>
                 ) : null}
                 {mutationStats.dels ? (
-                  <span className="font-semibold text-[#f85149]">−{mutationStats.dels}</span>
+                  <span className="font-semibold text-rose-400">−{mutationStats.dels}</span>
                 ) : null}
                 {!mutationStats.adds && !mutationStats.dels ? (
-                  <span className="text-muted-foreground">无变更</span>
+                  <span className="text-muted-foreground">±0</span>
                 ) : null}
               </span>
             ) : null}
-          </span>
-        </button>
-      </CollapsibleTrigger>
+            <span className="inline-flex min-w-0 shrink-0 items-center gap-2 font-mono text-[10px] text-muted-foreground">
+              <span className="min-w-0 truncate">{summary}</span>
+            </span>
+          </button>
+        </CollapsibleTrigger>
+        {pending ? <ToolStopButton onStop={() => onStop?.(item.callId)} /> : null}
+      </div>
       <CollapsibleContent className="space-y-2 px-2.5 py-2">
         {toolKey === "run_shell" && args.command ? (
           <div className="space-y-1">

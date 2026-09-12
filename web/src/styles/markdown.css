@@ -1,0 +1,349 @@
+/**
+ * Chat markdown typography — hierarchy, links, emphasis, math, tables.
+ * Diagram chrome lives in diagrams.css; this file owns prose rhythm.
+ */
+
+@layer components {
+  .nlm-md.md,
+  .nlm-md:not(.plain) {
+    color: hsl(var(--foreground) / 0.92);
+    font-size: 13.5px;
+    line-height: 1.7;
+    letter-spacing: 0.005em;
+    word-break: break-word;
+  }
+
+  .nlm-md.md > :first-child,
+  .nlm-md:not(.plain) > :first-child {
+    margin-top: 0;
+  }
+
+  .nlm-md.md > :last-child,
+  .nlm-md:not(.plain) > :last-child {
+    margin-bottom: 0;
+  }
+
+  /* —— Paragraphs —— */
+  .nlm-md p {
+    margin: 0.55em 0;
+  }
+
+  .nlm-md p + p {
+    margin-top: 0.7em;
+  }
+
+  /* —— Headings: clear ladder, not shouty —— */
+  .nlm-md :is(h1, h2, h3, h4, h5, h6) {
+    color: hsl(var(--foreground));
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    scroll-margin-top: 0.5rem;
+  }
+
+  .nlm-md h1 {
+    margin: 1.15em 0 0.45em;
+    padding-bottom: 0.28em;
+    font-size: 1.42em;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    border-bottom: 1px solid hsl(var(--border) / 0.85);
+  }
+
+  .nlm-md h2 {
+    margin: 1.05em 0 0.4em;
+    padding-left: 0.55em;
+    font-size: 1.22em;
+    font-weight: 600;
+    border-left: 2.5px solid hsl(var(--primary) / 0.75);
+  }
+
+  .nlm-md h3 {
+    margin: 0.95em 0 0.35em;
+    font-size: 1.08em;
+    font-weight: 600;
+    color: hsl(var(--foreground) / 0.95);
+  }
+
+  .nlm-md h4 {
+    margin: 0.85em 0 0.3em;
+    font-size: 1em;
+    font-weight: 600;
+    color: hsl(var(--teal));
+    letter-spacing: 0.01em;
+  }
+
+  .nlm-md h5,
+  .nlm-md h6 {
+    margin: 0.75em 0 0.25em;
+    font-size: 0.92em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .nlm-md :is(h1, h2, h3, h4, h5, h6) + p {
+    margin-top: 0.35em;
+  }
+
+  /* —— Emphasis —— */
+  .nlm-md strong,
+  .nlm-md b {
+    color: hsl(var(--foreground));
+    font-weight: 700;
+  }
+
+  .nlm-md em,
+  .nlm-md i {
+    font-style: italic;
+    color: hsl(var(--foreground) / 0.88);
+  }
+
+  .nlm-md del,
+  .nlm-md s {
+    color: hsl(var(--muted-foreground));
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+
+  .nlm-md mark {
+    background: hsl(var(--tool) / 0.28);
+    color: inherit;
+    border-radius: 0.2em;
+    padding: 0.05em 0.2em;
+  }
+
+  /* —— Links —— */
+  .nlm-md a {
+    color: hsl(var(--primary));
+    font-weight: 500;
+    text-decoration: underline;
+    text-decoration-color: hsl(var(--primary) / 0.35);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+    transition:
+      color 0.12s ease,
+      text-decoration-color 0.12s ease;
+    cursor: pointer;
+  }
+
+  .nlm-md a:hover {
+    color: hsl(var(--teal));
+    text-decoration-color: hsl(var(--teal) / 0.7);
+  }
+
+  .nlm-md a:focus-visible {
+    outline: 2px solid hsl(var(--ring) / 0.55);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* —— Lists —— */
+  .nlm-md ul,
+  .nlm-md ol {
+    margin: 0.5em 0 0.65em;
+    padding-left: 1.35em;
+  }
+
+  .nlm-md li {
+    margin: 0.22em 0;
+    padding-left: 0.15em;
+  }
+
+  .nlm-md li::marker {
+    color: hsl(var(--primary) / 0.75);
+  }
+
+  .nlm-md ul {
+    list-style-type: disc;
+  }
+
+  .nlm-md ul ul {
+    list-style-type: circle;
+    margin: 0.2em 0;
+  }
+
+  .nlm-md ol {
+    list-style-type: decimal;
+  }
+
+  .nlm-md li > p {
+    margin: 0.2em 0;
+  }
+
+  .nlm-md li > ul,
+  .nlm-md li > ol {
+    margin: 0.2em 0 0.35em;
+  }
+
+  /* —— Blockquote —— */
+  .nlm-md blockquote {
+    margin: 0.75em 0;
+    padding: 0.45em 0.85em 0.45em 0.95em;
+    border-left: 3px solid hsl(var(--teal) / 0.65);
+    background: hsl(var(--muted) / 0.35);
+    border-radius: 0 0.45rem 0.45rem 0;
+    color: hsl(var(--foreground) / 0.82);
+  }
+
+  .nlm-md blockquote p {
+    margin: 0.3em 0;
+  }
+
+  /* —— Inline & block code —— */
+  .nlm-md :not(pre) > code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    font-weight: 500;
+    padding: 0.12em 0.38em;
+    border-radius: 0.3rem;
+    background: hsl(var(--muted) / 0.85);
+    border: 1px solid hsl(var(--border) / 0.7);
+    color: hsl(var(--teal));
+  }
+
+  .nlm-md pre:not(.mermaid-source):not(.echarts-source):not(.drawio-source):not(.mindmap-source) {
+    margin: 0.65em 0;
+  }
+
+  /* —— HR —— */
+  .nlm-md hr {
+    margin: 1.1em 0;
+    border: none;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--border)) 12%,
+      hsl(var(--border)) 88%,
+      transparent
+    );
+  }
+
+  /* —— Tables —— */
+  .nlm-md table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: max-content;
+    min-width: 100%;
+    max-width: 100%;
+    margin: 0.75em 0;
+    font-size: 12.5px;
+    line-height: 1.45;
+    display: block;
+    overflow-x: auto;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.55rem;
+    background: hsl(var(--card) / 0.35);
+  }
+
+  .nlm-md thead {
+    background: hsl(var(--muted) / 0.65);
+  }
+
+  .nlm-md th,
+  .nlm-md td {
+    border-bottom: 1px solid hsl(var(--border) / 0.9);
+    border-right: 1px solid hsl(var(--border) / 0.55);
+    padding: 0.48em 0.75em;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .nlm-md th:last-child,
+  .nlm-md td:last-child {
+    border-right: none;
+  }
+
+  .nlm-md tr:last-child td {
+    border-bottom: none;
+  }
+
+  .nlm-md th {
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    white-space: nowrap;
+  }
+
+  .nlm-md tbody tr:nth-child(even) td {
+    background: hsl(var(--muted) / 0.22);
+  }
+
+  .nlm-md tbody tr:hover td {
+    background: hsl(var(--primary) / 0.06);
+  }
+
+  /* —— Images —— */
+  .nlm-md img {
+    max-width: 100%;
+    height: auto;
+    margin: 0.65em 0;
+    border-radius: 0.5rem;
+    border: 1px solid hsl(var(--border) / 0.7);
+  }
+
+  /* —— Math —— */
+  .nlm-md .katex-display,
+  .nlm-md .katex-display-host {
+    margin: 0.85em 0;
+    padding: 0.65em 0.85em;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+    text-align: center;
+    border-radius: 0.55rem;
+    border: 1px solid hsl(var(--border) / 0.75);
+    background: hsl(var(--muted) / 0.28);
+  }
+
+  .nlm-md .katex-inline-host {
+    display: inline;
+    padding: 0 0.08em;
+  }
+
+  .nlm-md .katex {
+    font-size: 1.08em;
+    color: hsl(var(--foreground) / 0.95);
+  }
+
+  .nlm-md .katex-fallback {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: hsl(var(--muted-foreground));
+    white-space: pre-wrap;
+  }
+
+  /* —— Diagram / chart breathing room —— */
+  .nlm-md .mermaid-block,
+  .nlm-md .echarts-block,
+  .nlm-md .drawio-block,
+  .nlm-md .mindmap-block,
+  .nlm-md .code-block {
+    margin: 0.85em 0;
+  }
+
+  .nlm-md .mermaid-block,
+  .nlm-md .echarts-block,
+  .nlm-md .drawio-block,
+  .nlm-md .mindmap-block {
+    box-shadow: 0 1px 0 hsl(var(--foreground) / 0.03);
+  }
+
+  /* —— Streaming caret —— */
+  .nlm-md .streaming-caret {
+    display: inline-block;
+    width: 0.55ch;
+    height: 1.05em;
+    margin-left: 1px;
+    border-right: 2px solid hsl(var(--primary));
+    animation: nlm-caret-blink 1s step-end infinite;
+    vertical-align: text-bottom;
+  }
+}
+
+@keyframes nlm-caret-blink {
+  50% {
+    border-color: transparent;
+  }
+}

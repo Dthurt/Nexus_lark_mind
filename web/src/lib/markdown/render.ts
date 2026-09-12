@@ -11,8 +11,10 @@ import {
 import { applyMathPlaceholders, protectMath } from "./math";
 import { enhanceChatImages } from "./chatImages";
 import { diagramInk, diagramPanelBg, mermaidThemeName } from "./diagramTheme";
+import { isMindmapLang, mindmapMarkdownHtml, renderMindmapIn } from "./mindmap";
 
 export { enhanceChatImages } from "./chatImages";
+export { renderMindmapIn };
 
 function escapeHtml(s: string) {
   return String(s)
@@ -53,6 +55,9 @@ const baseCode =
   if (isDrawioLang(langKey) || (langKey === "xml" && looksLikeDrawioXml(text))) {
     return drawioMarkdownHtml(text);
   }
+  if (isMindmapLang(langKey)) {
+    return mindmapMarkdownHtml(text);
+  }
   if (baseCode) {
     if (token && typeof token === "object" && "text" in token) {
       return baseCode(token);
@@ -88,6 +93,9 @@ function sanitizeHtml(html: string) {
       "data-echarts-action",
       "data-drawio-host",
       "data-drawio-action",
+      "data-mindmap-host",
+      "data-mindmap-action",
+      "data-node-id",
       "data-code-action",
       "data-mode",
       "data-lang",

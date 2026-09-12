@@ -12,6 +12,7 @@ from typing import Any, List, Optional, Sequence
 from src.common.schemas import ChatMessage, ChatRole, ModelRequest
 from src.core_kernel.context_compact import (
     CHECKPOINT_PREAMBLE,
+    COLLAPSE_TRIGGER_RATIO,
     SUMMARY_CLOSE,
     SUMMARY_OPEN,
     TARGET_RATIO,
@@ -174,9 +175,12 @@ async def compact_messages_async(
     window = int(context_window or resolve_context_window(model_name))
     usable = max(4_000, int(window * (1.0 - REPLY_RESERVE_RATIO)))
     target = max(3_000, int(usable * TARGET_RATIO))
+    collapse_at = max(3_000, int(usable * COLLAPSE_TRIGGER_RATIO))
 
     layer1 = _layer1_soft_trim(messages)
-    if sum(_msg_tokens(m) for m in layer1) <= usable:
+    total = sum(_msg_tokens(m) for m in layer1)
+    # Compress once past soft trigger — don't wait until the hard usable ceiling.
+    if total <= collapse_at:
         return layer1, info
 
     if use_llm and gateway is not None:
@@ -205,12 +209,12 @@ async def compact_messages_async(
             )
             info = {"compacted_via": via, "compacted_count": len(middle)}
             layer2 = [*system, *rest[:keep_head], stub, *rest[len(rest) - keep_tail :]]
-            if sum(_msg_tokens(m) for m in layer2) <= usable:
+            if sum(_msg_tokens(m) for m in layer2) <= target:
                 return layer2, info
             layer2b = compact_messages(layer2, model_name=model_name, context_window=int(window * 0.7))
             if sum(_msg_tokens(m) for m in layer2b) <= usable:
                 return layer2b, info
-            return _layer3_hard_drop(layer2b, usable), info
+            return _layer3_hard_drop(layer2b, target), info
 
     out = compact_messages(messages, model_name=model_name, context_window=context_window)
     if len(out) < len(messages):

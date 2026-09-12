@@ -1,7 +1,10 @@
 import { memo, useEffect, useMemo, useState } from "react";
+import { Check, Copy } from "lucide-react";
+import { toast } from "sonner";
 
 import { ActivityHint } from "@/components/chat/ActivityHint";
 import { MarkdownBody } from "@/components/chat/MarkdownBody";
+import { ThinkingFold } from "@/components/chat/ThinkingFold";
 import { Button } from "@/components/ui/button";
 import {
   cacheHitRate,
@@ -18,10 +21,13 @@ import { cn } from "@/lib/utils";
 export type MessageBubbleItem = {
   role: string;
   content?: string;
+  reasoning?: string;
   rich?: boolean;
   streaming?: boolean;
   live?: boolean;
   usage?: any;
+  modelName?: string;
+  modelProvider?: string;
   activity?: {
     phase?: string;
     label?: string;
@@ -48,32 +54,43 @@ export const MessageBubble = memo(function MessageBubble({
 }: MessageBubbleProps) {
   const [openUsage, setOpenUsage] = useState(false);
   const [content, setContent] = useState(item.content || "");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setContent(item.content || "");
   }, [item.content]);
 
+  const resolvedModel = item.modelName || modelName || "";
+  const resolvedProvider = item.modelProvider || modelProvider || "";
+
   const showCaret = useMemo(() => {
     if (!item.streaming) return false;
     const phase = item.activity?.phase;
-    return !phase || phase === "stream";
+    // Keep caret while model/stream so text paints live next to the spinner.
+    return !phase || phase === "stream" || phase === "model";
   }, [item.streaming, item.activity?.phase]);
 
   const usageSummary = useMemo(() => {
     if (!item.usage) return "";
-    return formatUsageLine(item.usage, { modelName, providerId: modelProvider });
-  }, [item.usage, modelName, modelProvider]);
+    return formatUsageLine(item.usage, {
+      modelName: resolvedModel,
+      providerId: resolvedProvider,
+    });
+  }, [item.usage, resolvedModel, resolvedProvider]);
 
   const usageDetail = useMemo(() => {
     const u = item.usage;
     if (!u) return null;
-    const cost = estimateCostCny(u, { modelName, providerId: modelProvider });
+    const cost = estimateCostCny(u, { modelName: resolvedModel, providerId: resolvedProvider });
     const cache = formatCacheHit(u);
-    const rate = resolveModelRate(modelName, modelProvider);
+    const rate = resolveModelRate(resolvedModel, resolvedProvider);
     return {
-      prompt: Number(u.prompt_tokens || 0),
-      completion: Number(u.completion_tokens || 0),
-      total: Number(u.total_tokens || (u.prompt_tokens || 0) + (u.completion_tokens || 0)),
+      model: resolvedModel || "—",
+      prompt: formatTokenCount(Number(u.prompt_tokens || 0)),
+      completion: formatTokenCount(Number(u.completion_tokens || 0)),
+      total: formatTokenCount(
+        Number(u.total_tokens || (u.prompt_tokens || 0) + (u.completion_tokens || 0)),
+      ),
       duration: formatDurationMs(u.duration_ms) || "—",
       cacheText:
         cache.cached > 0
@@ -83,7 +100,7 @@ export const MessageBubble = memo(function MessageBubble({
       rateText: `输入 ¥${rate.input}/M · 输出 ¥${rate.output}/M · 缓存 ¥${rate.cache}/M`,
       estimated: !!u.estimated,
     };
-  }, [item.usage, modelName, modelProvider]);
+  }, [item.usage, resolvedModel, resolvedProvider]);
 
   function onMermaidFixed({ from, to }: { from: string; to: string }) {
     if (!from || !to || from === to) return;
@@ -93,7 +110,25 @@ export const MessageBubble = memo(function MessageBubble({
     setContent(next);
   }
 
+  async function copyFullText() {
+    const text = (content || "").trim();
+    if (!text) {
+      toast.error("没有可复制的内容");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toast.success("已复制全文");
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      toast.error("复制失败");
+    }
+  }
+
   const isUser = item.role === "user";
+  const showFooter =
+    !isUser && !item.streaming && !item.live && !!(content || "").trim();
 
   return (
     <div
@@ -106,6 +141,13 @@ export const MessageBubble = memo(function MessageBubble({
         className,
       )}
     >
+      {!isUser && (item.reasoning || (item.streaming && item.activity?.phase === "model")) ? (
+        <ThinkingFold
+          text={item.reasoning || ""}
+          streaming={!!item.streaming && !(content || "").trim()}
+        />
+      ) : null}
+
       {content ? (
         <MarkdownBody
           className={cn(
@@ -113,10 +155,10 @@ export const MessageBubble = memo(function MessageBubble({
             isUser && "max-h-[10.5em] overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
           )}
           content={content}
-          streaming={showCaret}
+          streaming={!!item.streaming && showCaret}
           plain={!item.rich}
-          modelProvider={modelProvider}
-          modelName={modelName}
+          modelProvider={resolvedProvider}
+          modelName={resolvedModel}
           onMermaidFixed={onMermaidFixed}
         />
       ) : null}
@@ -144,7 +186,65 @@ export const MessageBubble = memo(function MessageBubble({
         </Button>
       ) : null}
 
-      {item.usage ? (
+      {showFooter ? (
+        <div className="mt-1.5 flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            {item.usage ? (
+              <button
+                type="button"
+                className="token-badge max-w-full cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-[11px] leading-snug text-muted-foreground hover:text-foreground"
+                title="点击查看明细"
+                onClick={() => setOpenUsage((v) => !v)}
+              >
+                {usageSummary}
+              </button>
+            ) : resolvedModel ? (
+              <span className="font-mono text-[11px] text-muted-foreground">{resolvedModel}</span>
+            ) : null}
+
+            {openUsage && usageDetail ? (
+              <div className="mt-1.5 max-w-[300px] rounded-md border border-border bg-background/50 px-2 py-1.5">
+                {(
+                  [
+                    ["模型", usageDetail.model],
+                    ["输入", usageDetail.prompt],
+                    ["输出", usageDetail.completion],
+                    ["合计", usageDetail.total],
+                    ["耗时", usageDetail.duration],
+                    ["缓存命中", usageDetail.cacheText],
+                    ["估算费用", usageDetail.costText],
+                  ] as const
+                ).map(([label, val]) => (
+                  <div key={label} className="flex justify-between gap-3 py-0.5 text-[11px]">
+                    <span className="text-muted-foreground">{label}</span>
+                    <strong className="max-w-[180px] truncate font-mono font-medium" title={String(val)}>
+                      {val}
+                    </strong>
+                  </div>
+                ))}
+                <p className="mt-1 text-[10px] leading-snug text-muted-foreground">{usageDetail.rateText}</p>
+                {usageDetail.estimated ? (
+                  <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                    含估算 token（接口未返回 usage）
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+            title="复制全文"
+            aria-label="复制全文"
+            onClick={() => void copyFullText()}
+          >
+            {copied ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />}
+          </Button>
+        </div>
+      ) : item.usage ? (
         <button
           type="button"
           className="token-badge mt-1 max-w-full cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-[11px] leading-snug text-muted-foreground hover:text-foreground"
@@ -153,32 +253,6 @@ export const MessageBubble = memo(function MessageBubble({
         >
           {usageSummary}
         </button>
-      ) : null}
-
-      {openUsage && usageDetail ? (
-        <div className="mt-1.5 max-w-[280px] rounded-md border border-border bg-background/50 px-2 py-1.5">
-          {(
-            [
-              ["输入", usageDetail.prompt],
-              ["输出", usageDetail.completion],
-              ["合计", usageDetail.total],
-              ["耗时", usageDetail.duration],
-              ["缓存命中", usageDetail.cacheText],
-              ["估算费用", usageDetail.costText],
-            ] as const
-          ).map(([label, val]) => (
-            <div key={label} className="flex justify-between gap-3 py-0.5 text-[11px]">
-              <span className="text-muted-foreground">{label}</span>
-              <strong className="font-mono font-medium">{val}</strong>
-            </div>
-          ))}
-          <p className="mt-1 text-[10px] leading-snug text-muted-foreground">{usageDetail.rateText}</p>
-          {usageDetail.estimated ? (
-            <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-              含估算 token（接口未返回 usage）
-            </p>
-          ) : null}
-        </div>
       ) : null}
     </div>
   );

@@ -110,6 +110,20 @@ export function cancelSession(sessionId: string): Promise<unknown> {
   return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`);
 }
 
+export function postSessionFile(
+  sessionId: string,
+  body: {
+    name: string;
+    path?: string;
+    content?: string;
+    mime?: string;
+    url?: string;
+    size?: number;
+  },
+): Promise<{ session_id?: string; file?: any }> {
+  return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/files`, body);
+}
+
 export function getPluginCalls(
   sessionId: string,
   limit = 40,

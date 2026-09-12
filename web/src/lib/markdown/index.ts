@@ -14,6 +14,7 @@ export {
   extractMermaidSource,
   renderDrawioIn,
   enhanceChatImages,
+  renderMindmapIn,
 } from "./render";
 
 export {
@@ -32,5 +33,7 @@ export {
   normalizeDrawioXml,
   drawioMarkdownHtml,
 } from "./drawio";
+
+export { isMindmapLang, mindmapMarkdownHtml } from "./mindmap";
 
 export { openMermaidFullscreen, closeMermaidFullscreen } from "./mermaidFullscreen";

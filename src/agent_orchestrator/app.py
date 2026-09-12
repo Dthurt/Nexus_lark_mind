@@ -105,6 +105,40 @@ def create_orchestrator_app() -> FastAPI:
             data={"session_id": session_id, "task_id": task_id, "cancel_requested": bool(task_id)},
         )
 
+    @app.post("/rpc/sessions/{session_id}/files")
+    async def append_session_file(session_id: str, request: Request):
+        body = await request.json()
+        sessions: SessionContext = state["sessions"]
+        from src.common.schemas import ChatMessage, ChatRole
+
+        name = str(body.get("name") or body.get("filename") or "file").strip() or "file"
+        content = body.get("content")
+        content_s = "" if content is None else str(content)
+        path = str(body.get("path") or "").strip()
+        mime = str(body.get("mime") or body.get("mime_type") or "text/plain").strip()
+        url = str(body.get("url") or "").strip()
+        size = body.get("size")
+        preview = content_s[:400] if content_s else f"[file] {name}"
+        msg = ChatMessage(
+            role=ChatRole.ASSISTANT,
+            content=preview,
+            metadata={
+                "kind": "file",
+                "file": {
+                    "name": name,
+                    "path": path,
+                    "content": content_s,
+                    "mime": mime,
+                    "url": url,
+                    "size": size,
+                },
+            },
+        )
+        await sessions.ensure(session_id, user_id="web-user", channel="web")
+        await sessions.append(session_id, msg)
+        file_meta = (msg.metadata or {}).get("file")
+        return RpcEnvelope(ok=True, data={"session_id": session_id, "file": file_meta})
+
     @app.get("/rpc/sessions/{session_id}")
     async def get_session(session_id: str):
         sessions: SessionContext = state["sessions"]

@@ -119,8 +119,10 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "ask_user",
         "description": (
-            "Ask the human a concise question via an interactive form when you need confirmation, "
-            "a choice, or missing information. Prefer inspection for discoverable facts. "
+            "Ask the human a concise question via an interactive form ONLY when you hit a true "
+            "blocker: missing credentials, irreversible choice, or product ambiguity that tools "
+            "cannot resolve. Prefer inspection and then act — do NOT use this to confirm "
+            "\"should I execute?\" after reading files, or to restate a plan for permission. "
             "If you recommend an option, put it first and append '(Recommended)' to that label. "
             "Supports multiple questions, single/multi select, and optional custom text. "
             "Do NOT use this to present a finished implementation plan — use exit_plan_mode instead."

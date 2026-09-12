@@ -9,6 +9,7 @@ import {
   renderMarkdownWithMath,
   renderMathIn,
   renderMermaidIn,
+  renderMindmapIn,
 } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 import {
@@ -65,7 +66,7 @@ export function MarkdownBody({
 
     let cancelled = false;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const wait = streaming ? 280 : 0;
+    const wait = streaming ? 60 : 0;
 
     const paint = async () => {
       const gen = ++genRef.current;
@@ -129,6 +130,7 @@ export function MarkdownBody({
             toast.success("ECharts 已自动修复语法");
           },
         }),
+        renderMindmapIn(root),
       ]);
       if (!streaming) {
         await renderDrawioIn(root, {
@@ -165,7 +167,10 @@ export function MarkdownBody({
   return (
     <div
       ref={rootRef}
-      className={cn("nlm-md md body text-[13px] leading-relaxed break-words [&_*:first-child]:mt-0 [&_*:last-child]:mb-0", className)}
+      className={cn(
+        "nlm-md md body text-[13.5px] leading-[1.7] break-words [&_*:first-child]:mt-0 [&_*:last-child]:mb-0",
+        className,
+      )}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

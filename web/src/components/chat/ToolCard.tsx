@@ -7,13 +7,14 @@ import {
 export type ToolCardProps = ToolViewProps;
 
 /** Resolves a registered tool view via getToolView / toolRegistry. */
-export function ToolCard({ item, nested, onInspect, onOpenChange }: ToolCardProps) {
+export function ToolCard({ item, nested, onInspect, onOpenChange, onStop }: ToolCardProps) {
   return (
     <ToolCallView
       item={item}
       nested={nested}
       onInspect={onInspect}
       onOpenChange={onOpenChange}
+      onStop={onStop}
     />
   );
 }

@@ -412,7 +412,7 @@ export function Composer({
                   <label className="text-[11px] text-muted-foreground">Provider</label>
                   <Select
                     value={providerId ? providerId : "__empty"}
-                    disabled={providersDisabled}
+                    disabled={providersDisabled || busy}
                     onValueChange={(v) => {
                       const next = v === "__empty" ? "" : v;
                       onProviderIdChange?.(next);
@@ -438,7 +438,7 @@ export function Composer({
                   <label className="text-[11px] text-muted-foreground">Model</label>
                   <Select
                     value={modelName ? modelName : "__empty"}
-                    disabled={modelsDisabled}
+                    disabled={modelsDisabled || busy}
                     onValueChange={(v) => {
                       const next = v === "__empty" ? "" : v;
                       onModelNameChange?.(next);
@@ -497,7 +497,6 @@ export function Composer({
             <Textarea
               ref={textareaRef}
               value={value}
-              disabled={busy}
               placeholder="输入消息 · Enter 发送 · Shift+Enter 换行"
               onChange={(e) => {
                 onChange?.(e.target.value);

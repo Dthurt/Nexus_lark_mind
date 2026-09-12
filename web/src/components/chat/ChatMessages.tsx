@@ -11,12 +11,11 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 
 import { AskUserForm } from "@/components/chat/AskUserForm";
+import { ChatFileCard } from "@/components/chat/ChatFileCard";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { PlanReviewCard } from "@/components/chat/PlanReviewCard";
 import { SubagentCard } from "@/components/chat/SubagentCard";
 import { TodoListCard } from "@/components/chat/TodoListCard";
-import { ToolApprovalCard } from "@/components/chat/ToolApprovalCard";
-import { ToolCallGroup } from "@/components/chat/ToolCallGroup";
 import { ToolCard } from "@/components/chat/ToolCard";
 import "@/components/tools/registerBuiltinTools";
 import { WorkspacePicker } from "@/components/workspace/WorkspacePicker";
@@ -35,6 +34,7 @@ export type ChatMessagesProps = {
   modelProvider?: string;
   modelName?: string;
   onInspectTool?: (activityId: string) => void;
+  onStopTool?: (callId?: string) => void;
   onPickWorkspace?: (meta: Workspace) => void;
   onResolveApproval?: (ev: {
     item: TimelineItem;
@@ -60,7 +60,7 @@ export type ChatMessagesHandle = {
 };
 
 type Block =
-  | { kind: "msg" | "approval" | "ask" | "todos" | "plan_review" | "subagent"; id: string; item: TimelineItem }
+  | { kind: "msg" | "approval" | "ask" | "todos" | "plan_review" | "subagent" | "file"; id: string; item: TimelineItem }
   | { kind: "tools"; id: string; tools: TimelineItem[] };
 
 function nearBottom(el: HTMLElement, threshold = 80) {
@@ -76,16 +76,20 @@ function buildBlocks(items: TimelineItem[]): Block[] {
       item.kind === "todos" ||
       item.kind === "plan_review"
     ) {
+      // Approvals render in ApprovalDock above the composer, not in the message stream.
+      if (item.kind === "approval") continue;
       out.push({ kind: item.kind, id: item.id, item });
       continue;
     }
     if (item.kind === "tool") {
-      const last = out[out.length - 1];
-      if (last?.kind === "tools") {
-        last.tools.push(item);
-      } else {
-        out.push({ kind: "tools", id: `tg-${item.id}`, tools: [item] });
-      }
+      // Keep each tool as its own block so refresh / parallel calls never merge
+      // unrelated tools into one foldable group or scramble visual order.
+      const key = String(item.callId || item.id);
+      out.push({ kind: "tools", id: `tool-${key}`, tools: [item] });
+      continue;
+    }
+    if (item.kind === "file") {
+      out.push({ kind: "file", id: item.id, item });
       continue;
     }
     if (item.kind === "subagent") {
@@ -116,6 +120,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       modelProvider = "",
       modelName = "",
       onInspectTool,
+      onStopTool,
       onPickWorkspace,
       onResolveApproval,
       onResolveAsk,
@@ -223,17 +228,6 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
                 />,
               );
             }
-            if (block.kind === "approval") {
-              return wrapMotion(
-                block.id,
-                <ToolApprovalCard
-                  item={block.item as any}
-                  onResolve={(ev) =>
-                    onResolveApproval?.({ item: block.item, action: ev.action })
-                  }
-                />,
-              );
-            }
             if (block.kind === "ask") {
               return wrapMotion(
                 block.id,
@@ -273,19 +267,27 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
             if (block.kind === "subagent") {
               return wrapMotion(
                 block.id,
-                <SubagentCard item={block.item as any} onInspect={onInspectTool} />,
+                <SubagentCard
+                  item={block.item as any}
+                  onInspect={onInspectTool}
+                  onStop={onStopTool}
+                />,
+              );
+            }
+            if (block.kind === "file") {
+              return wrapMotion(
+                block.id,
+                <ChatFileCard item={block.item as any} />,
               );
             }
             if (block.kind === "tools") {
-              if (block.tools.length > 1) {
-                return wrapMotion(
-                  block.id,
-                  <ToolCallGroup tools={block.tools as any} onInspect={onInspectTool} />,
-                );
-              }
               return wrapMotion(
                 block.id,
-                <ToolCard item={block.tools[0] as any} onInspect={onInspectTool} />,
+                <ToolCard
+                  item={block.tools[0] as any}
+                  onInspect={onInspectTool}
+                  onStop={onStopTool}
+                />,
               );
             }
             return null;

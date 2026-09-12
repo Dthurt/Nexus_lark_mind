@@ -416,6 +416,15 @@ def create_adapters_app() -> FastAPI:
         data = await orch.call("POST", f"/rpc/sessions/{session_id}/cancel")
         return RpcEnvelope(ok=True, data=data)
 
+    @app.post("/api/sessions/{session_id}/files")
+    async def post_session_file(session_id: str, request: Request):
+        """Push a generated/uploaded file card into the chat timeline."""
+        orch: RpcClient = state["orchestrator"]
+        body = await request.json()
+        payload = dict(body) if isinstance(body, dict) else {}
+        data = await orch.call("POST", f"/rpc/sessions/{session_id}/files", json=payload)
+        return RpcEnvelope(ok=True, data=data)
+
     @app.get("/api/chat/stream")
     async def web_sse(session_id: str):
         web: WebAdapter = state["web"]

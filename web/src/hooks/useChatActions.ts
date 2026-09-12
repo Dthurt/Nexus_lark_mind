@@ -44,6 +44,7 @@ export type UseChatActionsOpts = {
     | "resolveAskLocal"
     | "resolvePlanReviewLocal"
     | "clearPlanReadyFlags"
+    | "markRunningToolsStopped"
   >;
   trajectory: Pick<TrajectoryApi, "startTurn" | "addUser" | "addError">;
   stream: Pick<
@@ -166,7 +167,11 @@ export function useChatActions(opts: UseChatActionsOpts) {
         if (act === "allow_session" || act === "always") {
           setAutoAccept(true);
         }
-        timeline.resolveApprovalLocal(item.callId, act === "deny" ? "denied" : "allowed");
+        timeline.resolveApprovalLocal(
+          item.callId,
+          act === "deny" ? "denied" : "allowed",
+          act,
+        );
         stream.setActivity("model", "正在调用模型…", modelName || "");
       } catch (err) {
         timeline.appendMessage("assistant", `审批失败：${err}`, { rich: false });
@@ -304,15 +309,16 @@ export function useChatActions(opts: UseChatActionsOpts) {
         } else {
           await cancelSession(sessionIdRef.current);
         }
+        timeline.markRunningToolsStopped();
         stream.setStatus("stopping…");
-        stream.setActivity("stop", "正在停止…");
+        stream.setActivity("stop", "Stopping…");
       } catch (err) {
         stream.setStatus(String(err));
         onBusyChange?.(false);
         stream.setBusy(false);
       }
     },
-    [onBusyChange, stream],
+    [onBusyChange, stream, timeline],
   );
 
   const sendChat = useCallback(

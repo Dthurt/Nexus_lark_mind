@@ -271,13 +271,47 @@ export function useChatTimeline() {
       const bot = ensureBotBubble();
       bot.content = (bot.content || "") + (delta || "");
       bot.streaming = true;
+      bot.live = true;
+      // Prefer stream phase so caret + live markdown paint while ActivityHint spins.
+      if (!bot.activity || bot.activity.phase === "model") {
+        bot.activity = {
+          phase: "stream",
+          label: bot.activity?.label || "正在生成回复…",
+          detail: bot.activity?.detail || "",
+          startedAt: bot.activity?.startedAt || Date.now(),
+        };
+      }
       commit([...itemsRef.current]);
     },
     [commit, ensureBotBubble],
   );
 
+  const appendReasoning = useCallback(
+    (delta: string) => {
+      if (!delta) return;
+      const bot = ensureBotBubble();
+      bot.reasoning = (bot.reasoning || "") + delta;
+      bot.streaming = true;
+      bot.live = true;
+      commit([...itemsRef.current]);
+    },
+    [commit, ensureBotBubble],
+  );
+
+  const hasRunningTools = useCallback(() => {
+    return itemsRef.current.some((it) => {
+      if (it.kind !== "tool" && it.kind !== "subagent") return false;
+      const s = String(it.status || "").toLowerCase();
+      if (it.error != null || it.success === false) return false;
+      if (s === "ok" || s === "done" || s === "fail" || s === "failed" || s === "stopped") return false;
+      if (it.kind === "tool" && it.result != null && s !== "running") return false;
+      if (it.kind === "subagent" && (it.output || it.error) && s !== "running") return false;
+      return s === "running" || s === "" || s == null;
+    });
+  }, []);
+
   const finalizeBot = useCallback(
-    (text?: string, usage?: any) => {
+    (text?: string, usage?: any, meta?: { modelName?: string; modelProvider?: string }) => {
       const bot = ensureBotBubble();
       if (text != null && text !== "") bot.content = text;
       bot.streaming = false;
@@ -285,6 +319,8 @@ export function useChatTimeline() {
       const started = bot.startedAt || bot.activity?.startedAt || null;
       const clientMs = started ? Math.max(0, Date.now() - started) : null;
       bot.activity = null;
+      if (meta?.modelName) bot.modelName = meta.modelName;
+      if (meta?.modelProvider) bot.modelProvider = meta.modelProvider;
       const merged = { ...(usage || bot.usage || {}) };
       if (merged.duration_ms == null && clientMs != null) merged.duration_ms = clientMs;
 
@@ -297,6 +333,8 @@ export function useChatTimeline() {
           .find((x) => x.kind === "msg" && x.role === "assistant" && (x.content || "").trim());
         if (prev && Object.keys(merged).length) {
           prev.usage = { ...(prev.usage || {}), ...merged };
+          if (meta?.modelName) prev.modelName = meta.modelName;
+          if (meta?.modelProvider) prev.modelProvider = meta.modelProvider;
         }
         commit(list);
       } else {
@@ -406,7 +444,12 @@ export function useChatTimeline() {
       const existing = list.find((x) => x.kind === "tool" && x.callId === id);
       if (existing) {
         existing.open = false;
-        existing.arguments = payload.arguments ?? payload.raw_arguments;
+        // Keep Running until tool_result arrives — never flip early on arg patches.
+        existing.status = "running";
+        existing.error = null;
+        existing.success = null;
+        if (existing.result == null) existing.result = null;
+        existing.arguments = payload.arguments ?? payload.raw_arguments ?? existing.arguments;
         if (activityId) existing.activityId = activityId;
         existing.openaiName = payload.openai_name || payload.name || existing.openaiName;
         commit(list);
@@ -421,7 +464,7 @@ export function useChatTimeline() {
         openaiName: payload.openai_name || payload.name || null,
         badge: "CALL",
         open: false,
-        status: "",
+        status: "running",
         arguments: payload.arguments ?? payload.raw_arguments,
         result: null,
         error: null,
@@ -619,6 +662,11 @@ export function useChatTimeline() {
       sealLiveAssistantBeforeTools();
       const callId = payload?.id || mid();
       const list = itemsRef.current.slice();
+      const tool = list.find((x) => x.kind === "tool" && x.callId === callId);
+      if (tool) {
+        tool.status = "running";
+        tool.approvalDecision = null;
+      }
       let item = list.find((x) => x.kind === "approval" && x.callId === callId);
       if (!item) {
         item = {
@@ -630,13 +678,17 @@ export function useChatTimeline() {
           arguments: payload?.arguments || {},
           status: "pending",
           activityId,
+          expiresAt: Date.now() + 30_000,
         };
         list.push(item);
       } else {
         item.arguments = payload?.arguments || item.arguments;
         item.name = payload?.name || item.name;
         item.base = payload?.base || item.base;
-        if (item.status !== "allowed" && item.status !== "denied") item.status = "pending";
+        if (item.status !== "allowed" && item.status !== "denied") {
+          item.status = "pending";
+          item.expiresAt = Date.now() + 30_000;
+        }
       }
       commit(list);
       afterToolOrSubagentInserted();
@@ -646,13 +698,23 @@ export function useChatTimeline() {
   );
 
   const resolveApprovalLocal = useCallback(
-    (callId: string, status: string) => {
+    (callId: string, status: string, action?: string) => {
       const list = itemsRef.current.slice();
-      const item = list.find((x) => x.kind === "approval" && x.callId === callId);
-      if (item) {
-        item.status = status;
-        commit(list);
+      const decision =
+        action === "deny" || status === "denied"
+          ? "denied"
+          : action === "allow_session" || action === "always"
+            ? "allow_session"
+            : "allowed";
+
+      const tool = list.find((x) => x.kind === "tool" && x.callId === callId);
+      if (tool) {
+        tool.approvalDecision = decision;
       }
+
+      // Remove the approval card from the chat timeline once resolved.
+      const next = list.filter((x) => !(x.kind === "approval" && x.callId === callId));
+      commit(next);
     },
     [commit],
   );
@@ -802,15 +864,80 @@ export function useChatTimeline() {
     commit(list);
   }, [commit]);
 
+  const appendFileCard = useCallback(
+    (file: {
+      name: string;
+      path?: string;
+      content?: string;
+      mime?: string;
+      url?: string;
+      size?: number;
+    }) => {
+      const item: TimelineItem = {
+        id: mid(),
+        kind: "file",
+        name: file.name || "file",
+        path: file.path || "",
+        content: file.content ?? "",
+        mime: file.mime || "",
+        url: file.url || "",
+        size: file.size,
+        viewMode: "link",
+      };
+      const list = itemsRef.current.slice();
+      list.push(item);
+      commit(list);
+      return item;
+    },
+    [commit],
+  );
+
+  const markRunningToolsStopped = useCallback(() => {
+    const list = itemsRef.current.slice();
+    let changed = false;
+    for (const it of list) {
+      if (it.kind === "tool" && (it.status === "running" || it.status === "" || it.status == null)) {
+        if (it.result == null && it.error == null && it.success == null) {
+          it.status = "stopped";
+          changed = true;
+        }
+      }
+      if (it.kind === "subagent" && it.status === "running") {
+        it.status = "stopped";
+        changed = true;
+      }
+    }
+    if (changed) commit(list);
+  }, [commit]);
+
   const loadFromHistory = useCallback(
     (messages: any[]) => {
       clear();
       for (const m of messages || []) {
         const role = m.role || "assistant";
         const meta = m.metadata || {};
+        if (meta.kind === "file" || meta.file) {
+          const file = meta.file || meta;
+          appendFileCard({
+            name: file.name || file.filename || "file",
+            path: file.path || "",
+            content: file.content ?? m.content ?? "",
+            mime: file.mime || file.mime_type || "",
+            url: file.url || "",
+            size: file.size,
+          });
+          continue;
+        }
         if (meta.kind === "tool_call" || (meta.tool_calls && !m.content)) {
-          const tc = (meta.tool_calls && meta.tool_calls[0]) || meta.tool_call || {};
-          renderToolCall(tc);
+          const calls = Array.isArray(meta.tool_calls)
+            ? meta.tool_calls
+            : meta.tool_call
+              ? [meta.tool_call]
+              : [];
+          if (!calls.length && meta.tool_calls?.[0]) calls.push(meta.tool_calls[0]);
+          for (const tc of calls) {
+            if (tc) renderToolCall(tc);
+          }
           continue;
         }
         if (role === "tool" || meta.kind === "tool_result" || meta.tool_result) {
@@ -828,11 +955,20 @@ export function useChatTimeline() {
         appendMessage(role === "user" ? "user" : "assistant", m.content || "", {
           usage: role === "assistant" ? meta.usage : null,
         });
+        if (role === "assistant") {
+          const last = itemsRef.current[itemsRef.current.length - 1];
+          if (last?.kind === "msg") {
+            if (meta.model || meta.model_name) last.modelName = meta.model || meta.model_name;
+            if (meta.model_provider || meta.provider) {
+              last.modelProvider = meta.model_provider || meta.provider;
+            }
+          }
+        }
       }
       streamingIdRef.current = null;
       setStreamingId(null);
     },
-    [appendMessage, clear, renderToolCall, renderToolResult],
+    [appendFileCard, appendMessage, clear, renderToolCall, renderToolResult],
   );
 
   const scrollToBottom = useCallback(async (el: HTMLElement | null) => {
@@ -856,6 +992,8 @@ export function useChatTimeline() {
     inspectActivity,
     appendMessage,
     appendDelta,
+    appendReasoning,
+    hasRunningTools,
     finalizeBot,
     beginAssistantTurn,
     setBotActivity,
@@ -875,6 +1013,8 @@ export function useChatTimeline() {
     resolvePlanReviewLocal,
     markPlanReady,
     clearPlanReadyFlags,
+    appendFileCard,
+    markRunningToolsStopped,
     loadFromHistory,
     scrollToBottom,
     formatToolDetail,

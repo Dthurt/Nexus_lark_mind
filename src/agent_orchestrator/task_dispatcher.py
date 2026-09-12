@@ -310,6 +310,15 @@ class TaskDispatcher:
                 await self._publish(task, EventType.TASK_SUBAGENT, subagent)
                 continue
 
+            reasoning_delta = chunk.get("reasoning_delta") or ""
+            if reasoning_delta:
+                await self._publish(
+                    task,
+                    EventType.TASK_REASONING,
+                    {"delta": reasoning_delta},
+                )
+                continue
+
             delta = chunk.get("delta") or ""
             if delta:
                 collected += delta

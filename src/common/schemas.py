@@ -37,6 +37,7 @@ class EventType(str, Enum):
     TASK_CREATED = "task.created"
     TASK_STARTED = "task.started"
     TASK_DELTA = "task.delta"
+    TASK_REASONING = "task.reasoning"
     TASK_STATUS = "task.status"
     TASK_TOOL_CALL = "task.tool_call"
     TASK_TOOL_RESULT = "task.tool_result"
@@ -121,6 +122,7 @@ class ModelRequest(BaseModel):
 
 class ModelChunk(BaseModel):
     content: str = ""
+    reasoning: str = ""
     finish_reason: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     usage: Optional[Dict[str, Any]] = None

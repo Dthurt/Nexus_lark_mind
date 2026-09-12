@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ApprovalDock } from "@/components/chat/ApprovalDock";
 import { ChatMessages } from "@/components/chat/ChatMessages";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { Composer } from "@/components/composer/Composer";
@@ -520,7 +521,6 @@ export function WorkbenchPage({
         <main className="nlm-workspace">
           <Topbar
             title={chatTitle}
-            sessionId={sessionId}
             centerView={centerView}
             onCenterViewChange={setCenterView}
             workspaceTitle={workspaceTitle}
@@ -540,8 +540,8 @@ export function WorkbenchPage({
                 modelProvider={providerId}
                 modelName={modelName}
                 onInspectTool={onInspectTool}
+                onStopTool={() => void actions.stopGeneration(currentTaskId)}
                 onPickWorkspace={(ws) => void onPickWorkspace(ws)}
-                onResolveApproval={(p) => void actions.resolveApproval(p)}
                 onResolveAsk={(p) => void actions.resolveAsk(p)}
                 onResolvePlanReview={(p) => void actions.resolvePlanReview(p)}
                 onAcceptPlan={() => {
@@ -558,6 +558,11 @@ export function WorkbenchPage({
                 onInspect={onTrajectoryInspect}
               />
             )}
+
+            <ApprovalDock
+              items={timeline.items.filter((it) => it.kind === "approval") as any}
+              onResolve={(p) => void actions.resolveApproval(p)}
+            />
 
             <Composer
               value={actions.input}

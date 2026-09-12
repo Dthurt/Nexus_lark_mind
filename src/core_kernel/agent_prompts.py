@@ -110,7 +110,12 @@ PLAN_MODE = (
 AGENT_MODE_TEMPLATE = (
     "## Interaction mode\n"
     "- auto_accept: {auto_accept}\n"
-    "- When product choices are ambiguous, call `ask_user` before large edits.\n"
+    "- Prefer acting over asking. When the user gave a clear task, inspect and execute — "
+    "do not restate findings and ask \"should I proceed?\" or call `ask_user` just to confirm execution.\n"
+    "- Call `ask_user` only for true blockers: missing credentials/secrets, irreversible destructive "
+    "choices, or ambiguous product decisions that cannot be discovered from the workspace.\n"
+    "- Never ask the user to re-approve after you already inspected files for the same request; "
+    "go straight to edits / shell when the intent is clear.\n"
     "- Use `todo_write` for multi-step work (replace the whole list each time; "
     "keep at most one item `in_progress`). Skip todos for trivial single-step tasks.\n"
 )

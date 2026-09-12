@@ -20,8 +20,10 @@ from src.common.schemas import ChatMessage, ChatRole
 DEFAULT_WINDOW = 128_000
 # Reserve room for reply + tools schema
 REPLY_RESERVE_RATIO = 0.18
-SOFT_MSG_CHARS = 24_000
-TARGET_RATIO = 0.72  # aim for ~72% of usable budget after reserve
+SOFT_MSG_CHARS = 16_000
+TARGET_RATIO = 0.55  # aim for ~55% of usable budget after reserve; compress earlier
+# Start middle-collapse once past this fraction of usable (not only when over hard usable)
+COLLAPSE_TRIGGER_RATIO = 0.62
 
 # Tags wrapping the structured summary inside the landed checkpoint node.
 CHECKPOINT_PREAMBLE = (
@@ -347,15 +349,16 @@ def compact_messages(
     window = int(context_window or resolve_context_window(model_name))
     usable = max(4_000, int(window * (1.0 - REPLY_RESERVE_RATIO)))
     target = max(3_000, int(usable * TARGET_RATIO))
+    collapse_at = max(3_000, int(usable * COLLAPSE_TRIGGER_RATIO))
 
     layer1 = _layer1_soft_trim(messages)
-    if sum(_msg_tokens(m) for m in layer1) <= usable:
+    if sum(_msg_tokens(m) for m in layer1) <= collapse_at:
         return layer1
 
     layer2 = _layer2_collapse_middle(layer1, target)
     if sum(_msg_tokens(m) for m in layer2) <= usable:
         return layer2
 
-    # Stronger collapse then hard drop
+    # Stronger collapse then hard drop toward target
     layer2b = _layer2_collapse_middle(layer2, int(target * 0.55))
-    return _layer3_hard_drop(layer2b, usable)
+    return _layer3_hard_drop(layer2b, target)
