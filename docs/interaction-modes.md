@@ -39,19 +39,20 @@ Persisted as `plan_enforcement` (`localStorage.nlm_plan_enforcement`).
 
 ## Busy inbox (Steer · Queue)
 
-While a turn is running, the composer stays editable.
+While a turn is running, the composer stays editable. Sending does **not** start a parallel chat — it goes to the session inbox.
 
 | Action | Behavior |
 |--------|----------|
-| **Enter** (busy + draft) | Push to session inbox — default **queue** (or **steer** if `nlm_busy_enter=steer`) |
-| **Ctrl/Cmd+Enter** | Flip kind for this send (queue ↔ steer) |
+| **Enter** (busy + draft) | Push to session inbox — default **queue** (or **steer** if toggled / `nlm_busy_enter=steer`) |
+| **Ctrl/Cmd+Enter** | Flip kind for this send only (queue ↔ steer) |
 | **Primary button** | Draft present → send to inbox; empty → **Stop** |
-| **QueueDock** | Lists pending steer/queue items; **撤销** removes one |
+| **Busy toolbar** | Toggle **中途引导** / **排队** above the textarea |
+| **QueueDock** | Lists pending items (or a hint while busy with empty inbox); **撤销** removes one |
 
 Semantics:
 
-- **steer** — claimed at the next agent **step** boundary (before the next model call); injected as a user message into the live turn.
-- **queue** — claimed after the turn **completes** successfully; starts a new task with that content.
+- **steer（中途引导）** — claimed at the next agent **step** boundary (before the next model call); injected into the live turn. The current tool may finish first.
+- **queue（排队）** — claimed after the turn **completes** successfully; starts a new task with that content (appears in chat when enqueued).
 
 APIs:
 
@@ -131,15 +132,29 @@ with a Redis/KV **mirror** so orphans can be detected after a Kernel restart.
 | **体验档** `experience_tier` | Composer + session | Constrains Mermaid vs Draw.io in the system prompt |
 | **推理强度** `reasoning_effort` | Composer + session | Passed on `ModelRequest` (OpenAI-compat `reasoning_effort`) |
 | **Jobs** tab | RightDock | Running / recent tools & subagents from the timeline |
+| **Delivery** tab | RightDock | Plan → Diagrams → Code changes audit doc (auto on plan approve) |
+
+## Delivery artifact (Plan → Diagram → Changes)
+
+When you **批准并执行** a plan (gate path or legacy accept-plan):
+
+1. NLM builds a markdown **Delivery** doc: plan body, extracted Mermaid/Draw.io fences, mutation tool summary (path · bytes/lines · replace hints).
+2. Posts it via `POST /api/sessions/{id}/delivery` → chat file card **and** local `{cwd}/.nlm/deliveries/*.md`.
+3. Opens RightDock **Delivery**; auto-syncs `write_file` / `edit_file` / … from `plugin-calls` after the turn.
+
+Demo: enable **计划** → ask for a feature plan with a Mermaid flow → approve → open `.nlm/deliveries/` in the workspace → sync after edits.
 
 ## Feishu
 
-Interactive cards for **tool approval** and **ask_user** are shipped (Wave E):
+Interactive cards for **tool approval**, **ask_user**, and **plan_review** are shipped:
 
-- Bus events `task.tool_approval` / `task.ask_user` → Feishu interactive cards
-- Card button callbacks → Kernel `/rpc/gates/resolve` (same payload shape as Web)
+- First message in a Feishu conversation **requires** picking Provider + model via cards (from the configured catalog). The choice is stored on the session for later turns; send `切换模型` or `/model` to re-pick.
+- If no Provider is configured, Feishu sends a setup card (Web Settings → model providers) instead of falling into demo-mode echo.
+- Bus events `task.tool_approval` / `task.ask_user` / `task.plan_review` → Feishu interactive cards
+- Card actions resolve via the same Kernel `/rpc/gates/resolve` path as the Web workbench
+- Plan review actions: 批准并执行 / 继续规划 / 稍后自己说
 - Approval timeouts match Web (`src/common/approval_timeouts.py` ↔ `web/src/lib/approvalTimeout.ts`)
 
 Streaming reply cards + retry/clear remain as before.
 
-See also: [experience-tiers.md](./experience-tiers.md), [deferred.md](./deferred.md), [subagents.md](./subagents.md).
+See also: [channels.md](./channels.md), [experience-tiers.md](./experience-tiers.md), [deferred.md](./deferred.md), [subagents.md](./subagents.md).

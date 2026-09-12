@@ -77,6 +77,7 @@ export type ComposerProps = {
   gitDeletions?: number;
   busy?: boolean;
   busyEnterMode?: "queue" | "steer";
+  onBusyEnterModeChange?: (v: "queue" | "steer") => void;
   onProviderChange?: (v: string) => void;
   onModelChange?: (v: string) => void;
   onSend?: (opts?: { alternate?: boolean }) => void;
@@ -129,6 +130,7 @@ export function Composer({
   gitDeletions = 0,
   busy = false,
   busyEnterMode = "queue",
+  onBusyEnterModeChange,
   onProviderChange,
   onModelChange,
   onSend,
@@ -170,8 +172,8 @@ export function Composer({
   const planOn = agentMode === "plan";
   const busyHint =
     busyEnterMode === "steer"
-      ? "可输入中途引导 · Enter 引导 · Ctrl+Enter 改为排队 · 空内容点按钮终止"
-      : "可先输入下一条 · Enter 排队 · Ctrl+Enter 改为引导 · 空内容点按钮终止";
+      ? "Agent 忙碌中 · Enter 中途引导（下一步注入）· Ctrl+Enter 改为排队 · 空内容点按钮终止"
+      : "Agent 忙碌中 · Enter 排队（本轮结束后发）· Ctrl+Enter 改为引导 · 空内容点按钮终止";
 
   const applyExperienceTier = useCallback(
     (id: ExperienceTierId) => {
@@ -408,6 +410,44 @@ export function Composer({
           busy && "busy ring-1 ring-primary/35",
         )}
       >
+        {busy ? (
+          <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-2.5 py-1.5 text-[11px]">
+            <span className="text-muted-foreground">忙碌时可发消息：</span>
+            <div className="inline-flex rounded-md border border-border/70 p-0.5">
+              <button
+                type="button"
+                className={cn(
+                  "rounded px-2 py-0.5 font-medium transition-colors",
+                  busyEnterMode === "steer"
+                    ? "bg-violet-500/20 text-violet-200"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                title="在下一个模型步骤前注入，打断当前思路"
+                onClick={() => onBusyEnterModeChange?.("steer")}
+              >
+                中途引导
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "rounded px-2 py-0.5 font-medium transition-colors",
+                  busyEnterMode === "queue"
+                    ? "bg-sky-500/20 text-sky-200"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                title="等本轮结束后作为下一条用户消息发送"
+                onClick={() => onBusyEnterModeChange?.("queue")}
+              >
+                排队
+              </button>
+            </div>
+            <span className="text-muted-foreground">
+              Enter 发送到
+              {busyEnterMode === "steer" ? "引导" : "排队"}
+              · Ctrl+Enter 临时切换
+            </span>
+          </div>
+        ) : null}
         <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-end gap-1.5 px-2 pb-1 pt-1.5">
           <div ref={menuRootRef} className="relative self-end pb-1.5">
             <Button

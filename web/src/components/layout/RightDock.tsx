@@ -7,7 +7,9 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { TeamsPanel } from "@/components/layout/TeamsPanel";
+import { DeliveryPanel } from "@/components/layout/DeliveryPanel";
 import type { DockPane, useRightDock } from "@/hooks/useRightDock";
+import type { DeliveryArtifactApi } from "@/hooks/useDeliveryArtifact";
 import {
   estimateContextOccupancy,
   formatCompactTokens,
@@ -45,10 +47,15 @@ export type RightDockProps = {
   contextItems?: any[];
   modelName?: string;
   cwd?: string;
+  /** local | ssh — Delivery disk write only for local */
+  workspaceKind?: string;
   workspaceTitle?: string;
   draft?: string;
   /** Team mailbox / DAG (defaults to session id). */
   teamId?: string;
+  /** Plan→Diagram→Changes delivery artifact. */
+  delivery?: DeliveryArtifactApi | null;
+  sessionId?: string;
   onTogglePlugin?: (pluginId: string, enabled: boolean) => void | Promise<void>;
   onReload?: () => void | Promise<void>;
   onReloadOne?: (pluginId: string) => void | Promise<void>;
@@ -89,9 +96,12 @@ export function RightDock({
   contextItems = [],
   modelName = "",
   cwd = "",
+  workspaceKind = "local",
   workspaceTitle = "",
   draft = "",
   teamId = "",
+  delivery = null,
+  sessionId = "",
   onTogglePlugin,
   onReload,
   onReloadOne,
@@ -260,6 +270,14 @@ export function RightDock({
                   />
                 )}
                 {kind === "teams" && <TeamsPanel teamId={teamId} />}
+                {kind === "delivery" && delivery ? (
+                  <DeliveryPanel
+                    delivery={delivery}
+                    sessionId={sessionId || teamId}
+                    cwd={cwd}
+                    workspaceKind={workspaceKind}
+                  />
+                ) : null}
                 {kind === "jobs" && (
                   <JobsPanel
                     jobs={jobs}

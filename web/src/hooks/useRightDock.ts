@@ -31,6 +31,7 @@ const initialState = (): RightDockState => ({
       id: "main",
       tabs: [
         { id: "plugins", kind: "plugins", title: "插件" },
+        { id: "delivery", kind: "delivery", title: "Delivery" },
         { id: "teams", kind: "teams", title: "Teams" },
         { id: "jobs", kind: "jobs", title: "Jobs" },
         { id: "activity", kind: "activity", title: "本回合" },

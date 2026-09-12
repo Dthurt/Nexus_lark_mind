@@ -65,6 +65,7 @@ export type UseChatActionsOpts = {
     | "resolvePlanReviewLocal"
     | "clearPlanReadyFlags"
     | "markRunningToolsStopped"
+    | "items"
   >;
   trajectory: Pick<TrajectoryApi, "startTurn" | "addUser" | "addError">;
   stream: Pick<
@@ -75,6 +76,8 @@ export type UseChatActionsOpts = {
   onBusyChange?: (b: boolean) => void;
   onTaskId?: (id: string | null) => void;
   onModeChange?: (mode: string) => void;
+  /** Create Delivery artifact after plan approve / accept-plan. */
+  onDeliveryCreate?: (opts: { plan: string; title?: string; callId?: string }) => void | Promise<void>;
 };
 
 /**
@@ -101,6 +104,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
     onBusyChange,
     onTaskId,
     onModeChange,
+    onDeliveryCreate,
   } = opts;
 
   const [agentMode, setAgentModeState] = useState<"agent" | "plan" | string>(() =>
@@ -388,6 +392,14 @@ export function useChatActions(opts: UseChatActionsOpts) {
         if (act === "approve") {
           setAgentMode("agent");
           stream.setActivity("model", "计划已批准，开始执行…", modelName || "");
+          const planText = String(item.plan || item.content || "").trim();
+          if (planText && onDeliveryCreate) {
+            void onDeliveryCreate({
+              plan: planText,
+              title: item.title,
+              callId: item.callId,
+            });
+          }
         } else {
           stream.setActivity("model", "正在调用模型…", modelName || "");
         }
@@ -395,11 +407,34 @@ export function useChatActions(opts: UseChatActionsOpts) {
         timeline.appendMessage("assistant", `计划审阅提交失败：${err}`, { rich: false });
       }
     },
-    [modelName, setAgentMode, stream, timeline],
+    [modelName, onDeliveryCreate, setAgentMode, stream, timeline],
   );
 
   const acceptPlanAction = useCallback(async () => {
     if (busyRef.current) return;
+    // Seed Delivery from the latest plan_review or planReady assistant content.
+    try {
+      const list = Array.isArray(timeline.items) ? timeline.items : [];
+      let planText = "";
+      let callId = "";
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        const it = list[i] as any;
+        if (it?.kind === "plan_review" && it.plan) {
+          planText = String(it.plan);
+          callId = String(it.callId || "");
+          break;
+        }
+        if (it?.kind === "msg" && it.role === "assistant" && it.planReady && it.content) {
+          planText = String(it.content);
+          break;
+        }
+      }
+      if (planText && onDeliveryCreate) {
+        void onDeliveryCreate({ plan: planText, callId: callId || undefined });
+      }
+    } catch {
+      /* ignore seed errors */
+    }
     timeline.clearPlanReadyFlags();
     setAgentMode("agent");
     stream.ensureSSE();
@@ -438,6 +473,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
     cwd,
     modelName,
     onBusyChange,
+    onDeliveryCreate,
     onTaskId,
     providerId,
     setAgentMode,
@@ -512,7 +548,12 @@ export function useChatActions(opts: UseChatActionsOpts) {
             timeline.appendMessage("user", draft, { rich: false });
             trajectory.addUser(draft);
           }
-          stream.setStatus(kind === "steer" ? "已加入中途引导" : "已加入排队");
+          const label =
+            kind === "steer"
+              ? "已加入中途引导（下一步模型调用前注入）"
+              : "已加入排队（本轮结束后发送）";
+          stream.setStatus(label);
+          toast.success(label);
         } catch (err: any) {
           setInput((cur) => (cur.trim() ? cur : draft));
           toast.error(String(err?.message || err || "加入收件箱失败"));

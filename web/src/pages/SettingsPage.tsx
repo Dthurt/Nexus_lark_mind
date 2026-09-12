@@ -271,6 +271,7 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
             base_url: form.base_url.trim(),
             api_key: form.api_key,
             model: form.default_model.trim(),
+            api: form.api,
             provider_id: editingId !== "__new__" && editingId ? editingId : undefined,
           };
       const data = await testConnectivity(payload);

@@ -70,8 +70,17 @@ export function useModelSettings() {
   const setDefault = useCallback(async (providerId: string) => {
     setSaving(true);
     try {
-      await setDefaultProvider(providerId);
+      const catalog = await setDefaultProvider(providerId);
       setDoc((prev) => ({ ...prev, default_provider: providerId }));
+      // Keep Composer / workbench in sync with Settings default (clears stale glm etc.).
+      try {
+        localStorage.setItem("nlm_provider", providerId);
+        const entry = catalog?.providers?.find((p) => p.id === providerId);
+        const model = entry?.default_model || catalog?.default_model;
+        if (model) localStorage.setItem("nlm_model", model);
+      } catch {
+        /* ignore storage errors */
+      }
     } catch (err: any) {
       setError(String(err?.message || err));
       throw err;
@@ -101,13 +110,15 @@ export function useModelSettings() {
       api_key,
       model,
       provider_id,
+      api,
     }: {
       base_url?: string;
       api_key?: string;
       model?: string;
       provider_id?: string;
+      api?: string;
     }) => {
-      return testModel({ base_url, api_key, model, provider_id });
+      return testModel({ base_url, api_key, model, provider_id, api });
     },
     [],
   );

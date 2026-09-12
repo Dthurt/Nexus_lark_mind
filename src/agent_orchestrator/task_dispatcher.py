@@ -154,6 +154,16 @@ class TaskDispatcher:
             or session.get("reasoning_effort")
             or "medium"
         )
+        # Feishu (and other channels) bind provider/model on the session;
+        # fill task fields when the inbound payload left them empty.
+        if not (task.model_provider or "").strip():
+            bound = str(session.get("model_provider") or "").strip()
+            if bound:
+                task.model_provider = bound
+        if not (task.model_name or "").strip():
+            bound_model = str(session.get("model_name") or "").strip()
+            if bound_model:
+                task.model_name = bound_model
         task.metadata = {
             **(task.metadata or {}),
             "agent_mode": str(agent_mode).strip().lower() if agent_mode else "agent",

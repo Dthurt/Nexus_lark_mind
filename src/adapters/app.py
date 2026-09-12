@@ -71,6 +71,10 @@ class InteractionPatchRequest(BaseModel):
     plan_enforcement: Optional[str] = None
     experience_tier: Optional[str] = None
     reasoning_effort: Optional[str] = None
+    model_provider: Optional[str] = None
+    model_name: Optional[str] = None
+    pending_user_text: Optional[str] = None
+    clear_pending_user_text: Optional[bool] = None
 
 
 class AcceptPlanRequest(BaseModel):
@@ -461,6 +465,53 @@ def create_adapters_app() -> FastAPI:
         payload = dict(body) if isinstance(body, dict) else {}
         data = await orch.call("POST", f"/rpc/sessions/{session_id}/files", json=payload)
         return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/sessions/{session_id}/delivery")
+    async def post_session_delivery(session_id: str, request: Request):
+        """Publish Delivery markdown to chat + optional ``.nlm/deliveries/`` on local cwd."""
+        from src.common.delivery_store import DeliveryWriteError, write_delivery_to_workspace
+
+        orch: RpcClient = state["orchestrator"]
+        body = await request.json()
+        payload = dict(body) if isinstance(body, dict) else {}
+        content = str(payload.get("content") or "")
+        name = str(payload.get("name") or payload.get("file_name") or "Delivery.md").strip()
+        cwd = str(payload.get("cwd") or "").strip()
+        workspace_kind = str(payload.get("workspace_kind") or "local").strip() or "local"
+
+        file_card = await orch.call(
+            "POST",
+            f"/rpc/sessions/{session_id}/files",
+            json={
+                "name": name,
+                "content": content,
+                "mime": "text/markdown",
+                "path": payload.get("path"),
+            },
+        )
+        workspace: Dict[str, Any] = {"ok": False}
+        if cwd:
+            try:
+                workspace = write_delivery_to_workspace(
+                    cwd,
+                    file_name=name,
+                    content=content,
+                    workspace_kind=workspace_kind,
+                )
+            except DeliveryWriteError as exc:
+                workspace = {"ok": False, "error": str(exc)}
+            except Exception as exc:
+                logger.exception("delivery workspace write failed")
+                workspace = {"ok": False, "error": str(exc)}
+
+        return RpcEnvelope(
+            ok=True,
+            data={
+                "session_id": session_id,
+                "file": file_card,
+                "workspace": workspace,
+            },
+        )
 
     @app.get("/api/chat/stream")
     async def web_sse(session_id: str, after: str = ""):

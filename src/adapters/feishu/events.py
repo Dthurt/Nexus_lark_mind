@@ -28,6 +28,11 @@ class ParsedCardAction(BaseModel):
     kind: str = ""
     call_id: str = ""
     answers: Dict[str, Any] = Field(default_factory=dict)
+    provider_id: str = ""
+    model_name: str = ""
+    session_id: str = ""
+    chat_id: str = ""
+    page: int = 0
     raw: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -168,6 +173,11 @@ def parse_card_action(payload: Dict[str, Any]) -> Optional[ParsedCardAction]:
         kind=str(value.get("kind") or ""),
         call_id=str(value.get("call_id") or ""),
         answers=value.get("answers") if isinstance(value.get("answers"), dict) else {},
+        provider_id=str(value.get("provider_id") or ""),
+        model_name=str(value.get("model_name") or ""),
+        session_id=str(value.get("session_id") or ""),
+        chat_id=str(value.get("chat_id") or ""),
+        page=int(value.get("page") or 0),
         raw=payload,
     )
 

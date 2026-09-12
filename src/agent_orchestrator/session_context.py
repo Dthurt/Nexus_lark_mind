@@ -83,6 +83,9 @@ class SessionContext:
             "plan_enforcement": "hard",
             "experience_tier": "balanced",
             "reasoning_effort": "medium",
+            "model_provider": "",
+            "model_name": "",
+            "pending_user_text": "",
             "inbox": [],
         }
         await self.redis.set_session(session_id, payload)
@@ -183,6 +186,10 @@ class SessionContext:
         plan_enforcement: Optional[str] = None,
         experience_tier: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
+        model_provider: Optional[str] = None,
+        model_name: Optional[str] = None,
+        pending_user_text: Optional[str] = None,
+        clear_pending_user_text: bool = False,
     ) -> Dict[str, Any]:
         from src.common.experience_tiers import (
             normalize_experience_tier,
@@ -230,6 +237,14 @@ class SessionContext:
             session["experience_tier"] = normalize_experience_tier(experience_tier)
         if reasoning_effort is not None:
             session["reasoning_effort"] = normalize_reasoning_effort(reasoning_effort)
+        if model_provider is not None:
+            session["model_provider"] = str(model_provider).strip()
+        if model_name is not None:
+            session["model_name"] = str(model_name).strip()
+        if clear_pending_user_text:
+            session["pending_user_text"] = ""
+        elif pending_user_text is not None:
+            session["pending_user_text"] = str(pending_user_text)
         # Ensure defaults exist on older sessions
         if not session.get("permission_preset"):
             session["permission_preset"] = normalize_preset(None)
@@ -239,6 +254,10 @@ class SessionContext:
             session["experience_tier"] = normalize_experience_tier(None)
         if not session.get("reasoning_effort"):
             session["reasoning_effort"] = normalize_reasoning_effort(None)
+        if "model_provider" not in session:
+            session["model_provider"] = ""
+        if "model_name" not in session:
+            session["model_name"] = ""
         session["updated_at"] = datetime.now(timezone.utc).isoformat()
         await self.redis.set_session(session_id, session)
         return session

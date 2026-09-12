@@ -21,6 +21,7 @@ import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { usePlugins } from "@/hooks/usePlugins";
 import { useProviders } from "@/hooks/useProviders";
 import { useRightDock } from "@/hooks/useRightDock";
+import { useDeliveryArtifact } from "@/hooks/useDeliveryArtifact";
 import { useSessions } from "@/hooks/useSessions";
 import { useTrajectory } from "@/hooks/useTrajectory";
 import { useWorkspaces } from "@/hooks/useWorkspaces";
@@ -65,6 +66,7 @@ export function WorkbenchPage({
   const timeline = useChatTimeline();
   const trajectory = useTrajectory();
   const dock = useRightDock();
+  const delivery = useDeliveryArtifact();
   const commandPalette = useCommandPalette();
 
   const {
@@ -160,6 +162,18 @@ export function WorkbenchPage({
     busy,
     onBusyChange: setBusy,
     onTaskId: setCurrentTaskId,
+    onDeliveryCreate: ({ plan, title, callId }) => {
+      delivery.setWorkspace(cwd, workspaceKind || "local");
+      void delivery.createFromPlan({
+        sessionId,
+        plan,
+        title,
+        callId,
+        cwd,
+        workspaceKind: workspaceKind || "local",
+      });
+      dock.openTab("delivery", { title: "Delivery", reveal: true });
+    },
   });
   actionsRef.current = actions;
 
@@ -241,6 +255,7 @@ export function WorkbenchPage({
     void syncServerList();
     void loadActivityFromServer();
     void refreshGitBranch();
+    void delivery.syncMutations(sessionId);
   };
 
   const startNewConversation = useCallback(() => {
@@ -576,7 +591,9 @@ export function WorkbenchPage({
             <QueueDock
               items={actions.inboxItems}
               busyEnterMode={actions.busyEnterMode}
+              busy={busy}
               onRemove={(id) => void actions.removeInboxItem(id)}
+              onBusyEnterModeChange={actions.setBusyEnterMode}
             />
 
             <Composer
@@ -615,6 +632,7 @@ export function WorkbenchPage({
               gitDeletions={gitDeletions}
               busy={busy}
               busyEnterMode={actions.busyEnterMode}
+              onBusyEnterModeChange={actions.setBusyEnterMode}
               onProviderIdChange={onProviderChange}
               onModelNameChange={onModelChange}
               onSend={(opts) => void actions.sendChat(undefined, opts)}
@@ -637,9 +655,12 @@ export function WorkbenchPage({
           contextItems={timeline.items}
           modelName={modelName}
           cwd={cwd}
+          workspaceKind={workspaceKind}
           workspaceTitle={workspaceTitle}
           draft={actions.input}
           teamId={sessionId}
+          sessionId={sessionId}
+          delivery={delivery}
           onInspectJob={onInspectTool}
           onStopJob={() => void actions.stopGeneration(currentTaskId)}
           onTogglePlugin={async (id, enabled) => {

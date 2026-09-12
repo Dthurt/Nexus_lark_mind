@@ -163,6 +163,9 @@ def create_kernel_app() -> FastAPI:
                     base_url = custom.base_url
                 if not model:
                     model = custom.default_model or (custom.models[0] if custom.models else "")
+                # Custom providers must keep their own api kind (e.g. anthropic-messages).
+                if not api_kind:
+                    api_kind = str(getattr(custom, "api", "") or "").strip().lower()
             else:
                 meta = gateway.registry._meta.get(provider_id) or {}
                 if not base_url:

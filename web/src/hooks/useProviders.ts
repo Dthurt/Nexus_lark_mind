@@ -19,7 +19,11 @@ export function useProviders() {
     if (!list.length) {
       return [{ value: "", label: "未配置 Provider（请检查 .env API Key）" }];
     }
-    return list.map((p) => ({ value: p.id, label: p.label || p.id }));
+    return list.map((p) => {
+      const base = p.label || p.id;
+      const isCustom = p.source === "custom" || p.builtin === false;
+      return { value: p.id, label: isCustom ? `${base}（自定义）` : base };
+    });
   }, [catalog.providers]);
 
   const modelOptions = useMemo(() => {
@@ -58,10 +62,11 @@ export function useProviders() {
           setModelName("");
           return cat || prev;
         }
+        // Settings「设为默认」优先于浏览器里残留的旧选择（常见是预制 glm）。
         const want =
           preferredProvider ||
-          localStorage.getItem(PROVIDER_KEY) ||
           source.default_provider ||
+          localStorage.getItem(PROVIDER_KEY) ||
           providers[0].id;
         const nextProvider = providers.some((p) => p.id === want)
           ? (want as string)
@@ -72,11 +77,17 @@ export function useProviders() {
         const provider = providers.find((x) => x.id === nextProvider);
         const models = (provider && provider.models) || [];
         if (!models.length) {
-          setModelName(preferredModel || source.default_model || "");
+          const emptyModel =
+            preferredModel ||
+            (nextProvider === source.default_provider ? source.default_model : "") ||
+            "";
+          setModelName(emptyModel);
+          if (emptyModel) localStorage.setItem(MODEL_KEY, emptyModel);
           return cat || prev;
         }
         const wantModel =
           preferredModel ||
+          (nextProvider === source.default_provider ? source.default_model : "") ||
           localStorage.getItem(MODEL_KEY) ||
           (provider && provider.default_model) ||
           models[0];
@@ -99,11 +110,8 @@ export function useProviders() {
     } catch {
       /* keep defaults */
     }
-    applyDefaults(
-      localStorage.getItem(PROVIDER_KEY),
-      localStorage.getItem(MODEL_KEY),
-      data,
-    );
+    // Do not force stale localStorage over server default_provider.
+    applyDefaults(undefined, undefined, data);
   }, [applyDefaults]);
 
   const onProviderChange = useCallback(

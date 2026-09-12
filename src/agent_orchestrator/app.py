@@ -319,6 +319,10 @@ def create_orchestrator_app() -> FastAPI:
                 plan_enforcement=body.get("plan_enforcement"),
                 experience_tier=body.get("experience_tier"),
                 reasoning_effort=body.get("reasoning_effort"),
+                model_provider=body.get("model_provider"),
+                model_name=body.get("model_name"),
+                pending_user_text=body.get("pending_user_text"),
+                clear_pending_user_text=bool(body.get("clear_pending_user_text")),
             )
         except ValueError as exc:
             from src.common.errors import ValidationAppError

@@ -164,6 +164,24 @@ export function postSessionFile(
   return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/files`, body);
 }
 
+/** Chat file card + optional ``.nlm/deliveries/`` write on local cwd. */
+export function postSessionDelivery(
+  sessionId: string,
+  body: {
+    name: string;
+    content: string;
+    cwd?: string;
+    workspace_kind?: string;
+    path?: string;
+  },
+): Promise<{
+  session_id?: string;
+  file?: any;
+  workspace?: { ok?: boolean; path?: string; abs_path?: string; error?: string };
+}> {
+  return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/delivery`, body);
+}
+
 export function getPluginCalls(
   sessionId: string,
   limit = 40,
@@ -349,7 +367,7 @@ export function removeProvider(id: string): Promise<unknown> {
   return apiDelete(`/api/settings/models/providers/${encodeURIComponent(id)}`);
 }
 
-export function setDefaultProvider(providerId: string): Promise<unknown> {
+export function setDefaultProvider(providerId: string): Promise<ProviderCatalog> {
   return apiPut("/api/settings/models/default", { provider_id: providerId });
 }
 
@@ -366,6 +384,7 @@ export function testModel(body: {
   api_key?: string;
   model?: string;
   provider_id?: string;
+  api?: string;
 }): Promise<{
   models_count?: number;
   chat_ok?: boolean;
