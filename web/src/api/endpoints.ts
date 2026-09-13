@@ -182,6 +182,44 @@ export function postSessionDelivery(
   return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/delivery`, body);
 }
 
+/** Persist Canvas doc under ``.nlm/canvases/`` (+ optional chat file card). */
+export function postSessionCanvas(
+  sessionId: string,
+  body: {
+    name: string;
+    content: string;
+    kind?: string;
+    title?: string;
+    cwd?: string;
+    workspace_kind?: string;
+  },
+): Promise<{
+  session_id?: string;
+  file?: any;
+  workspace?: { ok?: boolean; path?: string; abs_path?: string; error?: string };
+  canvas?: { kind?: string; title?: string; body?: string };
+}> {
+  return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/canvas`, body);
+}
+
+/** Undo an applied write_file / edit_file (DiffDock reject). */
+export function postDiffRevert(
+  sessionId: string,
+  body: {
+    cwd: string;
+    path: string;
+    tool: string;
+    workspace_kind?: string;
+    created?: boolean;
+    previous?: string;
+    old_string?: string;
+    new_string?: string;
+    replace_all?: boolean;
+  },
+): Promise<{ ok?: boolean; path?: string; action?: string }> {
+  return apiPost(`/api/sessions/${encodeURIComponent(sessionId || "_")}/diff-revert`, body);
+}
+
 export function getPluginCalls(
   sessionId: string,
   limit = 40,
@@ -441,6 +479,50 @@ export function markTeamDagNode(
 
 export function installPluginPackage(body: { path: string }): Promise<any> {
   return apiPost("/api/plugins/install", body);
+}
+
+export type MarketplaceItem = {
+  id: string;
+  pack_id?: string;
+  name?: string;
+  kind?: string;
+  version?: string;
+  description?: string;
+  source?: string;
+  path?: string;
+  installable?: boolean;
+  installed?: boolean;
+  action?: string;
+  error?: string;
+  has_sha256?: boolean;
+  has_signature?: boolean;
+};
+
+export type MarketplaceCatalog = {
+  items?: MarketplaceItem[];
+  catalog_dir?: string;
+  plugins_dir?: string;
+  hints?: string[];
+};
+
+export function getPluginMarketplace(): Promise<MarketplaceCatalog> {
+  return apiGet<MarketplaceCatalog>("/api/plugins/marketplace");
+}
+
+export async function installPluginZip(file: File): Promise<any> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/api/plugins/install", {
+    method: "POST",
+    body: form,
+    credentials: "include",
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok || payload?.ok === false) {
+    const { parseError } = await import("@/api/client");
+    throw new Error(parseError(payload, `install failed (${res.status})`));
+  }
+  return payload?.data ?? payload;
 }
 
 export function listAcpBackends(): Promise<{ backends: string[] }> {

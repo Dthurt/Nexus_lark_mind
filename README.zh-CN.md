@@ -167,7 +167,7 @@ docker compose up --build -d
 - 压缩策略：`COMPACTION_AGGRESSIVENESS=conservative|balanced|aggressive`
 - 工作区挂载：`NLM_HOST_WORKSPACE=...`
 
-详见 [docs/architecture.md](docs/architecture.md)、[docs/workspaces.md](docs/workspaces.md)、[docs/interaction-modes.md](docs/interaction-modes.md)。
+详见 [docs/architecture.md](docs/architecture.md)、[docs/workspaces.md](docs/workspaces.md)、[docs/interaction-modes.md](docs/interaction-modes.md)、[docs/canvas.md](docs/canvas.md)、[docs/context-and-diff.md](docs/context-and-diff.md)、[docs/diagrams.md](docs/diagrams.md)、[docs/client-architecture.md](docs/client-architecture.md)。
 
 ## 插件
 
@@ -203,6 +203,8 @@ npm test
 
 主题：`day` / `gray` / `night` / `ocean` / `rose`（Topbar 循环，localStorage `nlm-theme`）。
 
+工作台旁侧 **Canvas**（Chat∥Canvas、图表编辑、Agent `open_canvas`）：见 [docs/canvas.md](docs/canvas.md)。工具卡 / Canvas 视图扩展说明在 `web/docs/`。
+
 ## 测试
 
 ```bash
@@ -221,7 +223,7 @@ CI：`.github/workflows/ci.yml`、`.github/workflows/docker-image.yml`（GHCR）
 
 ## 目录
 
-严格按分层放置，禁止跨层反向依赖。完整说明见 `docs/`。
+严格按分层放置，禁止跨层反向依赖。完整说明见 [`docs/`](docs/)（[索引](docs/README.md)）。
 
 ## 开源许可
 

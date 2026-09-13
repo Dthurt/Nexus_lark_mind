@@ -3,6 +3,7 @@ import {
   Bot,
   Gauge,
   History,
+  LayoutTemplate,
   MessageSquare,
   Moon,
   Plus,
@@ -35,6 +36,8 @@ export type CommandPaletteProps = {
   onSelectChat?: (id: string) => void;
   onClearChat?: () => void;
   onSetCenterView?: (view: CenterViewId) => void;
+  onToggleCanvas?: () => void;
+  onNewCanvas?: () => void;
   onOpenDockTab?: (tab: "plugins" | "activity" | "usage" | "inspector") => void;
   onToggleTools?: () => void;
   onOpenSettings?: () => void;
@@ -49,6 +52,8 @@ export function CommandPalette({
   onSelectChat,
   onClearChat,
   onSetCenterView,
+  onToggleCanvas,
+  onNewCanvas,
   onOpenDockTab,
   onToggleTools,
   onOpenSettings,
@@ -95,6 +100,14 @@ export function CommandPalette({
           <CommandItem onSelect={() => run(() => onSetCenterView?.("trajectory"))}>
             <Bot className="mr-2 size-4" />
             Trajectory 账本
+          </CommandItem>
+          <CommandItem onSelect={() => run(onToggleCanvas)}>
+            <LayoutTemplate className="mr-2 size-4" />
+            打开 / 关闭 Canvas
+          </CommandItem>
+          <CommandItem onSelect={() => run(onNewCanvas)}>
+            <Plus className="mr-2 size-4" />
+            新建 Markdown Canvas
           </CommandItem>
         </CommandGroup>
 

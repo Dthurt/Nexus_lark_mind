@@ -47,16 +47,40 @@ export function DeliveryPanel({
             <code className="text-[10px]">.nlm/deliveries/</code>
           </p>
         </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 shrink-0 px-2"
-          disabled={!art}
-          onClick={() => void delivery.syncMutations(sessionId || art?.sessionId)}
-        >
-          同步变更
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 px-2"
+            disabled={!art}
+            onClick={() => {
+              if (!art?.markdown) return;
+              window.dispatchEvent(
+                new CustomEvent("nlm-canvas-open", {
+                  detail: {
+                    kind: "delivery",
+                    title: art.title || "Delivery",
+                    body: art.markdown,
+                    dedupeKey: `delivery:${art.id}`,
+                  },
+                }),
+              );
+            }}
+          >
+            Canvas
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 px-2"
+            disabled={!art}
+            onClick={() => void delivery.syncMutations(sessionId || art?.sessionId)}
+          >
+            同步变更
+          </Button>
+        </div>
       </div>
 
       {!art ? (

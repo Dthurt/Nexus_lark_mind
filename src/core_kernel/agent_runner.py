@@ -18,6 +18,7 @@ SUBAGENT_CONTROL_TOOLS = {"interrupt_agent", "list_agents"}
 SUBAGENT_ALL = SUBAGENT_STREAM_TOOLS | SUBAGENT_CONTROL_TOOLS
 ASK_USER_TOOL = "ask_user"
 TODO_WRITE_TOOL = "todo_write"
+OPEN_CANVAS_TOOL = "open_canvas"
 EXIT_PLAN_MODE_TOOL = "exit_plan_mode"
 APPROVAL_TOOLS = {"run_shell", "run_code", "write_file", "edit_file"}
 # Read / search tools never require approval
@@ -34,6 +35,7 @@ SAFE_TOOLS = {
     "image_search",
     "web_crawl",
     "todo_write",
+    "open_canvas",
     "ask_user",
     "exit_plan_mode",
 }
@@ -44,6 +46,7 @@ PLAN_ALLOWED_TOOLS = {
     "read_file",
     "ask_user",
     "exit_plan_mode",
+    "open_canvas",
     "kb_search",
     "kb_get",
     "kb_list",
@@ -74,6 +77,25 @@ def _merge_tool_call_deltas(
 
 
 def _trim_tool_payload(obj: Any, limit: int = 24000) -> Any:
+    # Keep write_file pre-images usable for DiffDock reject (cap previous alone).
+    if isinstance(obj, dict) and "previous" in obj:
+        out = {k: v for k, v in obj.items() if k != "previous"}
+        prev = obj.get("previous")
+        if isinstance(prev, str):
+            if len(prev) > 120_000:
+                out["previous"] = prev[:120_000]
+                out["previous_truncated"] = True
+            else:
+                out["previous"] = prev
+        try:
+            raw = json.dumps(out, ensure_ascii=False, default=str)
+        except TypeError:
+            raw = str(out)
+        if len(raw) <= max(limit, 160_000):
+            return out
+        out.pop("previous", None)
+        out["previous_omitted"] = True
+        return out
     try:
         raw = json.dumps(obj, ensure_ascii=False, default=str)
     except TypeError:
@@ -209,7 +231,7 @@ def _known_short_tools() -> set:
         SUBAGENT_ALL
         | APPROVAL_TOOLS
         | PLAN_ALLOWED_TOOLS
-        | {ASK_USER_TOOL, TODO_WRITE_TOOL, EXIT_PLAN_MODE_TOOL}
+        | {ASK_USER_TOOL, TODO_WRITE_TOOL, OPEN_CANVAS_TOOL, EXIT_PLAN_MODE_TOOL}
     )
 
 
@@ -799,6 +821,21 @@ async def _run_agent_stream_inner(
                             "delta": "",
                             "done": False,
                             "todos": {"items": items, "call_id": payload.get("id")},
+                        }
+                    if item["base"] == OPEN_CANVAS_TOOL and payload.get("success"):
+                        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+                        payload = {**payload, "kind": "canvas"}
+                        yield {
+                            "delta": "",
+                            "done": False,
+                            "canvas_open": {
+                                "kind": result.get("kind") or "markdown",
+                                "title": result.get("title") or "Canvas",
+                                "body": result.get("body") or "",
+                                "dedupeKey": result.get("dedupe_key") or result.get("path") or "",
+                                "path": result.get("path") or "",
+                                "call_id": payload.get("id"),
+                            },
                         }
                     yield {"delta": "", "done": False, "tool_result": payload}
                     _append_tool_result(payload)

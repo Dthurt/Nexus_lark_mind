@@ -29,4 +29,4 @@ Raising the Composer **体验档** does **not** block the request. When the curr
 - [x] Reject / convert Draw.io fences on `fast` at render time
 - [ ] Telemetry: format used vs tier
 
-See also: [diagrams.md](./diagrams.md), [interaction-modes.md](./interaction-modes.md).
+See also: [diagrams.md](./diagrams.md), [canvas.md](./canvas.md), [interaction-modes.md](./interaction-modes.md).

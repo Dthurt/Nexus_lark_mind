@@ -34,7 +34,7 @@ class WebAdapter(BaseAdapter):
 
     async def handle_inbound(self, payload: Dict[str, Any]) -> Optional[StandardTask]:
         content = (payload.get("content") or "").strip()
-        if not content:
+        if not content and not payload.get("context_refs"):
             return None
         session_id = payload.get("session_id") or new_id("web_")
         user_id = payload.get("user_id") or "web-user"
@@ -76,6 +76,27 @@ class WebAdapter(BaseAdapter):
             meta["experience_tier"] = str(payload.get("experience_tier") or "").strip().lower()
         if payload.get("reasoning_effort") is not None:
             meta["reasoning_effort"] = str(payload.get("reasoning_effort") or "").strip().lower()
+
+        refs = payload.get("context_refs")
+        if isinstance(refs, list) and refs and cwd:
+            try:
+                from src.common.context_refs import expand_context_refs, merge_user_content_with_context
+
+                block, resolved = expand_context_refs(
+                    cwd,
+                    refs,
+                    workspace_kind=meta.get("workspace_kind") or "local",
+                )
+                if block:
+                    content = merge_user_content_with_context(content, block)
+                if resolved:
+                    meta["context_refs"] = resolved
+            except Exception:
+                logger.exception("Failed expanding context_refs")
+
+        if not content.strip():
+            return None
+
         task = StandardTask(
             session_id=session_id,
             channel=ChannelType.WEB,

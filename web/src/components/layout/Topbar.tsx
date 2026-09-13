@@ -2,6 +2,7 @@ import type { ComponentProps } from "react";
 import {
   Contrast,
   Flower2,
+  LayoutTemplate,
   Moon,
   PanelLeft,
   PanelRight,
@@ -60,6 +61,8 @@ export type TopbarProps = {
   title?: string;
   centerView?: CenterViewId;
   onCenterViewChange?: (view: CenterViewId) => void;
+  canvasOpen?: boolean;
+  onToggleCanvas?: () => void;
   workspaceTitle?: string;
   cwd?: string;
   workspaceKind?: string;
@@ -75,6 +78,8 @@ export function Topbar({
   title = "新对话",
   centerView = "chat",
   onCenterViewChange,
+  canvasOpen = false,
+  onToggleCanvas,
   workspaceTitle = "",
   cwd = "",
   workspaceKind = "local",
@@ -126,6 +131,16 @@ export function Topbar({
         value={centerView}
         onChange={onCenterViewChange}
       />
+
+      <IconButton
+        title={canvasOpen ? "关闭 Canvas" : "打开 Canvas"}
+        aria-label={canvasOpen ? "关闭 Canvas" : "打开 Canvas"}
+        aria-pressed={canvasOpen}
+        onClick={onToggleCanvas}
+        className={cn(canvasOpen && "bg-primary/15 text-primary")}
+      >
+        <LayoutTemplate className="size-4" />
+      </IconButton>
 
       <IconButton
         title="命令面板 (Ctrl+K)"

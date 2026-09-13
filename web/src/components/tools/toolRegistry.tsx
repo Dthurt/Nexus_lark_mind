@@ -5,17 +5,24 @@ import {
   type GenericToolCardProps,
   type ToolCardItem,
 } from "./GenericToolCard";
+import { getSlot, listSlotKeys, registerSlot, SlotNames, unregisterSlot } from "@/runtime/pluginSlots";
 
 export type ToolViewProps = GenericToolCardProps;
 export type ToolViewComponent = ComponentType<ToolViewProps>;
-
-const toolViews = new Map<string, ToolViewComponent>();
 
 /** Register a custom tool call view keyed by tool name / openai_name. */
 export function registerToolView(key: string, component: ToolViewComponent): void {
   const k = String(key || "").trim();
   if (!k) return;
-  toolViews.set(k, component);
+  registerSlot(SlotNames.TOOL_CALL_VIEW, k, component, { kind: "tool_view" });
+}
+
+export function unregisterToolView(key: string): boolean {
+  return unregisterSlot(SlotNames.TOOL_CALL_VIEW, key);
+}
+
+export function listRegisteredToolViews(): string[] {
+  return listSlotKeys(SlotNames.TOOL_CALL_VIEW);
 }
 
 /** Resolve a registered tool view, falling back to GenericToolCard. */
@@ -25,7 +32,7 @@ export function getToolView(
 ): ToolViewComponent {
   for (const key of [openaiName, name]) {
     if (!key) continue;
-    const hit = toolViews.get(key);
+    const hit = getSlot<ToolViewComponent>(SlotNames.TOOL_CALL_VIEW, key);
     if (hit) return hit;
   }
   return GenericToolCard;
@@ -55,3 +62,4 @@ export function ToolCallView({
 
 export type { ToolCardItem };
 export { GenericToolCard };
+export { SlotNames };

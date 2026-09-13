@@ -117,16 +117,31 @@
 
 ---
 
+## 9.1 工作台 Canvas（旁侧产物）
+
+Web 中栏支持 Chat∥Canvas 分栏：会话级多 tab 文档、编辑器、Agent 工具 `open_canvas`、可选落盘 `.nlm/canvases/`。
+
+| 层 | 职责 |
+|----|------|
+| Kernel | `open_canvas` 工具；返回 body/path；chunk `canvas_open` |
+| Orchestrator | `EventType.TASK_CANVAS_OPEN` → SSE |
+| Adapters | `POST /api/sessions/{id}/canvas`；透传 SSE |
+| Web | `useChatStream` → `nlm-canvas-open` → `CanvasPane` |
+
+完整说明：[canvas.md](./canvas.md)、[client-architecture.md](./client-architecture.md)。
+
+---
+
 ## 10. 架构图
 
 ```mermaid
 flowchart LR
-    subgraph Web["Web Frontend"]
-        W1["App.vue"]
-        W2["Views"]
-        W3["Components"]
-        W4["Composables"]
-        W5["Runtime"]
+    subgraph Web["Web Frontend (React)"]
+        W1["WorkbenchPage"]
+        W2["CanvasPane"]
+        W3["RightDock"]
+        W4["Hooks / SSE"]
+        W5["pluginSlots"]
     end
 
     subgraph Adapters["Adapters (Port 8000)"]
@@ -203,3 +218,15 @@ flowchart LR
     A1 -.->|"HTTP RPC"| K1
     O1 -.->|"HTTP RPC"| K1
 ```
+
+---
+
+## 相关文档
+
+- [README（文档索引）](./README.md)
+- [client-architecture.md](./client-architecture.md) — React 工作台
+- [canvas.md](./canvas.md) — 旁侧 Canvas
+- [diagrams.md](./diagrams.md) — 聊天内图表
+- [workspaces.md](./workspaces.md) — 工作区与 `.nlm/`
+- [plugins.md](./plugins.md) — 插件与前端槽位
+- [deferred.md](./deferred.md) — 已完成 / 仍延期

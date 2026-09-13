@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { RefreshCw, X } from "lucide-react";
 
+import { getPluginConfig } from "@/api/endpoints";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
@@ -8,6 +9,9 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { TeamsPanel } from "@/components/layout/TeamsPanel";
 import { DeliveryPanel } from "@/components/layout/DeliveryPanel";
+import { MarketplacePanel } from "@/components/layout/MarketplacePanel";
+import { ExtensionsPanel } from "@/components/layout/ExtensionsPanel";
+import type { MarketplaceCatalog } from "@/api/endpoints";
 import type { DockPane, useRightDock } from "@/hooks/useRightDock";
 import type { DeliveryArtifactApi } from "@/hooks/useDeliveryArtifact";
 import {
@@ -17,7 +21,7 @@ import {
 } from "@/lib/contextEstimate";
 import { formatTokenCount } from "@/lib/pricing";
 import { pretty } from "@/lib/pretty";
-import type { Plugin, Tool, Usage } from "@/types/api";
+import type { Plugin, PluginConfigField, PluginConfigSchema, Tool, Usage } from "@/types/api";
 import { cn } from "@/lib/utils";
 
 export type ActivityItem = {
@@ -65,6 +69,11 @@ export type RightDockProps = {
     pluginId: string,
     values: Record<string, string>,
   ) => void | Promise<void>;
+  marketplace?: MarketplaceCatalog | null;
+  marketplaceLoading?: boolean;
+  onLoadMarketplace?: () => void | Promise<void>;
+  onInstallPluginPath?: (path: string) => void | Promise<void>;
+  onInstallPluginZip?: (file: File) => void | Promise<void>;
   onInspectJob?: (activityId: string) => void;
   onStopJob?: (callId?: string) => void;
   className?: string;
@@ -107,6 +116,12 @@ export function RightDock({
   onReloadOne,
   onRetryPlugin,
   onViewSchema,
+  onSavePluginConfig,
+  marketplace = null,
+  marketplaceLoading = false,
+  onLoadMarketplace,
+  onInstallPluginPath,
+  onInstallPluginZip,
   onInspectJob,
   onStopJob,
   className,
@@ -264,9 +279,18 @@ export function RightDock({
                       setExpanded((m) => ({ ...m, [id]: !m[id] }))
                     }
                     onToggle={onToggle}
+                    onReload={onReload}
                     onReloadOne={onReloadOne}
                     onRetryPlugin={onRetryPlugin}
                     onShowSchema={showSchema}
+                    onSavePluginConfig={onSavePluginConfig}
+                    reloading={reloading}
+                    marketplace={marketplace}
+                    marketplaceLoading={marketplaceLoading}
+                    onLoadMarketplace={onLoadMarketplace}
+                    onInstallPluginPath={onInstallPluginPath}
+                    onInstallPluginZip={onInstallPluginZip}
+                    onEnableFromMarket={(id) => void onTogglePlugin?.(id, true)}
                   />
                 )}
                 {kind === "teams" && <TeamsPanel teamId={teamId} />}
@@ -370,9 +394,18 @@ function PluginsPanel({
   toggling,
   onExpand,
   onToggle,
+  onReload,
   onReloadOne,
   onRetryPlugin,
   onShowSchema,
+  onSavePluginConfig,
+  reloading = false,
+  marketplace = null,
+  marketplaceLoading = false,
+  onLoadMarketplace,
+  onInstallPluginPath,
+  onInstallPluginZip,
+  onEnableFromMarket,
 }: {
   plugins: Plugin[];
   pluginError?: string | null;
@@ -380,122 +413,377 @@ function PluginsPanel({
   toggling: Record<string, boolean>;
   onExpand: (id: string) => void;
   onToggle: (plugin: Plugin, enabled: boolean) => void;
+  onReload?: () => void | Promise<void>;
   onReloadOne?: (pluginId: string) => void | Promise<void>;
   onRetryPlugin?: (pluginId: string) => void | Promise<void>;
   onShowSchema: (tool: Tool) => void;
+  onSavePluginConfig?: (
+    pluginId: string,
+    values: Record<string, string>,
+  ) => void | Promise<void>;
+  reloading?: boolean;
+  marketplace?: MarketplaceCatalog | null;
+  marketplaceLoading?: boolean;
+  onLoadMarketplace?: () => void | Promise<void>;
+  onInstallPluginPath?: (path: string) => void | Promise<void>;
+  onInstallPluginZip?: (file: File) => void | Promise<void>;
+  onEnableFromMarket?: (pluginId: string) => void | Promise<void>;
 }) {
+  const [tab, setTab] = useState<"installed" | "market" | "extensions">("installed");
+  const [installBusy, setInstallBusy] = useState<string | null>(null);
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-2.5">
-      <p className="m-0 text-[10.5px] text-muted-foreground">
-        启停写入 prefs；仅 ready 进入模型工具列表
-      </p>
-      {pluginError ? (
-        <p className="m-0 text-[10.5px] text-destructive">{pluginError}</p>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 gap-0.5 border-b border-border/60 px-2 pt-1.5">
+        {(
+          [
+            ["installed", "已安装"],
+            ["market", "市场"],
+            ["extensions", "扩展槽"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={cn(
+              "rounded-t px-2 py-1 text-[11px]",
+              tab === id
+                ? "bg-muted/50 font-medium text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "market" ? (
+        <MarketplacePanel
+          catalog={marketplace}
+          loading={marketplaceLoading}
+          busyId={installBusy}
+          onRefresh={onLoadMarketplace}
+          onInstallPath={async (path) => {
+            setInstallBusy(path);
+            try {
+              await onInstallPluginPath?.(path);
+            } finally {
+              setInstallBusy(null);
+            }
+          }}
+          onInstallZip={async (file) => {
+            setInstallBusy(file.name);
+            try {
+              await onInstallPluginZip?.(file);
+            } finally {
+              setInstallBusy(null);
+            }
+          }}
+          onEnable={async (pluginId) => {
+            setInstallBusy(pluginId);
+            try {
+              await onEnableFromMarket?.(pluginId);
+            } finally {
+              setInstallBusy(null);
+            }
+          }}
+        />
       ) : null}
-      {!pluginError && plugins.length === 0 ? (
-        <p className="m-0 text-[10.5px] text-muted-foreground">暂无插件</p>
-      ) : null}
-      <div className="flex flex-col gap-1.5">
-        {plugins.map((p) => {
-          const open = !!expanded[p.plugin_id];
-          return (
-            <div
-              key={p.plugin_id}
-              className={cn(
-                "rounded-lg border border-border bg-foreground/[0.03] px-2.5 py-2",
-                p.state === "error" && "border-destructive/40",
-              )}
-            >
-              <div className="flex items-start gap-2">
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 text-left"
-                  onClick={() => onExpand(p.plugin_id)}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-semibold">{p.name || p.plugin_id}</span>
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "h-4 px-1 font-mono text-[10px] uppercase",
-                        p.state === "ready" && "border-teal/40 text-teal",
-                        p.state === "error" && "border-destructive/50 text-destructive",
-                      )}
-                    >
-                      {p.state || "—"}
-                    </Badge>
-                  </div>
-                  <div className="font-mono text-[10.5px] text-muted-foreground">
-                    {p.plugin_id} · {p.kind}
-                  </div>
-                </button>
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-7"
-                    onClick={() => void onReloadOne?.(p.plugin_id)}
-                  >
-                    <RefreshCw className="size-3" />
-                  </Button>
-                  <Switch
-                    checked={!!p.enabled}
-                    disabled={!!toggling[p.plugin_id]}
-                    onCheckedChange={(v) => onToggle(p, v)}
-                  />
-                </div>
-              </div>
-              {p.last_error && p.state === "error" ? (
-                <div className="mt-1.5 text-[10.5px] text-destructive">{p.last_error}</div>
-              ) : null}
-              {p.state === "error" ? (
+
+      {tab === "extensions" ? <ExtensionsPanel /> : null}
+
+      {tab === "installed" ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-2.5">
+          <p className="m-0 text-[10.5px] text-muted-foreground">
+            启停写入 prefs；仅 <span className="font-mono text-teal">ready</span> 进入模型工具列表
+          </p>
+          {pluginError ? (
+            <p className="m-0 text-[10.5px] text-destructive">{pluginError}</p>
+          ) : null}
+          {!pluginError && plugins.length === 0 ? (
+            <div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-3 py-4 text-center">
+              <p className="m-0 text-[12px] font-medium text-foreground/90">暂无插件</p>
+              <p className="mt-1 text-[10.5px] leading-relaxed text-muted-foreground">
+                打开「市场」安装 catalog 包，或重载 plugins_volume。
+              </p>
+              <div className="mt-3 flex justify-center gap-2">
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
-                  className="mt-1 h-7 px-2 text-[11px]"
-                  onClick={() => void onRetryPlugin?.(p.plugin_id)}
+                  className="h-7 gap-1.5 px-2.5 text-[11px]"
+                  onClick={() => setTab("market")}
                 >
-                  重试启用
+                  打开市场
                 </Button>
-              ) : null}
-              {(p.config_hints || []).map((h, i) => (
-                <div key={i} className="mt-1 text-[10.5px] text-[hsl(var(--tool))]">
-                  {h}
-                </div>
-              ))}
-              {open ? (
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {(p.tools || []).length ? (
-                    (p.tools || []).map((t) => (
-                      <button
-                        key={t.name}
-                        type="button"
-                        onClick={() => onShowSchema(t)}
-                      >
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2.5 text-[11px]"
+                  disabled={reloading}
+                  onClick={() => void onReload?.()}
+                >
+                  <RefreshCw className={cn("size-3", reloading && "animate-spin")} />
+                  重载
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-1">
+            {plugins.map((p) => {
+              const open = !!expanded[p.plugin_id];
+              const toolCount = (p.tools || []).length || Number(p.tool_count || 0);
+              const hasConfig =
+                !!(p.config_schema?.has_schema || (p.config_schema?.fields || []).length) ||
+                !!(p.config_hints || []).length;
+              return (
+                <div
+                  key={p.plugin_id}
+                  className={cn(
+                    "rounded-md border border-border/70 bg-foreground/[0.02] px-2 py-1.5",
+                    p.state === "error" && "border-destructive/40",
+                    p.enabled && p.state === "ready" && "border-teal/25",
+                  )}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => onExpand(p.plugin_id)}
+                    >
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-[12px] font-semibold text-foreground/95">
+                          {p.name || p.plugin_id}
+                        </span>
                         <Badge
                           variant="outline"
                           className={cn(
-                            "font-mono text-[10px]",
-                            p.state === "ready" && "border-teal/35 text-teal",
+                            "h-4 shrink-0 px-1 font-mono text-[9.5px] uppercase",
+                            p.state === "ready" && "border-teal/40 text-teal",
+                            p.state === "error" && "border-destructive/50 text-destructive",
                           )}
                         >
-                          {t.name}
+                          {p.state || "—"}
                         </Badge>
-                      </button>
-                    ))
-                  ) : (
-                    <Badge variant="outline" className="text-[10px]">
-                      {p.enabled ? "no tools" : "已禁用"}
-                    </Badge>
-                  )}
+                        {toolCount > 0 ? (
+                          <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                            {toolCount} tools
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="truncate font-mono text-[10px] text-muted-foreground/80">
+                        {p.plugin_id}
+                        {p.kind ? ` · ${p.kind}` : ""}
+                      </div>
+                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-6 shrink-0"
+                      title="重载此插件"
+                      onClick={() => void onReloadOne?.(p.plugin_id)}
+                    >
+                      <RefreshCw className="size-3" />
+                    </Button>
+                    <Switch
+                      checked={!!p.enabled}
+                      disabled={!!toggling[p.plugin_id]}
+                      onCheckedChange={(v) => onToggle(p, v)}
+                    />
+                  </div>
+                  {p.last_error && p.state === "error" ? (
+                    <div className="mt-1 text-[10.5px] leading-snug text-destructive">
+                      {p.last_error}
+                    </div>
+                  ) : null}
+                  {p.state === "error" ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="mt-1 h-6 px-1.5 text-[11px]"
+                      onClick={() => void onRetryPlugin?.(p.plugin_id)}
+                    >
+                      重试启用
+                    </Button>
+                  ) : null}
+                  {(p.config_hints || []).map((h, i) => (
+                    <div key={i} className="mt-1 text-[10.5px] text-[hsl(var(--tool))]">
+                      {h}
+                    </div>
+                  ))}
+                  {open ? (
+                    <div className="mt-2 space-y-2 border-t border-border/40 pt-2">
+                      {hasConfig && onSavePluginConfig ? (
+                        <PluginConfigForm plugin={p} onSave={onSavePluginConfig} />
+                      ) : null}
+                      <div className="flex flex-wrap gap-1">
+                        {(p.tools || []).length ? (
+                          (p.tools || []).map((t) => (
+                            <button key={t.name} type="button" onClick={() => onShowSchema(t)}>
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "font-mono text-[10px]",
+                                  p.state === "ready" && "border-teal/35 text-teal",
+                                )}
+                              >
+                                {t.name}
+                              </Badge>
+                            </button>
+                          ))
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">
+                            {p.enabled ? "no tools" : "已禁用"}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PluginConfigForm({
+  plugin,
+  onSave,
+}: {
+  plugin: Plugin;
+  onSave: (pluginId: string, values: Record<string, string>) => void | Promise<void>;
+}) {
+  const [schema, setSchema] = useState<PluginConfigSchema | null>(
+    plugin.config_schema || null,
+  );
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [savedHint, setSavedHint] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    void getPluginConfig(plugin.plugin_id)
+      .then((data) => {
+        if (cancelled) return;
+        setSchema(data);
+        const next: Record<string, string> = {};
+        for (const f of data.fields || []) {
+          if (f.secret) next[f.key] = "";
+          else if (f.value != null) next[f.key] = String(f.value);
+          else if (data.values?.[f.key] != null) next[f.key] = String(data.values[f.key]);
+          else next[f.key] = "";
+        }
+        setValues(next);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        // Fall back to embedded schema if fetch fails
+        if (plugin.config_schema?.fields?.length) {
+          setSchema(plugin.config_schema);
+          const next: Record<string, string> = {};
+          for (const f of plugin.config_schema.fields) {
+            next[f.key] = f.secret ? "" : String(f.value ?? "");
+          }
+          setValues(next);
+        } else {
+          setError(String(err?.message || err || "无法加载配置"));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [plugin.plugin_id, plugin.config_schema]);
+
+  const fields: PluginConfigField[] = schema?.fields || [];
+  if (!loading && !fields.length && !(plugin.config_hints || []).length) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">配置</div>
+      {loading ? (
+        <p className="m-0 text-[10.5px] text-muted-foreground">加载中…</p>
+      ) : null}
+      {error ? <p className="m-0 text-[10.5px] text-destructive">{error}</p> : null}
+      {fields.map((f) => (
+        <label key={f.key} className="block space-y-0.5">
+          <span className="text-[10.5px] text-foreground/85">{f.label || f.key}</span>
+          {f.hint ? (
+            <span className="block text-[10px] text-muted-foreground">{f.hint}</span>
+          ) : null}
+          {f.type === "select" && Array.isArray(f.options) ? (
+            <select
+              className="h-7 w-full rounded-md border border-border bg-background px-1.5 font-mono text-[11px]"
+              value={values[f.key] || ""}
+              onChange={(e) => setValues((m) => ({ ...m, [f.key]: e.target.value }))}
+            >
+              <option value="">—</option>
+              {f.options.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type={f.secret ? "password" : "text"}
+              className="h-7 w-full rounded-md border border-border bg-background px-1.5 font-mono text-[11px]"
+              placeholder={
+                f.secret && f.set
+                  ? f.preview || "已设置 · 留空不改"
+                  : f.placeholder || ""
+              }
+              value={values[f.key] || ""}
+              onChange={(e) => setValues((m) => ({ ...m, [f.key]: e.target.value }))}
+            />
+          )}
+        </label>
+      ))}
+      {fields.length ? (
+        <div className="flex items-center gap-2 pt-0.5">
+          <Button
+            type="button"
+            size="sm"
+            className="h-6 px-2 text-[11px]"
+            disabled={saving}
+            onClick={() => {
+              setSaving(true);
+              setError("");
+              setSavedHint("");
+              const payload: Record<string, string> = {};
+              for (const f of fields) {
+                const v = values[f.key];
+                if (f.secret && !(v || "").trim()) continue;
+                payload[f.key] = v ?? "";
+              }
+              void Promise.resolve(onSave(plugin.plugin_id, payload))
+                .then(() => setSavedHint("已保存"))
+                .catch((err: any) => setError(String(err?.message || err)))
+                .finally(() => setSaving(false));
+            }}
+          >
+            {saving ? "保存中…" : "保存配置"}
+          </Button>
+          {savedHint ? (
+            <span className="text-[10.5px] text-teal">{savedHint}</span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -605,32 +893,63 @@ function ActivityPanel({
   highlightActivityId?: string | null;
   onOpen: (item: ActivityItem) => void;
 }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-2.5">
       <p className="m-0 text-[10.5px] text-muted-foreground">本会话工具活动</p>
       {!activity.length ? (
         <p className="m-0 text-[10.5px] text-muted-foreground">暂无工具活动</p>
       ) : (
-        <div className="flex flex-col gap-1.5">
-          {activity.map((item) => (
-            <button
-              key={item.id || item.at}
-              type="button"
-              className={cn(
-                "rounded-lg border border-[hsl(var(--tool)/0.22)] bg-[hsl(var(--tool)/0.06)] px-2 py-1.5 text-left text-[10.5px]",
-                item.id &&
-                  item.id === highlightActivityId &&
-                  "outline outline-1 outline-primary/55 bg-primary/15",
-              )}
-              onClick={() => onOpen(item)}
-            >
-              <span className="mr-1.5 font-mono text-[hsl(var(--tool))]">{item.kind}</span>
-              <span className="font-mono">{item.name}</span>
-              <pre className="mt-1 max-h-[90px] overflow-auto whitespace-pre-wrap break-words text-muted-foreground">
-                {pretty(item.detail)}
-              </pre>
-            </button>
-          ))}
+        <div className="flex flex-col gap-1">
+          {activity.map((item) => {
+            const rowId = String(item.id || item.at || "");
+            const open = expandedId === rowId;
+            const line = (() => {
+              if (item.detail == null) return "";
+              try {
+                const text =
+                  typeof item.detail === "string"
+                    ? item.detail
+                    : JSON.stringify(item.detail);
+                return text.replace(/\s+/g, " ").trim().slice(0, 100);
+              } catch {
+                return String(item.detail).slice(0, 100);
+              }
+            })();
+            return (
+              <button
+                key={rowId}
+                type="button"
+                className={cn(
+                  "rounded-md border border-border/60 bg-foreground/[0.03] px-2 py-1.5 text-left text-[10.5px] transition-colors",
+                  "hover:border-[hsl(var(--tool)/0.35)] hover:bg-[hsl(var(--tool)/0.06)]",
+                  item.id &&
+                    item.id === highlightActivityId &&
+                    "outline outline-1 outline-primary/55 bg-primary/15",
+                )}
+                onClick={() => {
+                  setExpandedId((cur) => (cur === rowId ? null : rowId));
+                  onOpen(item);
+                }}
+              >
+                <div className="flex items-baseline gap-1.5">
+                  <span className="shrink-0 font-mono text-[hsl(var(--tool))]">{item.kind}</span>
+                  <span className="min-w-0 truncate font-mono">{item.name}</span>
+                </div>
+                {line && !open ? (
+                  <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                    {line}
+                  </div>
+                ) : null}
+                {open && item.detail != null ? (
+                  <pre className="mt-1 max-h-[120px] overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground">
+                    {pretty(item.detail)}
+                  </pre>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

@@ -44,6 +44,7 @@ class EventType(str, Enum):
     TASK_TOOL_APPROVAL = "task.tool_approval"
     TASK_ASK_USER = "task.ask_user"
     TASK_TODOS = "task.todos"
+    TASK_CANVAS_OPEN = "task.canvas_open"
     TASK_PLAN_REVIEW = "task.plan_review"
     TASK_PLAN_READY = "task.plan_ready"
     TASK_PLAN_MODE = "task.plan_mode"

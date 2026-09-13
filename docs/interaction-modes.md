@@ -67,7 +67,7 @@ Local preference: `localStorage.nlm_busy_enter` = `queue` \| `steer`.
 ## Plan mode
 
 1. User enables **计划**.
-2. Agent may use: `glob`, `grep`, `list_dir`, `read_file`, `ask_user`.
+2. Agent may use: `glob`, `grep`, `list_dir`, `read_file`, `ask_user`, `open_canvas`.
 3. Writes/shell are blocked in the runner (not only by prompt).
 4. When the turn ends with a text plan, SSE `task.plan_ready` marks the assistant bubble.
 5. **接受计划并执行** → `POST /api/sessions/{id}/accept-plan` flips to `agent`, enqueues an execute turn.
@@ -133,6 +133,9 @@ with a Redis/KV **mirror** so orphans can be detected after a Kernel restart.
 | **推理强度** `reasoning_effort` | Composer + session | Passed on `ModelRequest` (OpenAI-compat `reasoning_effort`) |
 | **Jobs** tab | RightDock | Running / recent tools & subagents from the timeline |
 | **Delivery** tab | RightDock | Plan → Diagrams → Code changes audit doc (auto on plan approve) |
+| **Canvas** pane | Topbar / toolbars / `open_canvas` | Editable side artifacts (Chat∥Canvas); see [canvas.md](./canvas.md) |
+| **@ context** | Composer `@` / chips | Attach files/dirs into the model prompt; [context-and-diff.md](./context-and-diff.md) |
+| **Diff review** | Above composer after write/edit | Accept / revert applied mutations; [context-and-diff.md](./context-and-diff.md) |
 
 ## Delivery artifact (Plan → Diagram → Changes)
 
@@ -141,8 +144,11 @@ When you **批准并执行** a plan (gate path or legacy accept-plan):
 1. NLM builds a markdown **Delivery** doc: plan body, extracted Mermaid/Draw.io fences, mutation tool summary (path · bytes/lines · replace hints).
 2. Posts it via `POST /api/sessions/{id}/delivery` → chat file card **and** local `{cwd}/.nlm/deliveries/*.md`.
 3. Opens RightDock **Delivery**; auto-syncs `write_file` / `edit_file` / … from `plugin-calls` after the turn.
+4. Optional: Delivery panel **Canvas** opens the same markdown in the side Canvas pane for comfortable reading/editing ([canvas.md](./canvas.md)).
 
-Demo: enable **计划** → ask for a feature plan with a Mermaid flow → approve → open `.nlm/deliveries/` in the workspace → sync after edits.
+Demo: enable **计划** → ask for a feature plan with a Mermaid flow → approve → open `.nlm/deliveries/` in the workspace → sync after edits → optionally **Canvas**.
+
+**Canvas vs Delivery:** Delivery is the plan-execution audit trail; Canvas is a general multi-tab side document (diagrams, tables, notes) that Agent can open with `open_canvas` and optionally persist under `.nlm/canvases/`.
 
 ## Feishu
 
@@ -157,4 +163,4 @@ Interactive cards for **tool approval**, **ask_user**, and **plan_review** are s
 
 Streaming reply cards + retry/clear remain as before.
 
-See also: [channels.md](./channels.md), [experience-tiers.md](./experience-tiers.md), [deferred.md](./deferred.md), [subagents.md](./subagents.md).
+See also: [channels.md](./channels.md), [experience-tiers.md](./experience-tiers.md), [canvas.md](./canvas.md), [diagrams.md](./diagrams.md), [deferred.md](./deferred.md), [subagents.md](./subagents.md).

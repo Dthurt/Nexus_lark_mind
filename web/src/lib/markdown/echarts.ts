@@ -157,7 +157,8 @@ export function disposeEchartsIn(root: HTMLElement | null) {
   });
 }
 
-function parseOption(raw: string) {
+/** Parse ECharts option JSON from fence body (tolerates model quirks). */
+export function parseEchartsOption(raw: string) {
   let text = String(raw || "").trim();
   if (!text) throw new Error("empty echarts option");
   text = text
@@ -171,6 +172,10 @@ function parseOption(raw: string) {
   text = text.replace(/,\s*([}\]])/g, "$1");
   text = text.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
   return JSON.parse(text);
+}
+
+function parseOption(raw: string) {
+  return parseEchartsOption(raw);
 }
 
 function asArray<T>(v: T | T[] | null | undefined): T[] {
@@ -269,6 +274,7 @@ function ensureChrome(block: HTMLElement, source: string) {
       <button type="button" class="mermaid-tool-btn icon-btn" data-echarts-action="copy" title="复制 JSON" aria-label="复制">${iconSvg("copy")}</button>
       <button type="button" class="mermaid-tool-btn icon-btn" data-echarts-action="download" title="下载 PNG" aria-label="下载">${iconSvg("download")}</button>
       <button type="button" class="mermaid-tool-btn icon-btn" data-echarts-action="fullscreen" title="全屏" aria-label="全屏">${iconSvg("fullscreen")}</button>
+      <button type="button" class="mermaid-tool-btn" data-echarts-action="canvas" title="在 Canvas 打开">Canvas</button>
       <button type="button" class="mermaid-zoom-btn icon-btn" data-echarts-zoom="out" title="缩小画布" aria-label="缩小">${iconSvg("minus")}</button>
       <button type="button" class="mermaid-zoom-btn icon-btn" data-echarts-zoom="in" title="放大画布" aria-label="放大">${iconSvg("plus")}</button>
       <button type="button" class="mermaid-tool-btn icon-btn" data-echarts-action="retry" title="重新渲染" aria-label="重试">${iconSvg("retry")}</button>
@@ -278,6 +284,16 @@ function ensureChrome(block: HTMLElement, source: string) {
       </span>
     `;
     block.insertBefore(bar, block.firstChild);
+  } else if (!block.querySelector('[data-echarts-action="canvas"]')) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mermaid-tool-btn";
+    btn.setAttribute("data-echarts-action", "canvas");
+    btn.title = "在 Canvas 打开";
+    btn.textContent = "Canvas";
+    const fs = block.querySelector('[data-echarts-action="fullscreen"]');
+    if (fs?.nextSibling) fs.parentElement?.insertBefore(btn, fs.nextSibling);
+    else block.querySelector(".echarts-toolbar")?.appendChild(btn);
   }
   if (!block.querySelector(".echarts-viewport")) {
     const viewport = document.createElement("div");
@@ -616,6 +632,22 @@ function bindControls(root: any) {
     }
     if (action === "fullscreen") {
       openFullscreen(block);
+      return;
+    }
+    if (action === "canvas") {
+      const body = (block.dataset.echartsSource || block.querySelector("pre.echarts-source")?.textContent || "").trim();
+      if (body) {
+        window.dispatchEvent(
+          new CustomEvent("nlm-canvas-open", {
+            detail: {
+              kind: "echarts",
+              title: "ECharts",
+              body,
+              dedupeKey: `echarts:${body.slice(0, 80)}`,
+            },
+          }),
+        );
+      }
       return;
     }
     if (action === "retry" && typeof block._nlmRetry === "function") {

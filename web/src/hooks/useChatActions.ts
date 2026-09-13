@@ -16,6 +16,10 @@ import {
 import type { ChatStreamApi } from "@/hooks/useChatStream";
 import type { ChatTimelineApi } from "@/hooks/useChatTimeline";
 import type { useTrajectory } from "@/hooks/useTrajectory";
+import {
+  addContextRef,
+  type ContextRef,
+} from "@/lib/contextRefs";
 
 type TrajectoryApi = ReturnType<typeof useTrajectory>;
 
@@ -119,6 +123,9 @@ export function useChatActions(opts: UseChatActionsOpts) {
     () => typeof localStorage === "undefined" || localStorage.getItem(MULTITASK_KEY) !== "0",
   );
   const [input, setInput] = useState("");
+  const [contextRefs, setContextRefs] = useState<ContextRef[]>([]);
+  const contextRefsRef = useRef(contextRefs);
+  contextRefsRef.current = contextRefs;
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [busyEnterMode, setBusyEnterModeState] = useState<BusyEnterMode>(() =>
     typeof localStorage !== "undefined" && localStorage.getItem(BUSY_ENTER_KEY) === "steer"
@@ -563,7 +570,9 @@ export function useChatActions(opts: UseChatActionsOpts) {
 
       stream.ensureSSE();
       const draft = content;
+      const refs = contextRefsRef.current.slice();
       setInput("");
+      setContextRefs([]);
       timeline.appendMessage("user", draft, { rich: false });
       if (!stream.turnOpenRef.current) {
         trajectory.startTurn();
@@ -609,6 +618,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
           cwd: cwd || undefined,
           workspace_kind: workspaceKind || undefined,
           ssh_host_id: sshHostId || undefined,
+          context_refs: refs.length ? refs : undefined,
         } as any);
         if ((data as any)?.task_id) onTaskId?.((data as any).task_id);
         if ((data as any)?.session_id && (data as any).session_id !== sessionIdRef.current) {
@@ -666,6 +676,11 @@ export function useChatActions(opts: UseChatActionsOpts) {
   return {
     input,
     setInput,
+    contextRefs,
+    addContextRef: (ref: ContextRef) => setContextRefs((prev) => addContextRef(prev, ref)),
+    removeContextRef: (path: string) =>
+      setContextRefs((prev) => prev.filter((r) => r.path !== path)),
+    clearContextRefs: () => setContextRefs([]),
     agentMode,
     setAgentMode,
     setAgentModeLocal,

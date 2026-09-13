@@ -263,6 +263,7 @@ export type SseEventType =
   | "task.plan_review"
   | "task.plan_mode"
   | "task.todos"
+  | "task.canvas_open"
   | "task.plan_ready"
   | "task.subagent"
   | "task.delta"
@@ -299,6 +300,8 @@ export type ChatSendBody = {
   cwd?: string;
   workspace_kind?: string;
   ssh_host_id?: string;
+  /** @ file/dir chips — expanded server-side into Attached context */
+  context_refs?: { path: string; kind?: "file" | "dir" | string; label?: string }[];
 };
 
 export type ApprovalAction = "allow" | "deny" | "allow_session" | "always" | string;

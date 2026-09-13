@@ -52,6 +52,7 @@ class WebChatRequest(BaseModel):
     plan_enforcement: Optional[str] = None
     experience_tier: Optional[str] = None
     reasoning_effort: Optional[str] = None
+    context_refs: Optional[list] = None
 
 
 class GateResolveRequest(BaseModel):
@@ -513,6 +514,82 @@ def create_adapters_app() -> FastAPI:
             },
         )
 
+    @app.post("/api/sessions/{session_id}/canvas")
+    async def post_session_canvas(session_id: str, request: Request):
+        """Publish Canvas content to chat + optional ``.nlm/canvases/`` on local cwd."""
+        from src.common.canvas_store import CanvasWriteError, write_canvas_to_workspace
+
+        orch: RpcClient = state["orchestrator"]
+        body = await request.json()
+        payload = dict(body) if isinstance(body, dict) else {}
+        content = str(payload.get("content") or "")
+        name = str(payload.get("name") or payload.get("file_name") or "Canvas.md").strip()
+        cwd = str(payload.get("cwd") or "").strip()
+        workspace_kind = str(payload.get("workspace_kind") or "local").strip() or "local"
+        kind = str(payload.get("kind") or "markdown").strip() or "markdown"
+        title = str(payload.get("title") or "").strip() or kind
+
+        file_card = await orch.call(
+            "POST",
+            f"/rpc/sessions/{session_id}/files",
+            json={
+                "name": name,
+                "content": content,
+                "mime": "text/markdown",
+                "path": payload.get("path"),
+            },
+        )
+        workspace: Dict[str, Any] = {"ok": False}
+        if cwd:
+            try:
+                workspace = write_canvas_to_workspace(
+                    cwd,
+                    file_name=name,
+                    content=content,
+                    workspace_kind=workspace_kind,
+                )
+            except CanvasWriteError as exc:
+                workspace = {"ok": False, "error": str(exc)}
+            except Exception as exc:
+                logger.exception("canvas workspace write failed")
+                workspace = {"ok": False, "error": str(exc)}
+        return RpcEnvelope(
+            ok=True,
+            data={
+                "session_id": session_id,
+                "file": file_card,
+                "workspace": workspace,
+                "canvas": {"kind": kind, "title": title, "body": content},
+            },
+        )
+
+    @app.post("/api/sessions/{session_id}/diff-revert")
+    async def post_diff_revert(session_id: str, request: Request):
+        """Undo a write_file / edit_file that already landed on disk (DiffDock reject)."""
+        from src.common.diff_revert import DiffRevertError, revert_workspace_mutation
+
+        body = await request.json()
+        payload = dict(body) if isinstance(body, dict) else {}
+        cwd = str(payload.get("cwd") or "").strip()
+        try:
+            out = revert_workspace_mutation(
+                cwd,
+                path=str(payload.get("path") or ""),
+                tool=str(payload.get("tool") or ""),
+                workspace_kind=str(payload.get("workspace_kind") or "local"),
+                created=bool(payload.get("created")),
+                previous=payload.get("previous"),
+                old_string=payload.get("old_string"),
+                new_string=payload.get("new_string"),
+                replace_all=bool(payload.get("replace_all")),
+            )
+            return RpcEnvelope(ok=True, data={"session_id": session_id, **out})
+        except DiffRevertError as exc:
+            return RpcEnvelope(ok=False, error={"message": str(exc)})
+        except Exception as exc:
+            logger.exception("diff revert failed")
+            return RpcEnvelope(ok=False, error={"message": str(exc)})
+
     @app.get("/api/chat/stream")
     async def web_sse(session_id: str, after: str = ""):
         web: WebAdapter = state["web"]
@@ -924,6 +1001,24 @@ def create_adapters_app() -> FastAPI:
         kernel: RpcClient = state["kernel"]
         body = await request.json()
         data = await kernel.call("PUT", f"/rpc/plugins/{plugin_id}/config", json=body)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/plugins/marketplace")
+    async def plugins_marketplace():
+        """Local marketplace: bundled volume plugins + plugin_catalog packs."""
+        from src.common.plugin_marketplace import build_marketplace
+
+        kernel: RpcClient = state["kernel"]
+        installed_ids: set[str] = set()
+        try:
+            listed = await kernel.call("GET", "/rpc/plugins")
+            if isinstance(listed, list):
+                for row in listed:
+                    if isinstance(row, dict) and row.get("plugin_id"):
+                        installed_ids.add(str(row["plugin_id"]))
+        except Exception:
+            pass
+        data = build_marketplace(installed_ids=installed_ids)
         return RpcEnvelope(ok=True, data=data)
 
     @app.post("/api/plugins/install")

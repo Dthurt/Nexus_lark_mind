@@ -54,6 +54,21 @@ Chat may also pass `workspace_id` / `cwd` on `POST /api/chat` so the first messa
 2. `read_file` — inspect (offset/limit)
 3. `edit_file` / `write_file` — change
 4. `run_shell` — verify
+5. (optional) `open_canvas` — open lasting diagrams/tables beside chat
+
+## Workspace metadata under `.nlm/`
+
+When a **local** cwd is bound, NLM may write session artifacts under the workspace (never escapes the root):
+
+| Path | Writer | Purpose |
+|------|--------|---------|
+| `.nlm/deliveries/*.md` | Delivery publish / plan approve | Plan → diagrams → code-change audit |
+| `.nlm/canvases/*` | `open_canvas` / Canvas **保存** / `POST …/canvas` | Side-pane documents (mermaid, echarts, markdown, …) |
+| `.nlm/instructions.md` | (optional, user) | Injected with `AGENTS.md` / `CLAUDE.md` into the system prompt |
+
+SSH workspaces: chat file cards still work; **disk writes under `.nlm/` are local-only** today (same constraint as Delivery).
+
+See [canvas.md](./canvas.md), [interaction-modes.md](./interaction-modes.md), [ssh-workspaces.md](./ssh-workspaces.md).
 
 ## Enable tools
 

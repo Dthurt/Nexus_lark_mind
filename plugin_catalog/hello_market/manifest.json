@@ -1,0 +1,11 @@
+{
+  "id": "hello_market",
+  "plugin_id": "cli.hello_market",
+  "kind": "cli",
+  "version": "0.1.0",
+  "label": "Hello Market",
+  "name": "Hello Market",
+  "description": "Sample marketplace pack — echoes stdin JSON. Install from Dock → 市场.",
+  "entry": "hello_market.py",
+  "enabled": true
+}

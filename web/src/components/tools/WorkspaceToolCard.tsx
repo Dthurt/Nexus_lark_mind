@@ -1,20 +1,12 @@
 import { useMemo, useState } from "react";
-import { ChevronRight } from "lucide-react";
 
 import { FileDiffBlock } from "@/components/tools/FileDiffBlock";
 import { GenericToolCard, type GenericToolCardProps } from "@/components/tools/GenericToolCard";
-import { ToolStatusBadge, ToolStopButton } from "@/components/tools/ToolStatusBadge";
-import { ApprovalDecisionBadge } from "@/components/chat/ApprovalDock";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { ToolChipShell } from "@/components/tools/ToolChipShell";
 import { lineDiff, writeFileAsDiff } from "@/lib/lineDiff";
 import { pretty } from "@/lib/pretty";
-import { resolveToolStatus, statusAccentBar, statusShellClass } from "@/lib/toolStatus";
+import { shortToolName } from "@/lib/toolChip";
+import { resolveToolStatus } from "@/lib/toolStatus";
 import { cn } from "@/lib/utils";
 
 function parseResult(raw: unknown) {
@@ -51,6 +43,30 @@ const BADGE_MAP: Record<string, string> = {
   edit_file: "EDIT",
   run_shell: "SHELL",
 };
+
+function PreBlock({
+  children,
+  tone = "default",
+  maxH = "max-h-40",
+}: {
+  children: string;
+  tone?: "default" | "error";
+  maxH?: string;
+}) {
+  return (
+    <pre
+      className={cn(
+        maxH,
+        "overflow-auto whitespace-pre-wrap break-words rounded-md p-2 font-mono text-[10.5px]",
+        tone === "error"
+          ? "border border-destructive/30 bg-destructive/5"
+          : "border border-border/50 bg-background/35 text-muted-foreground",
+      )}
+    >
+      {children}
+    </pre>
+  );
+}
 
 export function WorkspaceToolCard({
   item,
@@ -91,8 +107,8 @@ export function WorkspaceToolCard({
   }, [args, result, toolKey]);
 
   const summary = useMemo(() => {
-    if (item.error) return String(item.error).slice(0, 120);
-    if (!result && (item.status === "running" || !item.status)) return "Running…";
+    if (item.error) return String(item.error).slice(0, 100);
+    if (!result && (item.status === "running" || !item.status)) return "…";
     switch (toolKey) {
       case "grep":
         return `${args.pattern || ""} · ${result?.match_count ?? (result?.matches || []).length} 处`;
@@ -106,7 +122,7 @@ export function WorkspaceToolCard({
       case "edit_file":
         return args.path || result?.path || "";
       case "run_shell":
-        return `exit ${result?.exit_code ?? "?"} · ${String(args.command || "").slice(0, 60)}`;
+        return `exit ${result?.exit_code ?? "?"} · ${String(args.command || "").slice(0, 56)}`;
       default:
         return "";
     }
@@ -148,6 +164,7 @@ export function WorkspaceToolCard({
       <GenericToolCard
         item={item}
         nested={nested}
+        highlighted={highlighted}
         onInspect={onInspect}
         onOpenChange={onOpenChange}
         onStop={onStop}
@@ -156,139 +173,89 @@ export function WorkspaceToolCard({
   }
 
   const runStatus = resolveToolStatus(item);
-  const pending = runStatus === "running";
+  const title = shortToolName(item.name);
 
   return (
-    <Collapsible
-      open={open}
+    <ToolChipShell
+      callId={item.callId}
+      status={runStatus}
+      badge={badge}
+      title={title}
+      summary={summary}
+      durationMs={item.durationMs}
+      nested={nested}
+      highlighted={highlighted}
+      defaultOpen={open || !!item.open}
       onOpenChange={(next) => {
         setOpen(next);
         item.open = next;
         onOpenChange?.(next);
       }}
-      className={cn(
-        "tool-card relative w-full max-w-full self-stretch overflow-hidden rounded-lg border text-sm",
-        statusShellClass(runStatus),
-        nested && "ml-0",
-        highlighted && "ring-2 ring-amber-400/70 border-amber-400/50 shadow-[0_0_0_1px_rgba(251,191,36,0.25)]",
-      )}
-      data-approval-call={item.callId || undefined}
-    >
-      <div className={cn("absolute inset-y-0 left-0 w-0.5", statusAccentBar(runStatus))} aria-hidden />
-      <div className="flex items-center gap-1 pr-1.5">
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              "flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-2.5 text-left hover:bg-foreground/[0.03]",
-              open && !nested && "border-b border-border/40",
-            )}
+      onStop={() => onStop?.(item.callId)}
+      fullName={item.name}
+      openaiName={item.openaiName}
+      approvalDecision={item.approvalDecision}
+      activityId={item.activityId}
+      onInspect={onInspect}
+      headerExtra={
+        mutationStats ? (
+          <span
+            className="inline-flex shrink-0 gap-1 font-mono text-[11px] tabular-nums"
+            aria-label="line changes"
           >
-            <ChevronRight
-              className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
-              aria-hidden
-            />
-            <Badge
-              variant="outline"
-              className="h-5 shrink-0 border-border/60 bg-background/30 px-1.5 font-mono text-[10px] font-medium text-muted-foreground"
-            >
-              {badge}
-            </Badge>
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/90">{item.name}</span>
-            <ToolStatusBadge status={runStatus} />
-            <ApprovalDecisionBadge decision={(item as any).approvalDecision} />
-            {mutationStats ? (
-              <span
-                className="inline-flex shrink-0 gap-1.5 font-mono text-[11px] tabular-nums"
-                aria-label="line changes"
-              >
-                {mutationStats.adds ? (
-                  <span className="font-semibold text-emerald-400">+{mutationStats.adds}</span>
-                ) : null}
-                {mutationStats.dels ? (
-                  <span className="font-semibold text-rose-400">−{mutationStats.dels}</span>
-                ) : null}
-                {!mutationStats.adds && !mutationStats.dels ? (
-                  <span className="text-muted-foreground">±0</span>
-                ) : null}
-              </span>
+            {mutationStats.adds ? (
+              <span className="font-semibold text-emerald-400">+{mutationStats.adds}</span>
             ) : null}
-            <span className="inline-flex min-w-0 shrink-0 items-center gap-2 font-mono text-[10px] text-muted-foreground">
-              <span className="min-w-0 truncate">{summary}</span>
-            </span>
-          </button>
-        </CollapsibleTrigger>
-        {pending ? <ToolStopButton onStop={() => onStop?.(item.callId)} /> : null}
-      </div>
-      <CollapsibleContent className="space-y-2 px-2.5 py-2">
-        {toolKey === "run_shell" && args.command ? (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Command</div>
-            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background/50 p-2 font-mono text-[10.5px]">
-              {args.command}
-            </pre>
-          </div>
-        ) : null}
+            {mutationStats.dels ? (
+              <span className="font-semibold text-rose-400">−{mutationStats.dels}</span>
+            ) : null}
+            {!mutationStats.adds && !mutationStats.dels ? (
+              <span className="text-muted-foreground">±0</span>
+            ) : null}
+          </span>
+        ) : null
+      }
+    >
+      {toolKey === "run_shell" && args.command ? (
+        <div className="space-y-0.5">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Command</div>
+          <PreBlock>{args.command}</PreBlock>
+        </div>
+      ) : null}
 
-        {fileChange && !item.error ? (
-          <FileDiffBlock
-            path={fileChange.path}
-            rows={fileChange.rows}
-            stats={fileChange.stats}
-            defaultOpen
-          />
-        ) : item.arguments &&
-          !isFileMutation &&
-          !["grep", "glob", "list_dir", "read_file"].includes(toolKey) ? (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Arguments</div>
-            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background/50 p-2 font-mono text-[10.5px] text-muted-foreground">
-              {pretty(item.arguments)}
-            </pre>
-          </div>
-        ) : null}
+      {fileChange && !item.error ? (
+        <FileDiffBlock
+          path={fileChange.path}
+          rows={fileChange.rows}
+          stats={fileChange.stats}
+          defaultOpen
+        />
+      ) : item.arguments &&
+        !isFileMutation &&
+        !["grep", "glob", "list_dir", "read_file"].includes(toolKey) ? (
+        <div className="space-y-0.5">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Arguments</div>
+          <PreBlock>{pretty(item.arguments)}</PreBlock>
+        </div>
+      ) : null}
 
-        {item.error != null ? (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wide text-destructive">Error</div>
-            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 p-2 font-mono text-[10.5px]">
-              {pretty(item.error)}
-            </pre>
-          </div>
-        ) : previewLines.length ? (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Preview</div>
-            <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background/50 p-2 font-mono text-[10.5px] text-muted-foreground">
-              {previewLines.join("\n")}
-            </pre>
-          </div>
-        ) : result && !fileChange ? (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Result</div>
-            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background/50 p-2 font-mono text-[10.5px] text-muted-foreground">
-              {pretty(result)}
-            </pre>
-          </div>
-        ) : null}
-
-        {item.activityId && onInspect ? (
-          <div className="flex justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-6 px-2 text-[10.5px]"
-              onClick={(e) => {
-                e.stopPropagation();
-                onInspect(item.activityId!);
-              }}
-            >
-              查看活动
-            </Button>
-          </div>
-        ) : null}
-      </CollapsibleContent>
-    </Collapsible>
+      {item.error != null ? (
+        <div className="space-y-0.5">
+          <div className="text-[10px] uppercase tracking-wide text-destructive">Error</div>
+          <PreBlock tone="error">{pretty(item.error)}</PreBlock>
+        </div>
+      ) : previewLines.length ? (
+        <div className="space-y-0.5">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Preview</div>
+          <PreBlock maxH="max-h-[220px]">{previewLines.join("\n")}</PreBlock>
+        </div>
+      ) : result && !fileChange ? (
+        <div className="space-y-0.5">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Result</div>
+          <PreBlock>{pretty(result)}</PreBlock>
+        </div>
+      ) : null}
+    </ToolChipShell>
   );
 }
 

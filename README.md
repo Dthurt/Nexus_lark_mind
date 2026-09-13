@@ -167,7 +167,7 @@ Edit `.env` (see `.env.example`):
 - Compaction: `COMPACTION_AGGRESSIVENESS=conservative|balanced|aggressive`
 - Workspace mount: `NLM_HOST_WORKSPACE=...`
 
-More detail: [docs/architecture.md](docs/architecture.md), [docs/workspaces.md](docs/workspaces.md), [docs/interaction-modes.md](docs/interaction-modes.md).
+More detail: [docs/architecture.md](docs/architecture.md), [docs/workspaces.md](docs/workspaces.md), [docs/interaction-modes.md](docs/interaction-modes.md), [docs/canvas.md](docs/canvas.md), [docs/context-and-diff.md](docs/context-and-diff.md), [docs/diagrams.md](docs/diagrams.md), [docs/client-architecture.md](docs/client-architecture.md).
 
 ## Plugins
 
@@ -203,6 +203,8 @@ npm test
 
 Themes: `day` / `gray` / `night` / `ocean` / `rose` (Topbar cycles; `localStorage` key `nlm-theme`).
 
+Workbench extras: **Canvas** side pane (Chat∥Canvas; Mermaid/ECharts/Draw.io editors; Agent `open_canvas`) — [docs/canvas.md](docs/canvas.md). Tool / Canvas view extension notes under `web/docs/`.
+
 ## Tests
 
 ```bash
@@ -221,7 +223,7 @@ CI: `.github/workflows/ci.yml`, `.github/workflows/docker-image.yml` (GHCR).
 
 ## Layout
 
-Keep layers strict; no reverse dependencies across layers. See `docs/` for full notes.
+Keep layers strict; no reverse dependencies across layers. See [`docs/`](docs/) ([index](docs/README.md)) for full notes.
 
 ## License
 

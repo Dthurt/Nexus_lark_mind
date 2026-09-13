@@ -26,6 +26,7 @@ export {
   normalizeEchartsMarkdown,
   isEchartsLang,
   looksLikeEchartsOption,
+  parseEchartsOption,
 } from "./echarts";
 
 export { renderMathIn, protectMath, applyMathPlaceholders } from "./math";

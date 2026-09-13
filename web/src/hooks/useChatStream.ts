@@ -52,6 +52,7 @@ export type UseChatStreamOpts = {
   onModeChange?: (mode: string) => void;
   onSyncInteraction?: (patch: Record<string, unknown>) => void;
   onInbox?: (items: any[]) => void;
+  onFileMutation?: (payload: any, args: Record<string, any>) => void;
 };
 
 function shortToolName(name: string) {
@@ -84,6 +85,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
     onModeChange,
     onSyncInteraction,
     onInbox,
+    onFileMutation,
   } = opts;
 
   const esRef = useRef<EventSource | null>(null);
@@ -105,6 +107,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
     onModeChange,
     onSyncInteraction,
     onInbox,
+    onFileMutation,
   });
 
   sessionIdRef.current = sessionId;
@@ -122,6 +125,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
     onModeChange,
     onSyncInteraction,
     onInbox,
+    onFileMutation,
   };
 
   const setBusy = useCallback((b: boolean) => {
@@ -213,9 +217,16 @@ export function useChatStream(opts: UseChatStreamOpts) {
         }
       } else if (type === "task.tool_result") {
         const actId = tl.pushActivity("RESULT", payload);
-        tl.renderToolResult(payload, actId);
+        const toolItem = tl.renderToolResult(payload, actId);
         tr.addToolResult(payload, actId);
         setStatus("tool result…");
+        try {
+          const args =
+            (toolItem && typeof toolItem === "object" && (toolItem as any).arguments) || {};
+          cbs.onFileMutation?.(payload, args);
+        } catch {
+          /* ignore */
+        }
         // Keep tool/subagent activity while siblings are still running.
         if (typeof tl.hasRunningTools === "function" && tl.hasRunningTools()) {
           setActivity("tool", "工具运行中…", shortToolName(payload.name) || "");
@@ -266,6 +277,25 @@ export function useChatStream(opts: UseChatStreamOpts) {
         tl.renderTodos(payload, actId);
         tr.addStatus("todos");
         setStatus("todos…");
+      } else if (type === "task.canvas_open") {
+        tl.clearRetry();
+        const body = String(payload.body || "").trim();
+        if (body) {
+          window.dispatchEvent(
+            new CustomEvent("nlm-canvas-open", {
+              detail: {
+                kind: payload.kind || "markdown",
+                title: payload.title || "Canvas",
+                body,
+                dedupeKey: payload.dedupeKey || payload.path || "",
+                source: payload.path || "",
+              },
+            }),
+          );
+        }
+        tr.addStatus(`canvas ${payload.kind || "open"}`);
+        setStatus("canvas…");
+        setActivity("tool", "已打开 Canvas", String(payload.title || payload.kind || ""));
       } else if (type === "task.plan_ready") {
         tl.markPlanReady(payload.content || "");
         setActivity("model", "计划已就绪，可接受并执行", "");

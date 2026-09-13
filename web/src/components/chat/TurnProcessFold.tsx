@@ -47,8 +47,8 @@ export function TurnProcessFold({
         <button
           type="button"
           className={cn(
-            "flex w-full items-center gap-1.5 rounded-lg border border-border/50 bg-muted/25 px-2.5 py-1.5",
-            "text-left text-[12px] text-muted-foreground hover:bg-muted/45 hover:text-foreground",
+            "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1",
+            "text-left text-[12px] text-muted-foreground hover:bg-muted/40 hover:text-foreground",
           )}
         >
           <ChevronRight
@@ -57,21 +57,15 @@ export function TurnProcessFold({
           <span className="font-medium">{label}</span>
         </button>
       </CollapsibleTrigger>
-      <CollapsibleContent className="mt-2 flex flex-col gap-2 pl-1">
+      <CollapsibleContent className="mt-1.5 flex flex-col gap-1.5 pl-1">
         {(reasoning || "").trim() ? <ThinkingFold text={reasoning} /> : null}
-        {tools.length === 1 ? (
+        {tools.length > 0 ? (
           <ToolCallGroup
             tools={tools as any}
             highlightCallId={highlightCallId}
             onInspect={onInspectTool}
             onStop={onStopTool}
-          />
-        ) : tools.length > 1 ? (
-          <ToolCallGroup
-            tools={tools as any}
-            highlightCallId={highlightCallId}
-            onInspect={onInspectTool}
-            onStop={onStopTool}
+            flat
           />
         ) : null}
         {subagents.map((item) => (

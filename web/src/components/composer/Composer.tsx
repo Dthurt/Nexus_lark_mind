@@ -11,6 +11,7 @@ import {
 import { Mic, Paperclip, Plus, Square, ArrowUp, ListTodo, ShieldCheck, Layers2 } from "lucide-react";
 
 import { ContextMeter } from "@/components/chat/ContextMeter";
+import { MentionPopover } from "@/components/composer/MentionPopover";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -21,6 +22,11 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  applyMentionReplacement,
+  detectMentionAt,
+  type ContextRef,
+} from "@/lib/contextRefs";
 import {
   suggestStrongerModel,
   tierMeetsModelFloor,
@@ -72,6 +78,10 @@ export type ComposerProps = {
   cwd?: string;
   workspaceTitle?: string;
   workspaceKind?: string;
+  sshHostId?: string;
+  contextRefs?: ContextRef[];
+  onAddContextRef?: (ref: ContextRef) => void;
+  onRemoveContextRef?: (path: string) => void;
   gitBranch?: string;
   gitInsertions?: number;
   gitDeletions?: number;
@@ -125,6 +135,10 @@ export function Composer({
   cwd = "",
   workspaceTitle = "",
   workspaceKind = "local",
+  sshHostId = "",
+  contextRefs = [],
+  onAddContextRef,
+  onRemoveContextRef,
   gitBranch = "",
   gitInsertions = 0,
   gitDeletions = 0,
@@ -141,6 +155,7 @@ export function Composer({
   const menuRootRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const plusBtnRef = useRef<HTMLButtonElement>(null);
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<any>(null);
@@ -364,11 +379,17 @@ export function Composer({
   }
 
   function onTextareaKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (mention && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Escape")) {
+      // MentionPopover listens on window capture; don't send.
+      return;
+    }
     if (e.key === "Escape") {
       closeMenu();
+      setMention(null);
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
+      if (mention) return; // popover handles Enter
       e.preventDefault();
       const alternate = e.ctrlKey || e.metaKey;
       if (busy) {
@@ -383,6 +404,38 @@ export function Composer({
     }
   }
 
+  function onTextareaChange(e: ChangeEvent<HTMLTextAreaElement>) {
+    const next = e.target.value;
+    onChange?.(next);
+    const caret = e.target.selectionStart ?? next.length;
+    setMention(detectMentionAt(next, caret));
+    requestAnimationFrame(resizeTextarea);
+  }
+
+  function onMentionSelect(ref: ContextRef) {
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? value.length;
+    const hit = mention || detectMentionAt(value, caret);
+    if (hit) {
+      const { text, caret: nextCaret } = applyMentionReplacement(
+        value,
+        hit.start,
+        caret,
+        ref.path || ref.label || "",
+      );
+      onChange?.(text);
+      requestAnimationFrame(() => {
+        if (el) {
+          el.focus();
+          el.setSelectionRange(nextCaret, nextCaret);
+        }
+        resizeTextarea();
+      });
+    }
+    onAddContextRef?.(ref);
+    setMention(null);
+  }
+
   function pickFile() {
     fileInputRef.current?.click();
   }
@@ -392,9 +445,10 @@ export function Composer({
     if (!file) return;
     const name = file.name || "file";
     const pathHint = (file as any).path || name;
+    onAddContextRef?.({ path: String(pathHint).replace(/\\/g, "/"), kind: "file", label: name });
     const base = value || "";
-    const mention = `@${pathHint}`;
-    const next = base.trim() ? `${base.trim()}\n${mention}` : mention;
+    const mentionTok = `@${pathHint}`;
+    const next = base.trim() ? `${base.trim()}\n${mentionTok}` : mentionTok;
     onChange?.(next);
     ev.target.value = "";
     closeMenu();
@@ -710,26 +764,55 @@ export function Composer({
               </div>
             ) : null}
 
-            <Textarea
-              ref={textareaRef}
-              value={value}
-              placeholder={
-                busy
-                  ? busyHint
-                  : needsWorkspace
-                    ? "先绑定工作目录，再输入消息…"
-                    : needsModel
-                      ? "先选择 Provider / 模型，再输入消息…"
-                      : "输入消息 · Enter 发送 · Shift+Enter 换行"
-              }
-              onChange={(e) => {
-                onChange?.(e.target.value);
-                requestAnimationFrame(resizeTextarea);
-              }}
-              onKeyDown={onTextareaKeyDown}
-              className="min-h-[34px] max-h-40 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-0.5 py-1.5 leading-[1.4] shadow-none focus-visible:ring-0"
-              rows={1}
-            />
+            {contextRefs.length ? (
+              <div className="mb-1 flex flex-wrap gap-1">
+                {contextRefs.map((r) => (
+                  <button
+                    key={`${r.kind}:${r.path}`}
+                    type="button"
+                    className="inline-flex max-w-[200px] items-center gap-1 rounded-md border border-teal/30 bg-teal/10 px-1.5 py-0.5 font-mono text-[10px] text-teal"
+                    title="点击移除"
+                    onClick={() => onRemoveContextRef?.(r.path)}
+                  >
+                    <span className="truncate">@{r.path}</span>
+                    <span className="opacity-60">×</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="relative min-w-0 flex-1">
+              <MentionPopover
+                open={!!mention}
+                query={mention?.query || ""}
+                cwd={cwd}
+                workspaceKind={workspaceKind}
+                sshHostId={sshHostId}
+                onSelect={onMentionSelect}
+                onClose={() => setMention(null)}
+              />
+              <Textarea
+                ref={textareaRef}
+                value={value}
+                placeholder={
+                  busy
+                    ? busyHint
+                    : needsWorkspace
+                      ? "先绑定工作目录，再输入消息…"
+                      : needsModel
+                        ? "先选择 Provider / 模型，再输入消息…"
+                        : "输入消息 · @ 附加文件 · Enter 发送 · Shift+Enter 换行"
+                }
+                onChange={onTextareaChange}
+                onKeyDown={onTextareaKeyDown}
+                onSelect={(e) => {
+                  const el = e.currentTarget;
+                  setMention(detectMentionAt(el.value, el.selectionStart ?? 0));
+                }}
+                className="min-h-[34px] max-h-40 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-0.5 py-1.5 leading-[1.4] shadow-none focus-visible:ring-0"
+                rows={1}
+              />
+            </div>
           </div>
 
           <div className="flex items-end gap-1.5 self-end pb-1.5">

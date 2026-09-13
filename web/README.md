@@ -1,32 +1,36 @@
-# React + TypeScript + Vite
+# Nexus Lark Mind — Web workbench
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + TypeScript + Vite UI for the NLM workbench. Production build is written to `../web-static` and served by Adapters (`:8000`).
 
-Currently, two official plugins are available:
+## Scripts
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev       # Vite :5173, proxies /api → :8000
+npm run build     # tsc + vite → ../web-static
+npm test          # vitest
+npm run test:e2e  # Playwright (needs backend on :8000)
+npm run lint      # oxlint
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Layout
+
+Sidebar · center Chat/Trajectory (+ optional **Canvas** split) · RightDock.  
+See [docs/client-architecture.md](../docs/client-architecture.md) and [docs/canvas.md](../docs/canvas.md).
+
+## Extension docs (this folder)
+
+| Doc | Topic |
+|-----|--------|
+| [tool-views.md](./tool-views.md) | `registerToolView` — tool call cards |
+| [canvas-views.md](./canvas-views.md) | `registerCanvasView` — Canvas document kinds |
+
+## Themes
+
+`day` / `gray` / `night` / `ocean` / `rose` — Topbar cycle; `localStorage` key `nlm-theme`.
+
+## Stack notes
+
+- Path alias `@/` → `src/`
+- UI primitives under `src/components/ui/` (Radix-based)
+- Markdown / Mermaid / ECharts / Draw.io: `src/lib/markdown/`

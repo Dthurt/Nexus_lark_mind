@@ -131,6 +131,9 @@ DIAGRAMS_MATH = (
     "- Precise boards: fenced ```drawio / ```mxfile with complete XML when layout matters.\n"
     "- Stats (line/bar/pie/scatter): fenced ```echarts with **one JSON object** (ECharts option, not JS). "
     "Never emit bare `echarts` + JSON without fences.\n"
+    "- Large diagrams/charts/tables meant for lasting reference: also call `open_canvas` "
+    "(kind=mermaid|echarts|drawio|table|markdown) so they open in the side Canvas and optionally "
+    "persist under `.nlm/canvases/`.\n"
     "- Large data: aggregate with a short script; do not dump huge tables into context.\n"
     "- Formulas: `$...$` inline, `$$...$$` display. Never write `( \\mu_x )` with plain parentheses.\n"
 )

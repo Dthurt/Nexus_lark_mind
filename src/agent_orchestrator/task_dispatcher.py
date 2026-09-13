@@ -340,6 +340,11 @@ class TaskDispatcher:
                 await self._publish(task, EventType.TASK_TODOS, todos)
                 continue
 
+            canvas_open = chunk.get("canvas_open")
+            if canvas_open:
+                await self._publish(task, EventType.TASK_CANVAS_OPEN, canvas_open)
+                continue
+
             subagent = chunk.get("subagent")
             if subagent:
                 await self._publish(task, EventType.TASK_SUBAGENT, subagent)

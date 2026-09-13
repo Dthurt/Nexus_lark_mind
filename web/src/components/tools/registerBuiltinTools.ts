@@ -24,4 +24,7 @@ for (const key of workspaceToolKeys) {
   registerToolView(`builtin_workspace_${key}`, WorkspaceToolCard);
 }
 
+registerToolView("open_canvas", WorkspaceToolCard);
+registerToolView("builtin_workspace_open_canvas", WorkspaceToolCard);
+
 export {};

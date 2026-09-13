@@ -152,10 +152,23 @@ function ensureChrome(block: HTMLElement, xml: string) {
       <button type="button" class="mermaid-tool-btn icon-btn" data-drawio-action="copy" title="复制 XML" aria-label="复制">${iconSvg("copy")}</button>
       <button type="button" class="mermaid-tool-btn icon-btn" data-drawio-action="external" title="在 diagrams.net 打开" aria-label="外链">${iconSvg("external")}</button>
       <button type="button" class="mermaid-tool-btn icon-btn" data-drawio-action="fullscreen" title="全屏" aria-label="全屏">${iconSvg("fullscreen")}</button>
+      <button type="button" class="mermaid-tool-btn" data-drawio-action="canvas" title="在 Canvas 打开">Canvas</button>
       <button type="button" class="mermaid-mode-btn is-active" data-drawio-action="mode-view">视图</button>
       <button type="button" class="mermaid-mode-btn" data-drawio-action="mode-source">源码</button>
     `;
     block.insertBefore(bar, block.firstChild);
+  } else if (!block.querySelector('[data-drawio-action="canvas"]')) {
+    const spacer = block.querySelector(".drawio-toolbar .mermaid-toolbar-spacer");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mermaid-tool-btn";
+    btn.setAttribute("data-drawio-action", "canvas");
+    btn.title = "在 Canvas 打开";
+    btn.textContent = "Canvas";
+    const fs = block.querySelector('[data-drawio-action="fullscreen"]');
+    if (fs?.nextSibling) fs.parentElement?.insertBefore(btn, fs.nextSibling);
+    else if (spacer?.nextSibling) spacer.parentElement?.insertBefore(btn, spacer.nextSibling);
+    else block.querySelector(".drawio-toolbar")?.appendChild(btn);
   }
   if (!block.querySelector(".drawio-viewport")) {
     const viewport = document.createElement("div");
@@ -400,7 +413,29 @@ function bindControls(root: any) {
       openExternal(block.dataset.drawioSource || "");
       return;
     }
-    if (action === "fullscreen") openDrawioFullscreen(block);
+    if (action === "fullscreen") {
+      openDrawioFullscreen(block);
+      return;
+    }
+    if (action === "canvas") {
+      const xml = (
+        block.dataset.drawioSource ||
+        block.querySelector("pre.drawio-source")?.textContent ||
+        ""
+      ).trim();
+      if (xml) {
+        window.dispatchEvent(
+          new CustomEvent("nlm-canvas-open", {
+            detail: {
+              kind: "drawio",
+              title: "Draw.io",
+              body: normalizeDrawioXml(xml),
+              dedupeKey: `drawio:${xml.slice(0, 80)}`,
+            },
+          }),
+        );
+      }
+    }
   });
 }
 

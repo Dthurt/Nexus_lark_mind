@@ -487,6 +487,7 @@ function ensureMermaidChrome(block: HTMLElement, source: string) {
       <button type="button" class="mermaid-tool-btn icon-btn" data-mermaid-action="download-svg" title="下载 SVG" aria-label="下载 SVG">${iconSvg("download")}</button>
       <button type="button" class="mermaid-tool-btn icon-btn" data-mermaid-action="download-png" title="下载 PNG" aria-label="下载 PNG">${iconSvg("download")}</button>
       <button type="button" class="mermaid-tool-btn icon-btn" data-mermaid-action="fullscreen" title="全屏" aria-label="全屏">${iconSvg("fullscreen")}</button>
+      <button type="button" class="mermaid-tool-btn" data-mermaid-action="canvas" title="在 Canvas 打开">Canvas</button>
       <button type="button" class="mermaid-zoom-btn icon-btn" data-mermaid-zoom="out" title="缩小" aria-label="缩小">${iconSvg("minus")}</button>
       <button type="button" class="mermaid-zoom-btn icon-btn" data-mermaid-zoom="in" title="放大" aria-label="放大">${iconSvg("plus")}</button>
       <button type="button" class="mermaid-tool-btn icon-btn" data-mermaid-action="retry" title="重新渲染" aria-label="重试">${iconSvg("retry")}</button>
@@ -781,6 +782,24 @@ function bindMermaidControls(root: any) {
     else if (action === "download" || action === "download-svg") downloadMermaidImage(block, "svg");
     else if (action === "download-png") downloadMermaidImage(block, "png");
     else if (action === "fullscreen") openMermaidFullscreen(block);
+    else if (action === "canvas") {
+      const source =
+        block.dataset.mermaidSource ||
+        block.querySelector("pre.mermaid-source, pre.mermaid")?.textContent ||
+        "";
+      if (source.trim()) {
+        window.dispatchEvent(
+          new CustomEvent("nlm-canvas-open", {
+            detail: {
+              kind: "mermaid",
+              title: "Mermaid",
+              body: source.trim(),
+              dedupeKey: `mermaid:${source.trim().slice(0, 80)}`,
+            },
+          }),
+        );
+      }
+    }
   });
 }
 

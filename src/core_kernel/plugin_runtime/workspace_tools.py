@@ -235,6 +235,40 @@ TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "open_canvas",
+        "description": (
+            "Open a durable side-pane Canvas document for the user (beside chat). "
+            "Use for large Mermaid/ECharts/Draw.io diagrams, markdown briefs, or tables "
+            "instead of only dumping them in the chat bubble. Optionally writes "
+            "`{cwd}/.nlm/canvases/` on local workspaces. The UI opens the Canvas automatically."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short tab title"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["markdown", "mermaid", "drawio", "echarts", "table", "delivery"],
+                    "description": "Canvas document kind (default markdown)",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Document body: mermaid/drawio source, echarts JSON, markdown, or table JSON/markdown",
+                },
+                "file_name": {
+                    "type": "string",
+                    "description": "Optional file name under .nlm/canvases/ (default from title/kind)",
+                },
+                "persist": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Write under .nlm/canvases/ when local cwd is available",
+                },
+            },
+            "required": ["body"],
+        },
+    },
+    {
         "name": "glob",
         "description": (
             "Find files by glob (e.g. **/*.py, src/**/*.vue). Prefer this over shell find. "
@@ -357,6 +391,8 @@ class WorkspaceToolsPlugin(BasePlugin):
             raise PluginError("exit_plan_mode is handled by the agent runner, not invoked directly")
         if tool_name == "todo_write":
             return self._todo_write(arguments.get("items") or [])
+        if tool_name == "open_canvas":
+            return self._open_canvas(cwd, arguments)
         if tool_name == "glob":
             return self._glob(
                 cwd,
@@ -450,6 +486,8 @@ class WorkspaceToolsPlugin(BasePlugin):
             return await fs.run_shell(cmd, timeout=timeout)
         if tool_name == "todo_write":
             return self._todo_write(arguments.get("items") or [])
+        if tool_name == "open_canvas":
+            return self._open_canvas(cwd, arguments)
         if tool_name == "glob":
             return await fs.glob_files(
                 str(arguments.get("pattern") or ""),
@@ -514,16 +552,28 @@ class WorkspaceToolsPlugin(BasePlugin):
                 f'cannot overwrite "{rel}": file has not been read in this turn — '
                 "read_file first, or use edit_file for a targeted change"
             )
+        previous = None
+        if existed:
+            try:
+                previous = target.read_text(encoding="utf-8", errors="replace")
+                # Cap so tool_result / DiffDock stay bounded
+                if len(previous) > 200_000:
+                    previous = previous[:200_000]
+            except OSError:
+                previous = None
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         mark_fs_observed(rel)
-        return {
+        out: Dict[str, Any] = {
             "ok": True,
             "path": rel,
             "bytes": len(content.encode("utf-8")),
             "created": not existed,
             "kind": "local",
         }
+        if previous is not None:
+            out["previous"] = previous
+        return out
 
     def _edit_file(
         self,
@@ -599,6 +649,59 @@ class WorkspaceToolsPlugin(BasePlugin):
                 f"Updated todo list: {counts['pending']} pending, "
                 f"{counts['in_progress']} in progress, {counts['completed']} completed."
             ),
+        }
+
+    def _open_canvas(self, cwd: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        from src.common.canvas_store import CanvasWriteError, write_canvas_to_workspace
+
+        body = str(arguments.get("body") or "")
+        if not body.strip():
+            raise ValidationAppError("body is required")
+        kind = str(arguments.get("kind") or "markdown").strip().lower() or "markdown"
+        allowed = {"markdown", "mermaid", "drawio", "echarts", "table", "delivery"}
+        if kind not in allowed:
+            kind = "markdown"
+        title = str(arguments.get("title") or "").strip() or kind.title()
+        persist = arguments.get("persist")
+        if persist is None:
+            persist = True
+        file_name = str(arguments.get("file_name") or "").strip()
+        if not file_name:
+            safe = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", title).strip("._") or kind
+            ext = ".json" if kind in {"echarts", "table"} else ".md"
+            if kind == "drawio":
+                ext = ".drawio.xml"
+            elif kind == "mermaid":
+                ext = ".mmd"
+            file_name = f"{safe}{ext}"
+
+        path = ""
+        persist_error = ""
+        if persist:
+            try:
+                if kind == "mermaid" and "```" not in body:
+                    disk_body = f"# {title}\n\n```mermaid\n{body.strip()}\n```\n"
+                elif kind == "echarts" and not body.strip().startswith("```"):
+                    disk_body = f"# {title}\n\n```echarts\n{body.strip()}\n```\n"
+                elif kind == "drawio" and "<mx" in body and "```" not in body:
+                    disk_body = f"# {title}\n\n```drawio\n{body.strip()}\n```\n"
+                else:
+                    disk_body = body if body.lstrip().startswith("#") else f"# {title}\n\n{body}"
+                out = write_canvas_to_workspace(cwd, file_name=file_name, content=disk_body)
+                path = str(out.get("path") or "")
+            except CanvasWriteError as exc:
+                persist_error = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                persist_error = str(exc)
+
+        return {
+            "ok": True,
+            "kind": kind,
+            "title": title,
+            "body": body,
+            "path": path,
+            "persist_error": persist_error or None,
+            "dedupe_key": path or f"open_canvas:{kind}:{title}",
         }
 
     async def _run_shell(self, cwd: str, command: str, *, timeout: float) -> Dict[str, Any]:
@@ -804,6 +907,6 @@ def workspace_tools_manifest() -> PluginManifest:
         name="Workspace",
         kind="inprocess",
         version="1.2.0",
-        description="Session workspace tools (local or SSH): glob/grep/list/read/write/edit/run_shell/run_code/ask_user/exit_plan_mode/todo_write.",
+        description="Session workspace tools (local or SSH): glob/grep/list/read/write/edit/run_shell/run_code/ask_user/exit_plan_mode/todo_write/open_canvas.",
         tools=list(TOOLS),
     )

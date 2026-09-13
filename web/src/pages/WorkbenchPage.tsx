@@ -25,6 +25,10 @@ import { useDeliveryArtifact } from "@/hooks/useDeliveryArtifact";
 import { useSessions } from "@/hooks/useSessions";
 import { useTrajectory } from "@/hooks/useTrajectory";
 import { useWorkspaces } from "@/hooks/useWorkspaces";
+import { CanvasPane } from "@/components/canvas/CanvasPane";
+import { DiffDock } from "@/components/chat/DiffDock";
+import { useCanvasSession } from "@/hooks/useCanvasSession";
+import { useDiffReview } from "@/hooks/useDiffReview";
 import { cn } from "@/lib/utils";
 import type { Workspace } from "@/types/api";
 import { toast } from "sonner";
@@ -68,6 +72,7 @@ export function WorkbenchPage({
   const dock = useRightDock();
   const delivery = useDeliveryArtifact();
   const commandPalette = useCommandPalette();
+  const diffReview = useDiffReview();
 
   const {
     sessionId,
@@ -92,6 +97,8 @@ export function WorkbenchPage({
     deleteConversation,
   } = useSessions();
 
+  const canvas = useCanvasSession(sessionId);
+
   const {
     providerId,
     modelName,
@@ -107,11 +114,15 @@ export function WorkbenchPage({
   const {
     plugins,
     tools,
+    marketplace,
     error: pluginError,
     reloading,
     load: loadPlugins,
+    loadMarketplace,
     toggle: togglePlugin,
     reload: reloadPlugins,
+    installFromPath,
+    installFromZip,
     saveConfig: savePluginConfig,
   } = usePlugins();
 
@@ -140,6 +151,9 @@ export function WorkbenchPage({
     },
     onInbox: (items) => {
       actionsRef.current?.setInboxItems?.(items as any);
+    },
+    onFileMutation: (payload, args) => {
+      diffReview.ingestToolResult(payload, args);
     },
   });
 
@@ -539,7 +553,7 @@ export function WorkbenchPage({
           onOpenSettings={onOpenSettings}
         />
 
-        <main className="nlm-workspace">
+        <main className={cn("nlm-workspace", canvas.open && "nlm-workspace--canvas")}>
           <Topbar
             title={chatTitle}
             centerView={centerView}
@@ -551,93 +565,140 @@ export function WorkbenchPage({
             onToggleRail={toggleRail}
             onClear={() => void clearSession()}
             onOpenCommand={commandPalette.show}
+            canvasOpen={canvas.open}
+            onToggleCanvas={canvas.togglePane}
           />
 
           <section className="nlm-chat-panel" aria-label="对话">
-            {centerView === "chat" ? (
-              <ChatMessages
-                items={timeline.items}
-                showWorkspacePicker={!cwd}
-                modelProvider={providerId}
-                modelName={modelName}
-                experienceTier={actions.experienceTier}
-                highlightCallId={activeApprovalCallId}
-                onInspectTool={onInspectTool}
-                onStopTool={() => void actions.stopGeneration(currentTaskId)}
-                onPickWorkspace={(ws) => void onPickWorkspace(ws)}
-                onResolveAsk={(p) => void actions.resolveAsk(p)}
-                onResolvePlanReview={(p) => void actions.resolvePlanReview(p)}
-                onAcceptPlan={() => {
-                  void actions.acceptPlan();
-                }}
-              />
-            ) : (
-              <TrajectoryView
-                rows={trajectory.rows}
-                followTail={trajectory.followTail}
-                selectedId={trajectory.selectedId}
-                onFollowTailChange={trajectory.setFollowTail}
-                onSelect={trajectory.select}
-                onInspect={onTrajectoryInspect}
-              />
-            )}
+            {(() => {
+              const chatStack = (
+                <>
+                  {centerView === "chat" ? (
+                    <ChatMessages
+                      items={timeline.items}
+                      showWorkspacePicker={!cwd}
+                      modelProvider={providerId}
+                      modelName={modelName}
+                      experienceTier={actions.experienceTier}
+                      highlightCallId={activeApprovalCallId}
+                      onInspectTool={onInspectTool}
+                      onStopTool={() => void actions.stopGeneration(currentTaskId)}
+                      onPickWorkspace={(ws) => void onPickWorkspace(ws)}
+                      onResolveAsk={(p) => void actions.resolveAsk(p)}
+                      onResolvePlanReview={(p) => void actions.resolvePlanReview(p)}
+                      onAcceptPlan={() => {
+                        void actions.acceptPlan();
+                      }}
+                    />
+                  ) : (
+                    <TrajectoryView
+                      rows={trajectory.rows}
+                      followTail={trajectory.followTail}
+                      selectedId={trajectory.selectedId}
+                      onFollowTailChange={trajectory.setFollowTail}
+                      onSelect={trajectory.select}
+                      onInspect={onTrajectoryInspect}
+                    />
+                  )}
 
-            <ApprovalDock
-              items={timeline.items.filter((it) => it.kind === "approval") as any}
-              onResolve={(p) => void actions.resolveApproval(p)}
-              onActiveCallIdChange={setActiveApprovalCallId}
-            />
+                  <ApprovalDock
+                    items={timeline.items.filter((it) => it.kind === "approval") as any}
+                    onResolve={(p) => void actions.resolveApproval(p)}
+                    onActiveCallIdChange={setActiveApprovalCallId}
+                  />
 
-            <QueueDock
-              items={actions.inboxItems}
-              busyEnterMode={actions.busyEnterMode}
-              busy={busy}
-              onRemove={(id) => void actions.removeInboxItem(id)}
-              onBusyEnterModeChange={actions.setBusyEnterMode}
-            />
+                  <QueueDock
+                    items={actions.inboxItems}
+                    busyEnterMode={actions.busyEnterMode}
+                    busy={busy}
+                    onRemove={(id) => void actions.removeInboxItem(id)}
+                    onBusyEnterModeChange={actions.setBusyEnterMode}
+                  />
 
-            <Composer
-              value={actions.input}
-              onChange={actions.setInput}
-              providerId={providerId}
-              modelName={modelName}
-              providerOptions={providerOptions}
-              modelOptions={modelOptions}
-              providersDisabled={providersDisabled}
-              modelsDisabled={modelsDisabled}
-              toolsEnabled={toolsEnabled}
-              onToolsEnabledChange={setToolsEnabled}
-              agentMode={actions.agentMode}
-              onAgentModeChange={actions.setAgentMode}
-              autoAccept={actions.autoAccept}
-              onAutoAcceptChange={actions.setAutoAccept}
-              multitask={actions.multitask}
-              onMultitaskChange={actions.setMultitask}
-              permissionPreset={actions.permissionPreset}
-              onPermissionPresetChange={actions.setPermissionPreset}
-              planEnforcement={actions.planEnforcement}
-              onPlanEnforcementChange={actions.setPlanEnforcement}
-              experienceTier={actions.experienceTier}
-              onExperienceTierChange={actions.setExperienceTier}
-              reasoningEffort={actions.reasoningEffort}
-              onReasoningEffortChange={actions.setReasoningEffort}
-              sessionUsage={sessionUsage}
-              items={timeline.items}
-              tools={tools}
-              cwd={cwd}
-              workspaceTitle={workspaceTitle}
-              workspaceKind={workspaceKind}
-              gitBranch={gitBranch}
-              gitInsertions={gitInsertions}
-              gitDeletions={gitDeletions}
-              busy={busy}
-              busyEnterMode={actions.busyEnterMode}
-              onBusyEnterModeChange={actions.setBusyEnterMode}
-              onProviderIdChange={onProviderChange}
-              onModelNameChange={onModelChange}
-              onSend={(opts) => void actions.sendChat(undefined, opts)}
-              onStop={() => void actions.stopGeneration(currentTaskId)}
-            />
+                  <DiffDock
+                    items={diffReview.pending}
+                    cwd={cwd}
+                    workspaceKind={workspaceKind}
+                    onAccept={(id) => {
+                      diffReview.accept(id);
+                      window.setTimeout(() => diffReview.dismiss(id), 400);
+                    }}
+                    onReject={(id) =>
+                      void diffReview.reject(id, {
+                        cwd,
+                        workspaceKind,
+                        sessionId,
+                      })
+                    }
+                    onDismiss={diffReview.dismiss}
+                  />
+
+                  <Composer
+                    value={actions.input}
+                    onChange={actions.setInput}
+                    providerId={providerId}
+                    modelName={modelName}
+                    providerOptions={providerOptions}
+                    modelOptions={modelOptions}
+                    providersDisabled={providersDisabled}
+                    modelsDisabled={modelsDisabled}
+                    toolsEnabled={toolsEnabled}
+                    onToolsEnabledChange={setToolsEnabled}
+                    agentMode={actions.agentMode}
+                    onAgentModeChange={actions.setAgentMode}
+                    autoAccept={actions.autoAccept}
+                    onAutoAcceptChange={actions.setAutoAccept}
+                    multitask={actions.multitask}
+                    onMultitaskChange={actions.setMultitask}
+                    permissionPreset={actions.permissionPreset}
+                    onPermissionPresetChange={actions.setPermissionPreset}
+                    planEnforcement={actions.planEnforcement}
+                    onPlanEnforcementChange={actions.setPlanEnforcement}
+                    experienceTier={actions.experienceTier}
+                    onExperienceTierChange={actions.setExperienceTier}
+                    reasoningEffort={actions.reasoningEffort}
+                    onReasoningEffortChange={actions.setReasoningEffort}
+                    sessionUsage={sessionUsage}
+                    items={timeline.items}
+                    tools={tools}
+                    cwd={cwd}
+                    workspaceTitle={workspaceTitle}
+                    workspaceKind={workspaceKind}
+                    sshHostId={sshHostId}
+                    contextRefs={actions.contextRefs}
+                    onAddContextRef={actions.addContextRef}
+                    onRemoveContextRef={actions.removeContextRef}
+                    gitBranch={gitBranch}
+                    gitInsertions={gitInsertions}
+                    gitDeletions={gitDeletions}
+                    busy={busy}
+                    busyEnterMode={actions.busyEnterMode}
+                    onBusyEnterModeChange={actions.setBusyEnterMode}
+                    onProviderIdChange={onProviderChange}
+                    onModelNameChange={onModelChange}
+                    onSend={(opts) => void actions.sendChat(undefined, opts)}
+                    onStop={() => void actions.stopGeneration(currentTaskId)}
+                  />
+                </>
+              );
+
+              if (!canvas.open) return chatStack;
+
+              return (
+                <div className="nlm-center-split">
+                  <div className="nlm-chat-column">{chatStack}</div>
+                  <CanvasPane
+                    canvas={canvas}
+                    modelProvider={providerId}
+                    modelName={modelName}
+                    experienceTier={actions.experienceTier}
+                    sessionId={sessionId}
+                    cwd={cwd}
+                    workspaceKind={workspaceKind}
+                  />
+                </div>
+              );
+            })()}
           </section>
         </main>
 
@@ -725,6 +786,34 @@ export function WorkbenchPage({
               throw err;
             }
           }}
+          marketplace={marketplace}
+          onLoadMarketplace={async () => {
+            try {
+              await loadMarketplace();
+            } catch (err: any) {
+              toast.error(String(err?.message || err));
+            }
+          }}
+          onInstallPluginPath={async (path) => {
+            try {
+              const data = await installFromPath(path);
+              toast.success(`已安装 ${data?.id || path}`);
+            } catch (err: any) {
+              const msg = String(err?.message || err);
+              toast.error(msg);
+              throw err;
+            }
+          }}
+          onInstallPluginZip={async (file) => {
+            try {
+              const data = await installFromZip(file);
+              toast.success(`已安装 ${data?.id || file.name}`);
+            } catch (err: any) {
+              const msg = String(err?.message || err);
+              toast.error(msg);
+              throw err;
+            }
+          }}
         />
       </div>
 
@@ -736,6 +825,15 @@ export function WorkbenchPage({
         onSelectChat={(id) => void switchConversation(id)}
         onClearChat={() => void clearSession()}
         onSetCenterView={setCenterView}
+        onToggleCanvas={canvas.togglePane}
+        onNewCanvas={() =>
+          canvas.openDoc({
+            kind: "markdown",
+            title: "笔记",
+            body: "# Canvas\n\n在此编辑旁侧文档。\n",
+            dedupeKey: `blank:${Date.now()}`,
+          })
+        }
         onOpenDockTab={(tab) => {
           dock.expand();
           dock.openTab(tab, { reveal: true });
