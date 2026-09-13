@@ -20,6 +20,7 @@ import { TodoListCard } from "@/components/chat/TodoListCard";
 import { ToolCard } from "@/components/chat/ToolCard";
 import { ToolCallGroup } from "@/components/chat/ToolCallGroup";
 import { TurnProcessFold } from "@/components/chat/TurnProcessFold";
+import { NlmLogo } from "@/components/brand/Logos";
 import "@/components/tools/registerBuiltinTools";
 import { WorkspacePicker } from "@/components/workspace/WorkspacePicker";
 import type { TimelineItem } from "@/hooks/useChatTimeline";
@@ -306,6 +307,9 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       >
         {!items.length ? (
           <div className="empty-state m-auto max-w-md px-4 py-10 text-center text-muted-foreground animate-in fade-in duration-300">
+            <div className="mb-3 flex justify-center">
+              <NlmLogo className="size-14 shadow-md ring-1 ring-border/50" />
+            </div>
             <div className="empty-brand mb-2 bg-gradient-to-r from-white via-[#8ec8f5] to-[#6fd4c0] bg-clip-text text-[22px] font-bold tracking-tight text-transparent">
               Nexus Lark Mind
             </div>

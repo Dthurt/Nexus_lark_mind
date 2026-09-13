@@ -28,6 +28,7 @@ export type MessageBubbleItem = {
   usage?: any;
   modelName?: string;
   modelProvider?: string;
+  hideReasoning?: boolean;
   activity?: {
     phase?: string;
     label?: string;
@@ -57,6 +58,7 @@ export const MessageBubble = memo(function MessageBubble({
   const [openUsage, setOpenUsage] = useState(false);
   const [content, setContent] = useState(item.content || "");
   const [copied, setCopied] = useState(false);
+  const [userExpanded, setUserExpanded] = useState(false);
 
   useEffect(() => {
     setContent(item.content || "");
@@ -138,7 +140,7 @@ export const MessageBubble = memo(function MessageBubble({
         "msg max-w-full min-w-0 animate-in fade-in duration-150 rounded-xl border px-3.5 py-2.5",
         isUser
           ? "ml-auto w-fit max-w-[min(92%,720px)] self-end rounded-br-sm border-primary/25 bg-primary/10"
-          : "w-full self-start rounded-bl-sm border-border bg-card/40",
+          : "w-full self-start rounded-bl-sm border-transparent bg-transparent px-1 py-1.5 sm:px-2",
         (item.live || item.streaming) && "live",
         className,
       )}
@@ -153,19 +155,32 @@ export const MessageBubble = memo(function MessageBubble({
       ) : null}
 
       {content ? (
-        <MarkdownBody
-          className={cn(
-            "body",
-            isUser && "max-h-[10.5em] overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-          )}
-          content={content}
-          streaming={!!item.streaming && showCaret}
-          plain={!item.rich}
-          modelProvider={resolvedProvider}
-          modelName={resolvedModel}
-          experienceTier={experienceTier}
-          onMermaidFixed={onMermaidFixed}
-        />
+        <div className="min-w-0">
+          <MarkdownBody
+            className={cn(
+              "body",
+              isUser &&
+                !userExpanded &&
+                "max-h-[10.5em] overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            )}
+            content={content}
+            streaming={!!item.streaming && showCaret}
+            plain={!item.rich}
+            modelProvider={resolvedProvider}
+            modelName={resolvedModel}
+            experienceTier={experienceTier}
+            onMermaidFixed={onMermaidFixed}
+          />
+          {isUser && (content || "").length > 280 ? (
+            <button
+              type="button"
+              className="mt-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              onClick={() => setUserExpanded((v) => !v)}
+            >
+              {userExpanded ? "收起" : "展开全部"}
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {item.activity && (item.streaming || item.live) ? (

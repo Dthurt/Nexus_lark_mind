@@ -117,3 +117,45 @@ async def test_feishu_app(*, app_id: str, app_secret: str) -> Dict[str, Any]:
         "token_preview": (token[:6] + "…") if token else "",
         "expire": data.get("expire"),
     }
+
+
+async def test_dingtalk_app(*, client_id: str, client_secret: str) -> Dict[str, Any]:
+    if not client_id or not client_secret:
+        raise ValidationAppError("client_id and client_secret required")
+    url = "https://api.dingtalk.com/v1.0/oauth2/accessToken"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(url, json={"appKey": client_id, "appSecret": client_secret})
+            data = resp.json()
+    except httpx.HTTPError as exc:
+        raise UpstreamError(f"dingtalk unreachable: {exc}") from exc
+    token = data.get("accessToken") or ""
+    if not token:
+        raise UpstreamError(f"dingtalk auth failed: {data}")
+    return {
+        "ok": True,
+        "message": "钉钉应用凭证有效，已取得 accessToken",
+        "token_preview": (token[:6] + "…") if token else "",
+        "expire_in": data.get("expireIn"),
+    }
+
+
+async def test_wecom_app(*, corp_id: str, secret: str, agent_id: str = "") -> Dict[str, Any]:
+    if not corp_id or not secret:
+        raise ValidationAppError("corp_id and secret required")
+    url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(url, params={"corpid": corp_id, "corpsecret": secret})
+            data = resp.json()
+    except httpx.HTTPError as exc:
+        raise UpstreamError(f"wecom unreachable: {exc}") from exc
+    if int(data.get("errcode") or 0) != 0:
+        raise UpstreamError(f"wecom auth failed: {data}")
+    token = data.get("access_token") or ""
+    return {
+        "ok": True,
+        "message": f"企业微信凭证有效（agent_id={agent_id or '—'}）",
+        "token_preview": (token[:6] + "…") if token else "",
+        "expires_in": data.get("expires_in"),
+    }

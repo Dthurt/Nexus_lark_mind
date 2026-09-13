@@ -11,13 +11,13 @@ A personal, loosely coupled, layered AI agent orchestration platform.
 ## Architecture
 
 ```
-Adapters (Feishu/Web)  →  Orchestrator (queue/session/events)  →  Core Kernel (models/plugins/SQLite)
+Adapters (Feishu/DingTalk/WeCom/Web)  →  Orchestrator (queue/session/events)  →  Core Kernel (models/plugins/SQLite)
          ↑________________ Redis Event Bus ________________↑
 ```
 
 | Process | Port | Role |
 |---------|------|------|
-| `adapters` | 8000 | Feishu webhook / long-poll, Web SSE chat UI |
+| `adapters` | 8000 | IM webhooks (Feishu / DingTalk / WeCom) + Web SSE chat UI |
 | `orchestrator` | 8002 | Task queue, session cache, kernel RPC, event fan-out |
 | `core-kernel` | 8001 | Model gateway, plugin runtime, **only** SQLite reader/writer |
 | `redis` | 6379 | Task queue + global event bus |
@@ -164,6 +164,8 @@ Edit `.env` (see `.env.example`):
 
 - Models: `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `GLM_API_KEY` / `ANTHROPIC_API_KEY`
 - Feishu/Lark: `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / …
+- DingTalk: `DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / …
+- WeCom: `WECOM_CORP_ID` / `WECOM_AGENT_ID` / `WECOM_SECRET` / …
 - Compaction: `COMPACTION_AGGRESSIVENESS=conservative|balanced|aggressive`
 - Workspace mount: `NLM_HOST_WORKSPACE=...`
 

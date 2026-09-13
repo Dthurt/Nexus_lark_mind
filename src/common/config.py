@@ -80,6 +80,20 @@ class Settings(BaseSettings):
     feishu_encrypt_key: str = ""
     feishu_use_long_connection: bool = True
 
+    # DingTalk enterprise app / robot
+    dingtalk_client_id: str = ""
+    dingtalk_client_secret: str = ""
+    dingtalk_robot_code: str = ""
+    dingtalk_token: str = ""
+    dingtalk_encoding_aes_key: str = ""
+
+    # WeCom (企业微信)
+    wecom_corp_id: str = ""
+    wecom_agent_id: str = ""
+    wecom_secret: str = ""
+    wecom_token: str = ""
+    wecom_encoding_aes_key: str = ""
+
     # Wave F — experimental agent teams (mailbox + DAG)
     nlm_experimental_teams: bool = False
 

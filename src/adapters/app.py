@@ -1,4 +1,4 @@
-"""Adapters FastAPI application — Feishu webhook + Web SSE UI."""
+"""Adapters FastAPI application — IM webhooks + Web SSE UI."""
 
 from __future__ import annotations
 
@@ -11,16 +11,25 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from src.adapters.channels import (
+    get_channel_store,
+    reload_channel_store,
+    resolve_dingtalk,
+    resolve_feishu,
+    resolve_wecom,
+)
+from src.adapters.channels.hub import ChannelHub
+from src.adapters.channels.probe import test_dingtalk_app, test_feishu_app, test_wecom_app
+from src.adapters.dingtalk.adapter import DingTalkAdapter
 from src.adapters.feishu.adapter import FeishuAdapter
 from src.adapters.feishu.events import parse_url_verification
 from src.adapters.feishu.long_connection import FeishuLongConnection
 from src.adapters.web.adapter import WebAdapter
-from src.adapters.channels import get_channel_store, reload_channel_store, resolve_feishu
-from src.adapters.channels.probe import test_feishu_app
+from src.adapters.wecom.adapter import WeComAdapter
 from src.adapters.workspaces import browse_directory, get_workspace_store
 from src.adapters.workspaces.ssh_fs import browse_remote, ensure_remote_dir, test_ssh_host
 from src.adapters.workspaces.ssh_store import get_ssh_host_store
@@ -150,12 +159,18 @@ def create_adapters_app() -> FastAPI:
 
         feishu = FeishuAdapter(orchestrator, redis_client, settings, kernel=kernel)
         web = WebAdapter(orchestrator, redis_client, settings)
+        dingtalk = DingTalkAdapter(orchestrator, redis_client, settings, kernel=kernel)
+        wecom = WeComAdapter(orchestrator, redis_client, settings, kernel=kernel)
+        hub = ChannelHub()
+        hub.register(feishu)
+        hub.register(web)
+        hub.register(dingtalk)
+        hub.register(wecom)
 
         stop_event = asyncio.Event()
 
         async def bus_handler(event: BusEvent) -> None:
-            await feishu.on_bus_event(event)
-            await web.on_bus_event(event)
+            await hub.dispatch_bus(event)
 
         bus_task = asyncio.create_task(
             redis_client.subscribe_events(bus_handler, stop_event=stop_event),
@@ -191,20 +206,54 @@ def create_adapters_app() -> FastAPI:
                 "long_connection_started": bool(creds.configured and creds.use_long_connection),
             }
 
+        async def restart_dingtalk_channel() -> Dict[str, Any]:
+            reload_channel_store()
+            dt: DingTalkAdapter = state["dingtalk"]
+            dt.client.refresh_credentials()
+            creds = resolve_dingtalk(settings)
+            return {
+                "source": creds.source,
+                "enabled": creds.enabled,
+                "configured": creds.configured,
+                "client_id": creds.client_id,
+            }
+
+        async def restart_wecom_channel() -> Dict[str, Any]:
+            reload_channel_store()
+            wc: WeComAdapter = state["wecom"]
+            wc.client.refresh_credentials()
+            creds = resolve_wecom(settings)
+            return {
+                "source": creds.source,
+                "enabled": creds.enabled,
+                "configured": creds.configured,
+                "corp_id": creds.corp_id,
+                "agent_id": creds.agent_id,
+            }
+
+        hub.register(feishu, restart=restart_feishu_channel)
+        hub.register(dingtalk, restart=restart_dingtalk_channel)
+        hub.register(wecom, restart=restart_wecom_channel)
+
         state.update(
             {
                 "redis": redis_client,
                 "orchestrator": orchestrator,
                 "kernel": kernel,
+                "hub": hub,
                 "feishu": feishu,
                 "web": web,
+                "dingtalk": dingtalk,
+                "wecom": wecom,
                 "stop_event": stop_event,
                 "bus_task": bus_task,
                 "long_conn": long_conn,
                 "restart_feishu_channel": restart_feishu_channel,
+                "restart_dingtalk_channel": restart_dingtalk_channel,
+                "restart_wecom_channel": restart_wecom_channel,
             }
         )
-        logger.info("Adapters service started")
+        logger.info("Adapters service started channels=%s", hub.channels())
         yield
         stop_event.set()
         await long_conn.stop()
@@ -229,12 +278,30 @@ def create_adapters_app() -> FastAPI:
             content=RpcEnvelope(ok=False, error=exc.to_dict()).model_dump(),
         )
 
+    def channel_public_doc(runtime: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        store = get_channel_store()
+        hub: ChannelHub = state.get("hub")
+        return store.public_document(
+            env_feishu_app_id=settings.feishu_app_id,
+            env_feishu_app_secret=settings.feishu_app_secret,
+            env_dingtalk_client_id=settings.dingtalk_client_id,
+            env_dingtalk_client_secret=settings.dingtalk_client_secret,
+            env_wecom_corp_id=settings.wecom_corp_id,
+            env_wecom_secret=settings.wecom_secret,
+            runtime={
+                **(hub.runtime_status() if hub else {}),
+                **(runtime or {}),
+            },
+        )
+
     @app.get("/health")
     async def health():
         long_conn: FeishuLongConnection = state.get("long_conn")
+        hub: ChannelHub = state.get("hub")
         return {
             "status": "ok",
             "service": "adapters",
+            "channels": hub.channels() if hub else [],
             "feishu_ws": bool(long_conn and long_conn.connected),
             "feishu_app_id": (settings.feishu_app_id[:8] + "…") if settings.feishu_app_id else None,
         }
@@ -263,6 +330,79 @@ def create_adapters_app() -> FastAPI:
 
         task = await feishu.handle_inbound(decoded)
         return {"ok": True, "task_id": task.task_id if task else None}
+
+    # ----- DingTalk -----
+
+    @app.post("/dingtalk/webhook")
+    async def dingtalk_webhook(request: Request):
+        dingtalk: DingTalkAdapter = state["dingtalk"]
+        payload = await request.json()
+        qs = request.query_params
+        encrypt = str(payload.get("encrypt") or "")
+        dingtalk.verify_request(
+            timestamp=str(qs.get("timestamp") or request.headers.get("timestamp") or ""),
+            nonce=str(qs.get("nonce") or ""),
+            signature=str(qs.get("signature") or qs.get("msg_signature") or ""),
+            encrypt=encrypt,
+        )
+        # DingTalk URL check: encrypted echo
+        if encrypt and not payload.get("text") and len(payload) <= 2:
+            creds = resolve_dingtalk(settings)
+            if creds.encoding_aes_key:
+                from src.adapters import im_crypto
+
+                plain = im_crypto.decrypt_payload(
+                    encoding_aes_key=creds.encoding_aes_key,
+                    receive_id=creds.client_id,
+                    encrypt_b64=encrypt,
+                )
+                enc, sig, ts, nonce = im_crypto.pack_encrypted_response(
+                    token=creds.token,
+                    encoding_aes_key=creds.encoding_aes_key,
+                    receive_id=creds.client_id,
+                    plaintext=plain,
+                )
+                return {"msg_signature": sig, "timeStamp": ts, "nonce": nonce, "encrypt": enc}
+        decoded = dingtalk.decode_payload(payload)
+        task = await dingtalk.handle_inbound(decoded)
+        return {"ok": True, "task_id": task.task_id if task else None}
+
+    # ----- WeCom -----
+
+    @app.get("/wecom/webhook")
+    async def wecom_webhook_verify(request: Request):
+        wecom: WeComAdapter = state["wecom"]
+        qs = request.query_params
+        msg_signature = str(qs.get("msg_signature") or "")
+        timestamp = str(qs.get("timestamp") or "")
+        nonce = str(qs.get("nonce") or "")
+        echostr = str(qs.get("echostr") or "")
+        wecom.verify_signature(
+            msg_signature=msg_signature,
+            timestamp=timestamp,
+            nonce=nonce,
+            encrypt=echostr,
+        )
+        plain = wecom.decrypt_echo(echostr)
+        return PlainTextResponse(plain)
+
+    @app.post("/wecom/webhook")
+    async def wecom_webhook(request: Request):
+        wecom: WeComAdapter = state["wecom"]
+        body = (await request.body()).decode("utf-8")
+        qs = request.query_params
+        from src.adapters.wecom import events as wc_events
+
+        encrypt = wc_events.extract_encrypt_from_xml(body) if "<" in body else ""
+        wecom.verify_signature(
+            msg_signature=str(qs.get("msg_signature") or ""),
+            timestamp=str(qs.get("timestamp") or ""),
+            nonce=str(qs.get("nonce") or ""),
+            encrypt=encrypt or body,
+        )
+        fields = wecom.decode_post_xml(body)
+        task = await wecom.handle_inbound_fields(fields)
+        return PlainTextResponse("success")
 
     # ----- Web chat -----
 
@@ -897,14 +1037,7 @@ def create_adapters_app() -> FastAPI:
 
     @app.get("/api/settings/channels")
     async def list_channels():
-        store = get_channel_store()
-        return RpcEnvelope(
-            ok=True,
-            data=store.public_document(
-                env_feishu_app_id=settings.feishu_app_id,
-                env_feishu_app_secret=settings.feishu_app_secret,
-            ),
-        )
+        return RpcEnvelope(ok=True, data=channel_public_doc())
 
     @app.put("/api/settings/channels/feishu")
     async def upsert_feishu_channel(request: Request):
@@ -913,16 +1046,7 @@ def create_adapters_app() -> FastAPI:
         store.upsert_feishu(body if isinstance(body, dict) else {})
         restart = state.get("restart_feishu_channel")
         runtime = await restart() if callable(restart) else {}
-        return RpcEnvelope(
-            ok=True,
-            data={
-                **store.public_document(
-                    env_feishu_app_id=settings.feishu_app_id,
-                    env_feishu_app_secret=settings.feishu_app_secret,
-                ),
-                "runtime": runtime,
-            },
-        )
+        return RpcEnvelope(ok=True, data=channel_public_doc(runtime))
 
     @app.post("/api/settings/channels/feishu/test")
     async def test_feishu_channel(request: Request):
@@ -937,17 +1061,64 @@ def create_adapters_app() -> FastAPI:
     async def reload_feishu_channel():
         restart = state.get("restart_feishu_channel")
         runtime = await restart() if callable(restart) else {}
+        return RpcEnvelope(ok=True, data=channel_public_doc(runtime))
+
+    @app.put("/api/settings/channels/dingtalk")
+    async def upsert_dingtalk_channel(request: Request):
+        body = await request.json()
         store = get_channel_store()
-        return RpcEnvelope(
-            ok=True,
-            data={
-                **store.public_document(
-                    env_feishu_app_id=settings.feishu_app_id,
-                    env_feishu_app_secret=settings.feishu_app_secret,
-                ),
-                "runtime": runtime,
-            },
+        store.upsert_dingtalk(body if isinstance(body, dict) else {})
+        restart = state.get("restart_dingtalk_channel")
+        runtime = await restart() if callable(restart) else {}
+        return RpcEnvelope(ok=True, data=channel_public_doc(runtime))
+
+    @app.post("/api/settings/channels/dingtalk/test")
+    async def test_dingtalk_channel(request: Request):
+        body = await request.json()
+        store = get_channel_store()
+        client_id = (
+            str(body.get("client_id") or "").strip()
+            or store.dingtalk.client_id
+            or settings.dingtalk_client_id
         )
+        client_secret = (
+            str(body.get("client_secret") or "").strip()
+            or store.dingtalk.client_secret
+            or settings.dingtalk_client_secret
+        )
+        data = await test_dingtalk_app(client_id=client_id, client_secret=client_secret)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/settings/channels/dingtalk/reload")
+    async def reload_dingtalk_channel():
+        restart = state.get("restart_dingtalk_channel")
+        runtime = await restart() if callable(restart) else {}
+        return RpcEnvelope(ok=True, data=channel_public_doc(runtime))
+
+    @app.put("/api/settings/channels/wecom")
+    async def upsert_wecom_channel(request: Request):
+        body = await request.json()
+        store = get_channel_store()
+        store.upsert_wecom(body if isinstance(body, dict) else {})
+        restart = state.get("restart_wecom_channel")
+        runtime = await restart() if callable(restart) else {}
+        return RpcEnvelope(ok=True, data=channel_public_doc(runtime))
+
+    @app.post("/api/settings/channels/wecom/test")
+    async def test_wecom_channel(request: Request):
+        body = await request.json()
+        store = get_channel_store()
+        corp_id = str(body.get("corp_id") or "").strip() or store.wecom.corp_id or settings.wecom_corp_id
+        secret = str(body.get("secret") or "").strip() or store.wecom.secret or settings.wecom_secret
+        agent_id = str(body.get("agent_id") or "").strip() or store.wecom.agent_id or settings.wecom_agent_id
+        data = await test_wecom_app(corp_id=corp_id, secret=secret, agent_id=agent_id)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/settings/channels/wecom/reload")
+    async def reload_wecom_channel():
+        restart = state.get("restart_wecom_channel")
+        runtime = await restart() if callable(restart) else {}
+        return RpcEnvelope(ok=True, data=channel_public_doc(runtime))
 
     @app.get("/api/plugins")
     async def list_plugins():

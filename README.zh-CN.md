@@ -11,13 +11,13 @@
 ## 架构一览
 
 ```
-Adapters (飞书/Web)  →  Orchestrator (队列/会话/事件)  →  Core Kernel (模型网关/插件/SQLite)
+Adapters (飞书/钉钉/企业微信/Web)  →  Orchestrator (队列/会话/事件)  →  Core Kernel (模型网关/插件/SQLite)
          ↑________________ Redis Event Bus ________________↑
 ```
 
 | 进程 | 端口 | 职责 |
 |------|------|------|
-| `adapters` | 8000 | 飞书 webhook / 长连接、Web SSE 对话页 |
+| `adapters` | 8000 | IM webhook（飞书 / 钉钉 / 企业微信）+ Web SSE 对话页 |
 | `orchestrator` | 8002 | 任务队列、会话缓存、内核 RPC 调度、事件转发 |
 | `core-kernel` | 8001 | 模型网关、插件运行时、**唯一** SQLite 读写 |
 | `redis` | 6379 | 任务队列 + 全局事件总线 |
@@ -164,6 +164,8 @@ docker compose up --build -d
 
 - 模型：`OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `GLM_API_KEY` / `ANTHROPIC_API_KEY`
 - 飞书：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` / …
+- 钉钉：`DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / …
+- 企业微信：`WECOM_CORP_ID` / `WECOM_AGENT_ID` / `WECOM_SECRET` / …
 - 压缩策略：`COMPACTION_AGGRESSIVENESS=conservative|balanced|aggressive`
 - 工作区挂载：`NLM_HOST_WORKSPACE=...`
 

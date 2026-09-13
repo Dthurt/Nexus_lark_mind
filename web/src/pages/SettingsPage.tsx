@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ChannelLogo, NlmLogo } from "@/components/brand/Logos";
 import { useChannelSettings } from "@/hooks/useChannelSettings";
 import { useModelSettings } from "@/hooks/useModelSettings";
 import { cn } from "@/lib/utils";
@@ -60,6 +61,26 @@ type FeishuForm = {
   use_long_connection: boolean;
 };
 
+type DingTalkForm = {
+  enabled: boolean;
+  display_name: string;
+  client_id: string;
+  client_secret: string;
+  robot_code: string;
+  token: string;
+  encoding_aes_key: string;
+};
+
+type WeComForm = {
+  enabled: boolean;
+  display_name: string;
+  corp_id: string;
+  agent_id: string;
+  secret: string;
+  token: string;
+  encoding_aes_key: string;
+};
+
 const EMPTY_PROVIDER: ProviderForm = {
   id: "",
   label: "",
@@ -79,6 +100,26 @@ const EMPTY_FEISHU: FeishuForm = {
   verification_token: "",
   encrypt_key: "",
   use_long_connection: true,
+};
+
+const EMPTY_DINGTALK: DingTalkForm = {
+  enabled: true,
+  display_name: "钉钉",
+  client_id: "",
+  client_secret: "",
+  robot_code: "",
+  token: "",
+  encoding_aes_key: "",
+};
+
+const EMPTY_WECOM: WeComForm = {
+  enabled: true,
+  display_name: "企业微信",
+  corp_id: "",
+  agent_id: "",
+  secret: "",
+  token: "",
+  encoding_aes_key: "",
 };
 
 function modelChips(models: string[] | undefined, defaultModel?: string) {
@@ -121,18 +162,28 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
     saving: channelSaving,
     testing: channelTesting,
     error: channelError,
-    testHint: feishuTestHint,
+    testHint: channelTestHint,
     load: loadChannels,
     saveFeishu,
     testFeishu,
     reloadFeishu,
     feishuChannel,
+    saveDingTalk,
+    testDingTalk,
+    reloadDingTalk,
+    dingtalkChannel,
+    saveWeCom,
+    testWeCom,
+    reloadWeCom,
+    wecomChannel,
   } = useChannelSettings();
 
   const [tab, setTab] = useState<"models" | "channels">("models");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ProviderForm>(EMPTY_PROVIDER);
   const [feishuForm, setFeishuForm] = useState<FeishuForm>(EMPTY_FEISHU);
+  const [dingtalkForm, setDingTalkForm] = useState<DingTalkForm>(EMPTY_DINGTALK);
+  const [wecomForm, setWeComForm] = useState<WeComForm>(EMPTY_WECOM);
   const [formError, setFormError] = useState("");
   const [discovering, setDiscovering] = useState(false);
   const [testingModel, setTestingModel] = useState(false);
@@ -141,20 +192,47 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
   const discoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const feishu = feishuChannel();
+  const dingtalk = dingtalkChannel();
+  const wecom = wecomChannel();
 
-  const syncFeishuForm = useCallback(() => {
-    const c = feishuChannel();
-    if (!c) return;
-    setFeishuForm({
-      enabled: c.enabled !== false,
-      display_name: c.display_name || "飞书",
-      app_id: c.app_id || "",
-      app_secret: "",
-      verification_token: "",
-      encrypt_key: "",
-      use_long_connection: c.use_long_connection !== false,
-    });
-  }, [feishuChannel]);
+  const syncChannelForms = useCallback(() => {
+    const f = feishuChannel();
+    if (f) {
+      setFeishuForm({
+        enabled: f.enabled !== false,
+        display_name: f.display_name || "飞书",
+        app_id: (f.app_id as string) || "",
+        app_secret: "",
+        verification_token: "",
+        encrypt_key: "",
+        use_long_connection: f.use_long_connection !== false,
+      });
+    }
+    const d = dingtalkChannel();
+    if (d) {
+      setDingTalkForm({
+        enabled: d.enabled !== false,
+        display_name: d.display_name || "钉钉",
+        client_id: String(d.client_id || ""),
+        client_secret: "",
+        robot_code: String(d.robot_code || ""),
+        token: "",
+        encoding_aes_key: "",
+      });
+    }
+    const w = wecomChannel();
+    if (w) {
+      setWeComForm({
+        enabled: w.enabled !== false,
+        display_name: w.display_name || "企业微信",
+        corp_id: String(w.corp_id || ""),
+        agent_id: String(w.agent_id || ""),
+        secret: "",
+        token: "",
+        encoding_aes_key: "",
+      });
+    }
+  }, [feishuChannel, dingtalkChannel, wecomChannel]);
 
   useEffect(() => {
     void load();
@@ -353,7 +431,7 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
       encrypt_key: feishuForm.encrypt_key,
       use_long_connection: !!feishuForm.use_long_connection,
     });
-    syncFeishuForm();
+    syncChannelForms();
   }
 
   async function onTestFeishu() {
@@ -363,12 +441,53 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
     });
   }
 
+  async function onSaveDingTalk() {
+    await saveDingTalk({
+      enabled: !!dingtalkForm.enabled,
+      display_name: dingtalkForm.display_name.trim() || "钉钉",
+      client_id: dingtalkForm.client_id.trim(),
+      client_secret: dingtalkForm.client_secret,
+      robot_code: dingtalkForm.robot_code.trim(),
+      token: dingtalkForm.token,
+      encoding_aes_key: dingtalkForm.encoding_aes_key,
+    });
+    syncChannelForms();
+  }
+
+  async function onTestDingTalk() {
+    await testDingTalk({
+      client_id: dingtalkForm.client_id.trim(),
+      client_secret: dingtalkForm.client_secret,
+    });
+  }
+
+  async function onSaveWeCom() {
+    await saveWeCom({
+      enabled: !!wecomForm.enabled,
+      display_name: wecomForm.display_name.trim() || "企业微信",
+      corp_id: wecomForm.corp_id.trim(),
+      agent_id: wecomForm.agent_id.trim(),
+      secret: wecomForm.secret,
+      token: wecomForm.token,
+      encoding_aes_key: wecomForm.encoding_aes_key,
+    });
+    syncChannelForms();
+  }
+
+  async function onTestWeCom() {
+    await testWeCom({
+      corp_id: wecomForm.corp_id.trim(),
+      secret: wecomForm.secret,
+      agent_id: wecomForm.agent_id.trim(),
+    });
+  }
+
   async function switchTab(next: string) {
     const value = next === "channels" ? "channels" : "models";
     setTab(value);
     if (value === "channels") {
       await loadChannels();
-      syncFeishuForm();
+      syncChannelForms();
     }
   }
 
@@ -380,9 +499,12 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
         <Button type="button" variant="ghost" size="sm" onClick={onBack}>
           ← 返回对话
         </Button>
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight">Nexus Lark Mind</h1>
-          <p className="text-xs text-muted-foreground">设置 · 模型与通道</p>
+        <div className="flex items-center gap-2.5">
+          <NlmLogo className="size-8" />
+          <div>
+            <h1 className="text-lg font-semibold tracking-tight">Nexus Lark Mind</h1>
+            <p className="text-xs text-muted-foreground">设置 · 模型与通道</p>
+          </div>
         </div>
       </header>
 
@@ -755,7 +877,10 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
                 >
                   <CardHeader className="space-y-1 p-3">
                     <div className="flex items-center justify-between gap-2">
-                      <CardTitle className="text-sm">{c.display_name}</CardTitle>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <ChannelLogo kind={c.logo as string || c.kind || c.id} className="size-7" />
+                        <CardTitle className="truncate text-sm">{c.display_name}</CardTitle>
+                      </div>
                       <Badge
                         variant="outline"
                         className={cn(
@@ -771,7 +896,8 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
                       </Badge>
                     </div>
                     <CardDescription className="text-[11px]">
-                      {c.id} · {c.hint}
+                      {c.id}
+                      {c.webhook_path ? ` · ${String(c.webhook_path)}` : ""} · {c.hint}
                     </CardDescription>
                     {c.source ? (
                       <p className="text-[11px] text-muted-foreground">来源: {c.source}</p>
@@ -886,8 +1012,8 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
                   : ""}
               </p>
             ) : null}
-            {feishuTestHint ? (
-              <p className="mt-2 text-xs text-muted-foreground">{feishuTestHint}</p>
+            {channelTestHint ? (
+              <p className="mt-2 text-xs text-muted-foreground">{channelTestHint}</p>
             ) : null}
 
             <div className="mt-3 flex flex-wrap gap-2">
@@ -916,6 +1042,192 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
                 onClick={() => void reloadFeishu()}
               >
                 重载长连接
+              </Button>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="mb-1.5 flex items-center gap-2 text-[15px] font-semibold">
+              <ChannelLogo kind="dingtalk" className="size-6" />
+              钉钉 Channel
+            </h2>
+            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+              在钉钉开放平台创建企业内部应用 / 机器人，HTTP 回调填
+              <code className="mx-1 rounded bg-muted px-1">/dingtalk/webhook</code>
+              。消息优先走 sessionWebhook 回复。
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">显示名</Label>
+                <Input
+                  value={dingtalkForm.display_name}
+                  onChange={(e) => setDingTalkForm((f) => ({ ...f, display_name: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Client ID (AppKey)</Label>
+                <Input
+                  value={dingtalkForm.client_id}
+                  onChange={(e) => setDingTalkForm((f) => ({ ...f, client_id: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  Client Secret{dingtalk?.client_secret_set ? "（留空保留）" : ""}
+                </Label>
+                <Input
+                  type="password"
+                  value={dingtalkForm.client_secret}
+                  onChange={(e) => setDingTalkForm((f) => ({ ...f, client_secret: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Robot Code（可选）</Label>
+                <Input
+                  value={dingtalkForm.robot_code}
+                  onChange={(e) => setDingTalkForm((f) => ({ ...f, robot_code: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Token（加密回调）</Label>
+                <Input
+                  value={dingtalkForm.token}
+                  onChange={(e) => setDingTalkForm((f) => ({ ...f, token: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">EncodingAESKey</Label>
+                <Input
+                  value={dingtalkForm.encoding_aes_key}
+                  onChange={(e) =>
+                    setDingTalkForm((f) => ({ ...f, encoding_aes_key: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <Switch
+                id="dingtalk-enabled"
+                checked={dingtalkForm.enabled}
+                onCheckedChange={(v) => setDingTalkForm((f) => ({ ...f, enabled: !!v }))}
+              />
+              <Label htmlFor="dingtalk-enabled" className="text-xs text-muted-foreground">
+                启用钉钉通道
+              </Label>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={channelTesting || channelSaving}
+                onClick={() => void onTestDingTalk()}
+              >
+                测试连通性
+              </Button>
+              <Button type="button" size="sm" disabled={channelSaving} onClick={() => void onSaveDingTalk()}>
+                保存并接入
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={channelSaving}
+                onClick={() => void reloadDingTalk()}
+              >
+                重载凭证
+              </Button>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="mb-1.5 flex items-center gap-2 text-[15px] font-semibold">
+              <ChannelLogo kind="wecom" className="size-6" />
+              企业微信 Channel
+            </h2>
+            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+              在企业微信管理后台创建自建应用，回调 URL 填
+              <code className="mx-1 rounded bg-muted px-1">/wecom/webhook</code>
+              ，并配置 Token / EncodingAESKey。
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">显示名</Label>
+                <Input
+                  value={wecomForm.display_name}
+                  onChange={(e) => setWeComForm((f) => ({ ...f, display_name: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">CorpID</Label>
+                <Input
+                  value={wecomForm.corp_id}
+                  onChange={(e) => setWeComForm((f) => ({ ...f, corp_id: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">AgentId</Label>
+                <Input
+                  value={wecomForm.agent_id}
+                  onChange={(e) => setWeComForm((f) => ({ ...f, agent_id: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  Secret{wecom?.secret_set ? "（留空保留）" : ""}
+                </Label>
+                <Input
+                  type="password"
+                  value={wecomForm.secret}
+                  onChange={(e) => setWeComForm((f) => ({ ...f, secret: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Token</Label>
+                <Input
+                  value={wecomForm.token}
+                  onChange={(e) => setWeComForm((f) => ({ ...f, token: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">EncodingAESKey</Label>
+                <Input
+                  value={wecomForm.encoding_aes_key}
+                  onChange={(e) => setWeComForm((f) => ({ ...f, encoding_aes_key: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <Switch
+                id="wecom-enabled"
+                checked={wecomForm.enabled}
+                onCheckedChange={(v) => setWeComForm((f) => ({ ...f, enabled: !!v }))}
+              />
+              <Label htmlFor="wecom-enabled" className="text-xs text-muted-foreground">
+                启用企业微信通道
+              </Label>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={channelTesting || channelSaving}
+                onClick={() => void onTestWeCom()}
+              >
+                测试连通性
+              </Button>
+              <Button type="button" size="sm" disabled={channelSaving} onClick={() => void onSaveWeCom()}>
+                保存并接入
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={channelSaving}
+                onClick={() => void reloadWeCom()}
+              >
+                重载凭证
               </Button>
             </div>
           </section>

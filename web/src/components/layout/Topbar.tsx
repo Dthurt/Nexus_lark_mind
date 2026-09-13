@@ -14,6 +14,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 import { ViewRing, type CenterViewId } from "@/components/layout/ViewRing";
+import { NlmLogo } from "@/components/brand/Logos";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -111,18 +112,21 @@ export function Topbar({
         <PanelLeft className="size-4" />
       </IconButton>
 
-      <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
-        <h1 className="m-0 truncate text-sm font-semibold tracking-tight">{title}</h1>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {cwd ? (
-            <code
-              title={cwd}
-              className="max-w-[220px] truncate rounded border border-teal/35 bg-teal/10 px-1.5 py-0.5 font-mono text-[10px] text-teal"
-            >
-              {workspaceKind === "ssh" ? "SSH · " : ""}
-              {workspaceTitle || cwd}
-            </code>
-          ) : null}
+      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+        <NlmLogo className="size-6 shrink-0" title="" />
+        <div className="flex min-w-0 items-baseline gap-2.5">
+          <h1 className="m-0 truncate text-sm font-semibold tracking-tight">{title}</h1>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {cwd ? (
+              <code
+                title={cwd}
+                className="max-w-[220px] truncate rounded border border-teal/35 bg-teal/10 px-1.5 py-0.5 font-mono text-[10px] text-teal"
+              >
+                {workspaceKind === "ssh" ? "SSH · " : ""}
+                {workspaceTitle || cwd}
+              </code>
+            ) : null}
+          </div>
         </div>
       </div>
 

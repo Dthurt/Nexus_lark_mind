@@ -19,6 +19,8 @@ def new_id(prefix: str = "") -> str:
 
 class ChannelType(str, Enum):
     FEISHU = "feishu"
+    DINGTALK = "dingtalk"
+    WECOM = "wecom"
     WEB = "web"
     SYSTEM = "system"
 

@@ -26,6 +26,7 @@ import { applyMathPlaceholders, protectMath } from "./math";
 import { enhanceChatImages } from "./chatImages";
 import { diagramInk, diagramPanelBg, mermaidThemeName } from "./diagramTheme";
 import { isMindmapLang, mindmapMarkdownHtml, renderMindmapIn } from "./mindmap";
+import { linkifyElement } from "./linkify";
 
 const HLJS_LANG_ALIASES: Record<string, string> = {
   js: "javascript",
@@ -299,9 +300,12 @@ export async function renderMarkdownWithMath(
 
 export function decorateMarkdownLinks(root: HTMLElement | null) {
   if (!root) return;
+  linkifyElement(root);
   root.querySelectorAll("a[href]").forEach((a) => {
-    (a as HTMLAnchorElement).target = "_blank";
-    (a as HTMLAnchorElement).rel = "noopener noreferrer";
+    const el = a as HTMLAnchorElement;
+    el.target = "_blank";
+    el.rel = "noopener noreferrer";
+    el.classList.add("nlm-md-link");
   });
 }
 

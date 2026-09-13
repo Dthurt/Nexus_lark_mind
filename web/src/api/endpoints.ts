@@ -453,6 +453,37 @@ export function reloadFeishu(): Promise<ChannelDoc> {
   return apiPost<ChannelDoc>("/api/settings/channels/feishu/reload");
 }
 
+export function saveDingTalk(form: Record<string, unknown>): Promise<ChannelDoc> {
+  return apiPut<ChannelDoc>("/api/settings/channels/dingtalk", form);
+}
+
+export function testDingTalk(body: {
+  client_id?: string;
+  client_secret?: string;
+} = {}): Promise<{ message?: string; [key: string]: unknown }> {
+  return apiPost("/api/settings/channels/dingtalk/test", body);
+}
+
+export function reloadDingTalk(): Promise<ChannelDoc> {
+  return apiPost<ChannelDoc>("/api/settings/channels/dingtalk/reload");
+}
+
+export function saveWeCom(form: Record<string, unknown>): Promise<ChannelDoc> {
+  return apiPut<ChannelDoc>("/api/settings/channels/wecom", form);
+}
+
+export function testWeCom(body: {
+  corp_id?: string;
+  secret?: string;
+  agent_id?: string;
+} = {}): Promise<{ message?: string; [key: string]: unknown }> {
+  return apiPost("/api/settings/channels/wecom/test", body);
+}
+
+export function reloadWeCom(): Promise<ChannelDoc> {
+  return apiPost<ChannelDoc>("/api/settings/channels/wecom/reload");
+}
+
 // ----- teams / acp / plugin packages -----
 
 export function getTeamSnapshot(teamId: string): Promise<any> {

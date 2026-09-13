@@ -16,7 +16,7 @@
 | [model-settings.md](./model-settings.md) | Providers and models |
 | [plugins.md](./plugins.md) | Plugin lifecycle + Cordis-lite UI slots |
 | [plugin-packaging.md](./plugin-packaging.md) | Installable packs / marketplace |
-| [channels.md](./channels.md) | Feishu and other channels |
+| [channels.md](./channels.md) | Unified Channel Hub — Web / Feishu / DingTalk / WeCom |
 | [subagents.md](./subagents.md) | Subagent continuum |
 | [multi-backend-subagents.md](./multi-backend-subagents.md) | ACP / backends |
 | [agent-teams.md](./agent-teams.md) | Experimental teams |

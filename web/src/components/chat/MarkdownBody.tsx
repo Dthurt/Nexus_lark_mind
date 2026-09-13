@@ -13,6 +13,7 @@ import {
   renderMindmapIn,
   splitSettledMarkdown,
 } from "@/lib/markdown";
+import { linkifyPlainText } from "@/lib/markdown/linkify";
 import { cn } from "@/lib/utils";
 import {
   repairDrawio as repairDrawioApi,
@@ -217,12 +218,11 @@ export function MarkdownBody({
     return (
       <div
         className={cn(
-          "nlm-md body min-w-0 max-w-full whitespace-pre-wrap break-words text-[13.5px] leading-[1.7] plain text-[13px]",
+          "nlm-md body min-w-0 max-w-full break-words text-[13.5px] leading-[1.7] plain text-[13px] [&_a]:text-teal [&_a]:underline [&_a]:underline-offset-2",
           className,
         )}
-      >
-        {content}
-      </div>
+        dangerouslySetInnerHTML={{ __html: linkifyPlainText(content) }}
+      />
     );
   }
 
@@ -237,14 +237,21 @@ export function MarkdownBody({
         {streamSettledHtml ? (
           <div
             className="nlm-md-settled"
+            ref={(el) => {
+              if (el) enhanceMarkdownRoot(el);
+            }}
             dangerouslySetInnerHTML={{ __html: streamSettledHtml }}
           />
         ) : null}
         {streamTail || !streamSettledHtml ? (
-          <div className="nlm-md-tail whitespace-pre-wrap break-words">
-            {streamTail || (!streamSettledHtml ? content : "")}
-            <span className="streaming-caret" aria-hidden="true" />
-          </div>
+          <div
+            className="nlm-md-tail break-words [&_a]:text-teal [&_a]:underline"
+            dangerouslySetInnerHTML={{
+              __html:
+                linkifyPlainText(streamTail || (!streamSettledHtml ? content : "")) +
+                '<span class="streaming-caret" aria-hidden="true"></span>',
+            }}
+          />
         ) : (
           <span className="streaming-caret" aria-hidden="true" />
         )}

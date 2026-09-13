@@ -1,5 +1,16 @@
 import { useCallback, useState } from "react";
-import { getChannels, reloadFeishu, saveFeishu, testFeishu } from "@/api/endpoints";
+import {
+  getChannels,
+  reloadDingTalk,
+  reloadFeishu,
+  reloadWeCom,
+  saveDingTalk,
+  saveFeishu,
+  saveWeCom,
+  testDingTalk,
+  testFeishu,
+  testWeCom,
+} from "@/api/endpoints";
 import type { ChannelDoc, ChannelEntry } from "@/types/api";
 
 export function useChannelSettings() {
@@ -26,45 +37,54 @@ export function useChannelSettings() {
     }
   }, []);
 
-  const saveFeishuForm = useCallback(async (form: Record<string, unknown>) => {
-    setSaving(true);
-    setError("");
-    try {
-      const data = await saveFeishu(form);
-      setDoc(data);
-      return data;
-    } catch (err: any) {
-      setError(String(err));
-      throw err;
-    } finally {
-      setSaving(false);
-    }
-  }, []);
-
-  const testFeishuConn = useCallback(
-    async ({ app_id, app_secret }: { app_id?: string; app_secret?: string } = {}) => {
-      setTesting(true);
-      setTestHint("正在请求飞书 tenant_access_token…");
+  const saveChannel = useCallback(
+    async (kind: "feishu" | "dingtalk" | "wecom", form: Record<string, unknown>) => {
+      setSaving(true);
       setError("");
       try {
-        const data = await testFeishu({ app_id, app_secret });
-        setTestHint(data?.message || "连通成功");
+        const fn = kind === "feishu" ? saveFeishu : kind === "dingtalk" ? saveDingTalk : saveWeCom;
+        const data = await fn(form);
+        setDoc(data);
         return data;
       } catch (err: any) {
-        setTestHint(String(err?.message || err));
         setError(String(err));
         throw err;
       } finally {
-        setTesting(false);
+        setSaving(false);
       }
     },
     [],
   );
 
-  const reloadFeishuChannel = useCallback(async () => {
+  const testChannel = useCallback(async (kind: "feishu" | "dingtalk" | "wecom", body: Record<string, unknown> = {}) => {
+    setTesting(true);
+    setTestHint(
+      kind === "feishu"
+        ? "正在请求飞书 tenant_access_token…"
+        : kind === "dingtalk"
+          ? "正在请求钉钉 accessToken…"
+          : "正在请求企业微信 access_token…",
+    );
+    setError("");
+    try {
+      const fn = kind === "feishu" ? testFeishu : kind === "dingtalk" ? testDingTalk : testWeCom;
+      const data = await fn(body as any);
+      setTestHint(data?.message || "连通成功");
+      return data;
+    } catch (err: any) {
+      setTestHint(String(err?.message || err));
+      setError(String(err));
+      throw err;
+    } finally {
+      setTesting(false);
+    }
+  }, []);
+
+  const reloadChannel = useCallback(async (kind: "feishu" | "dingtalk" | "wecom") => {
     setSaving(true);
     try {
-      const data = await reloadFeishu();
+      const fn = kind === "feishu" ? reloadFeishu : kind === "dingtalk" ? reloadDingTalk : reloadWeCom;
+      const data = await fn();
       setDoc(data);
       return data;
     } catch (err: any) {
@@ -75,9 +95,10 @@ export function useChannelSettings() {
     }
   }, []);
 
-  const feishuChannel = useCallback((): ChannelEntry | null => {
-    return (doc.channels || []).find((c) => c.id === "feishu") || null;
-  }, [doc.channels]);
+  const channelById = useCallback(
+    (id: string): ChannelEntry | null => (doc.channels || []).find((c) => c.id === id) || null,
+    [doc.channels],
+  );
 
   return {
     doc,
@@ -87,9 +108,19 @@ export function useChannelSettings() {
     error,
     testHint,
     load,
-    saveFeishu: saveFeishuForm,
-    testFeishu: testFeishuConn,
-    reloadFeishu: reloadFeishuChannel,
-    feishuChannel,
+    saveFeishu: (form: Record<string, unknown>) => saveChannel("feishu", form),
+    testFeishu: (body?: { app_id?: string; app_secret?: string }) => testChannel("feishu", body || {}),
+    reloadFeishu: () => reloadChannel("feishu"),
+    feishuChannel: () => channelById("feishu"),
+    saveDingTalk: (form: Record<string, unknown>) => saveChannel("dingtalk", form),
+    testDingTalk: (body?: { client_id?: string; client_secret?: string }) =>
+      testChannel("dingtalk", body || {}),
+    reloadDingTalk: () => reloadChannel("dingtalk"),
+    dingtalkChannel: () => channelById("dingtalk"),
+    saveWeCom: (form: Record<string, unknown>) => saveChannel("wecom", form),
+    testWeCom: (body?: { corp_id?: string; secret?: string; agent_id?: string }) =>
+      testChannel("wecom", body || {}),
+    reloadWeCom: () => reloadChannel("wecom"),
+    wecomChannel: () => channelById("wecom"),
   };
 }

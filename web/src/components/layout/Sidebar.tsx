@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Plus, Settings, X } from "lucide-react";
 import { motion } from "motion/react";
 
+import { NlmLogo } from "@/components/brand/Logos";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -63,13 +64,16 @@ export function Sidebar({
         className,
       )}
     >
-      <div className="shrink-0">
-        <div className="bg-gradient-to-br from-foreground via-primary to-teal bg-clip-text text-[15px] font-bold tracking-tight text-transparent">
-          Nexus Lark Mind
+      <div className="flex shrink-0 items-center gap-2.5">
+        <NlmLogo className="size-8 shadow-sm ring-1 ring-border/60" />
+        <div className="min-w-0">
+          <div className="bg-gradient-to-br from-foreground via-teal to-cyan-600 bg-clip-text text-[15px] font-bold tracking-tight text-transparent">
+            Nexus Lark Mind
+          </div>
+          <p className="m-0 mt-0.5 text-[10.5px] uppercase tracking-[0.06em] text-muted-foreground">
+            Agent Console
+          </p>
         </div>
-        <p className="m-0 mt-0.5 text-[10.5px] uppercase tracking-[0.06em] text-muted-foreground">
-          Agent Console
-        </p>
       </div>
 
       <Button
