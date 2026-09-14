@@ -72,7 +72,16 @@ export const MessageBubble = memo(function MessageBubble({
   const resolvedModel = item.modelName || modelName || "";
   const resolvedProvider = item.modelProvider || modelProvider || "";
   const footerModel = item.modelName || "";
-  const footerProvider = item.modelProvider || modelProvider || "";
+  const footerProvider = item.modelProvider || "";
+  const usageObj = item.usage && typeof item.usage === "object" ? item.usage : null;
+  const hasUsageStats = !!(
+    usageObj &&
+    (usageObj.total_tokens ||
+      usageObj.prompt_tokens ||
+      usageObj.completion_tokens ||
+      usageObj.duration_ms ||
+      usageObj.estimated)
+  );
 
   const showCaret = useMemo(() => {
     if (!item.streaming) return false;
@@ -82,22 +91,22 @@ export const MessageBubble = memo(function MessageBubble({
   }, [item.streaming, item.activity?.phase]);
 
   const usageSummary = useMemo(() => {
-    if (!item.usage) return "";
-    return formatUsageLine(item.usage, {
-      modelName: footerModel || resolvedModel,
+    if (!hasUsageStats || !usageObj) return "";
+    return formatUsageLine(usageObj, {
+      modelName: footerModel,
       providerId: footerProvider,
     });
-  }, [item.usage, footerModel, footerProvider, resolvedModel]);
+  }, [hasUsageStats, usageObj, footerModel, footerProvider]);
 
   const usageDetail = useMemo(() => {
-    const u = item.usage;
-    if (!u) return null;
+    if (!hasUsageStats || !usageObj) return null;
+    const u = usageObj;
     const cost = estimateCostCny(u, {
-      modelName: footerModel || resolvedModel,
+      modelName: footerModel,
       providerId: footerProvider,
     });
     const cache = formatCacheHit(u);
-    const rate = resolveModelRate(footerModel || resolvedModel, footerProvider);
+    const rate = resolveModelRate(footerModel, footerProvider);
     return {
       model: footerModel || "—",
       prompt: formatTokenCount(Number(u.prompt_tokens || 0)),
@@ -114,7 +123,7 @@ export const MessageBubble = memo(function MessageBubble({
       rateText: `输入 ¥${rate.input}/M · 输出 ¥${rate.output}/M · 缓存 ¥${rate.cache}/M`,
       estimated: !!u.estimated,
     };
-  }, [item.usage, footerModel, footerProvider, resolvedModel]);
+  }, [hasUsageStats, usageObj, footerModel, footerProvider]);
 
   function onMermaidFixed({ from, to }: { from: string; to: string }) {
     if (!from || !to || from === to) return;
@@ -142,7 +151,7 @@ export const MessageBubble = memo(function MessageBubble({
 
   const isUser = item.role === "user";
   const showUsageFooter =
-    !isUser && !item.streaming && !item.live && !!item.usage;
+    !isUser && !item.streaming && !item.live && hasUsageStats;
   const showCopyAction =
     !isUser && !item.streaming && !item.live && !!(content || "").trim();
 

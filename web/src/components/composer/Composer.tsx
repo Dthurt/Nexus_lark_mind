@@ -635,7 +635,7 @@ export function Composer({
                   模型
                 </div>
                 {providersDisabled ? (
-                  <p className="px-2 pb-1 text-[11px] leading-relaxed text-amber-200/90">
+                  <p className="px-2 pb-1 text-[11px] leading-relaxed text-amber-800 dark:text-amber-200/90">
                     未检测到可用 Provider。请在 <strong>Settings → Models</strong> 配置
                     API Key，或检查 <code className="text-[10px]">.env</code>{" "}
                     中的模型密钥后刷新页面。
@@ -853,7 +853,6 @@ export function Composer({
               onChange={(v) =>
                 onPermissionPresetChange?.(v as "read-only" | "workspace-write" | "danger-full-access")
               }
-              disabled={busy}
             />
             <ComposerSegmentGroup
               label="体验档"
@@ -871,7 +870,6 @@ export function Composer({
               ]}
               value={experienceTier}
               onChange={(v) => applyExperienceTier(v as ExperienceTierId)}
-              disabled={busy}
             />
             <ComposerSegmentGroup
               label="推理"
@@ -889,33 +887,78 @@ export function Composer({
               ]}
               value={reasoningEffort}
               onChange={(v) => onReasoningEffortChange?.(v as "low" | "medium" | "high")}
-              disabled={busy}
             />
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-1 border-t border-border/60 px-2 py-1.5">
-            {(
-              [
-                ["read-only", "只读"],
-                ["workspace-write", "可写"],
-                ["danger-full-access", "全开"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                className={cn(
-                  "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                  permissionPreset === id
-                    ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-                disabled={busy}
-                onClick={() => onPermissionPresetChange?.(id)}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="flex flex-col gap-1.5 border-t border-border/60 px-2 py-1.5">
+            <div className="flex flex-wrap items-center gap-1">
+              {(
+                [
+                  ["read-only", "只读"],
+                  ["workspace-write", "可写"],
+                  ["danger-full-access", "全开"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                    permissionPreset === id
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => onPermissionPresetChange?.(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-1">
+              {(
+                [
+                  ["fast", "Fast"],
+                  ["balanced", "Bal"],
+                  ["high", "High"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                    experienceTier === id
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => applyExperienceTier(id as ExperienceTierId)}
+                >
+                  {label}
+                </button>
+              ))}
+              <span className="mx-0.5 text-border">|</span>
+              {(
+                [
+                  ["low", "Low"],
+                  ["medium", "Med"],
+                  ["high", "High"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={`r-${id}`}
+                  type="button"
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                    reasoningEffort === id
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => onReasoningEffortChange?.(id as "low" | "medium" | "high")}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

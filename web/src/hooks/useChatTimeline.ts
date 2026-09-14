@@ -1012,7 +1012,10 @@ export function useChatTimeline() {
         if (role === "system") continue;
         if (!m.content && role === "assistant") continue;
         appendMessage(role === "user" ? "user" : "assistant", m.content || "", {
-          usage: role === "assistant" ? meta.usage : null,
+          usage:
+            role === "assistant" && meta.usage && Object.keys(meta.usage).length
+              ? meta.usage
+              : null,
         });
         if (role === "assistant") {
           const last = itemsRef.current[itemsRef.current.length - 1];
