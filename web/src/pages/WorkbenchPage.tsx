@@ -573,7 +573,6 @@ export function WorkbenchPage({
             workspaceTitle={workspaceTitle}
             cwd={cwd}
             workspaceKind={workspaceKind}
-            onToggleRail={toggleRail}
             onClear={() => void clearSession()}
             onOpenCommand={commandPalette.show}
             canvasOpen={canvas.open}
@@ -710,6 +709,8 @@ export function WorkbenchPage({
 
         <RightDock
           dock={dock}
+          collapsed={narrowUi ? !layout.railOpen : dock.state.collapsed}
+          onToggleCollapse={toggleRail}
           plugins={plugins}
           tools={tools}
           activity={timeline.activityLog}

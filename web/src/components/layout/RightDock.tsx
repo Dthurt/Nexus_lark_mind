@@ -1,5 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { RefreshCw, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  Gauge,
+  History,
+  Package,
+  PanelRight,
+  Puzzle,
+  RefreshCw,
+  ScanSearch,
+  Users,
+  Wrench,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 
 import { getPluginConfig } from "@/api/endpoints";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +46,45 @@ export type ActivityItem = {
 };
 
 export type RightDockController = ReturnType<typeof useRightDock>;
+
+const RAIL_TAB_META: Record<string, { title: string; Icon: LucideIcon }> = {
+  plugins: { title: "插件", Icon: Puzzle },
+  delivery: { title: "Delivery", Icon: Package },
+  teams: { title: "Teams", Icon: Users },
+  jobs: { title: "Jobs", Icon: Wrench },
+  activity: { title: "本回合", Icon: History },
+  usage: { title: "用量", Icon: Gauge },
+  inspector: { title: "检查器", Icon: ScanSearch },
+};
+
+function RailIconButton({
+  title,
+  active,
+  onClick,
+  children,
+}: {
+  title: string;
+  active?: boolean;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors",
+        "hover:bg-foreground/[0.06] hover:text-foreground",
+        active && "bg-primary/15 text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
 
 export type RightDockProps = {
   dock: RightDockController;
@@ -76,6 +127,9 @@ export type RightDockProps = {
   onInstallPluginZip?: (file: File) => void | Promise<void>;
   onInspectJob?: (activityId: string) => void;
   onStopJob?: (callId?: string) => void;
+  /** Icon-rail mode (mirrors left sidebar collapse). */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
   className?: string;
 };
 
@@ -124,6 +178,8 @@ export function RightDock({
   onInstallPluginZip,
   onInspectJob,
   onStopJob,
+  collapsed = false,
+  onToggleCollapse,
   className,
 }: RightDockProps) {
   const [toggling, setToggling] = useState<Record<string, boolean>>({});
@@ -187,10 +243,60 @@ export function RightDock({
     <aside
       className={cn(
         "nlm-rail relative flex h-full min-h-0 w-[var(--rail-w)] flex-col overflow-hidden border-l border-border bg-card/70 backdrop-blur-md",
+        collapsed && "nlm-rail--icons items-center gap-1.5",
         className,
       )}
       aria-label="扩展停靠栏"
+      data-collapsed={collapsed || undefined}
     >
+      {collapsed ? (
+        <>
+          <button
+            type="button"
+            title="展开右侧栏"
+            aria-label="展开右侧栏"
+            onClick={() => onToggleCollapse?.()}
+            className="group relative inline-flex size-8 shrink-0 items-center justify-center rounded-md"
+          >
+            <span className="flex size-6 items-center justify-center rounded-md bg-primary/15 text-[9px] font-bold tracking-tight text-primary transition-opacity group-hover:opacity-0">
+              Dock
+            </span>
+            <PanelRight
+              className="pointer-events-none absolute size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+              aria-hidden
+            />
+          </button>
+
+          {(panes[0]?.tabs || []).map((tab) => {
+            const meta = RAIL_TAB_META[tab.kind] || {
+              title: tab.title,
+              Icon: ScanSearch,
+            };
+            const Icon = meta.Icon;
+            const active = panes[0]?.activeId === tab.id;
+            return (
+              <RailIconButton
+                key={tab.id}
+                title={meta.title}
+                active={active}
+                onClick={() => {
+                  dock.focusTab(panes[0].id, tab.id);
+                  if (collapsed) onToggleCollapse?.();
+                }}
+              >
+                <Icon className="size-4" />
+              </RailIconButton>
+            );
+          })}
+
+          <div className="min-h-2 flex-1" />
+
+          <RailIconButton title="重载插件" onClick={() => void onReload?.()}>
+            <RefreshCw className={cn("size-4", reloading && "animate-spin")} />
+          </RailIconButton>
+        </>
+      ) : (
+        <>
       <div className="flex shrink-0 items-center justify-between border-b border-border px-2.5 py-2">
         <span className="text-[10.5px] uppercase tracking-[0.06em] text-muted-foreground">
           Dock
@@ -219,6 +325,19 @@ export function RightDock({
           >
             <RefreshCw className={cn("size-3.5", reloading && "animate-spin")} />
           </Button>
+          {onToggleCollapse ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2"
+              title="收起右侧栏"
+              aria-label="收起右侧栏"
+              onClick={() => onToggleCollapse()}
+            >
+              <PanelRight className="size-3.5" />
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -383,6 +502,8 @@ export function RightDock({
           </div>
         </div>
       ) : null}
+        </>
+      )}
     </aside>
   );
 }

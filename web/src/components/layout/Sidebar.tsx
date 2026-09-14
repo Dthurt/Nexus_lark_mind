@@ -54,7 +54,7 @@ function RailIconButton({
       aria-label={title}
       onClick={onClick}
       className={cn(
-        "inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors",
+        "inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors",
         "hover:bg-foreground/[0.06] hover:text-foreground",
         className,
       )}
@@ -110,7 +110,7 @@ export function Sidebar({
     <aside
       className={cn(
         "nlm-sidebar flex h-full min-h-0 flex-col gap-2.5 overflow-hidden border-r border-border bg-[var(--sidebar-bg)] px-3 py-3.5 backdrop-blur-md",
-        collapsed && "nlm-sidebar--rail items-center gap-2",
+        collapsed && "nlm-sidebar--rail items-center gap-1.5",
         className,
       )}
       data-collapsed={collapsed || undefined}
@@ -122,30 +122,30 @@ export function Sidebar({
             title="展开侧栏"
             aria-label="展开侧栏"
             onClick={() => onToggleCollapse?.()}
-            className="group relative inline-flex size-9 shrink-0 items-center justify-center rounded-lg"
+            className="group relative inline-flex size-8 shrink-0 items-center justify-center rounded-md"
           >
             <NlmLogo
-              className="size-7 shadow-sm ring-1 ring-border/50 transition-opacity group-hover:opacity-0"
+              className="size-6 shadow-sm ring-1 ring-border/50 transition-opacity group-hover:opacity-0"
               title=""
             />
             <PanelLeft
-              className="pointer-events-none absolute size-[18px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+              className="pointer-events-none absolute size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
               aria-hidden
             />
           </button>
 
           <RailIconButton title="新对话" onClick={onNew} className="text-foreground">
-            <Plus className="size-[18px]" />
+            <Plus className="size-4" />
           </RailIconButton>
 
           <RailIconButton title="搜索会话" onClick={onRailSearch}>
-            <Search className="size-[18px]" />
+            <Search className="size-4" />
           </RailIconButton>
 
           <div className="min-h-2 flex-1" />
 
           <RailIconButton title="设置" onClick={onOpenSettings}>
-            <Settings className="size-[18px]" />
+            <Settings className="size-4" />
           </RailIconButton>
         </>
       ) : (

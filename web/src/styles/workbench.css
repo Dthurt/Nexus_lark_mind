@@ -69,14 +69,14 @@ html[data-theme="day"] {
 }
 
 .nlm-app.rail-collapsed {
-  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 0;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--rail-rail-w);
 }
 
 .nlm-app.sidebar-collapsed.rail-collapsed {
-  grid-template-columns: var(--sidebar-rail-w) minmax(0, 1fr) 0;
+  grid-template-columns: var(--sidebar-rail-w) minmax(0, 1fr) var(--rail-rail-w);
 }
 
-/* Desktop: collapsed left nav stays as a 56px icon rail (DSH-inspired). */
+/* Desktop: collapsed left nav stays as a compact icon rail (DSH-inspired). */
 .nlm-app.sidebar-collapsed .nlm-sidebar {
   width: var(--sidebar-rail-w);
   max-width: var(--sidebar-rail-w);
@@ -84,19 +84,20 @@ html[data-theme="day"] {
   overflow: hidden;
   opacity: 1;
   pointer-events: auto;
-  padding: 14px 10px 8px;
+  padding: 10px 6px 6px;
   border-right: 1px solid var(--line);
 }
 
+/* Desktop: collapsed right dock stays as a compact icon rail. */
 .nlm-app.rail-collapsed .nlm-rail {
+  width: var(--rail-rail-w);
+  max-width: var(--rail-rail-w);
+  min-width: var(--rail-rail-w);
   overflow: hidden;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
-  min-width: 0;
-  width: 0;
-  max-width: 0;
+  opacity: 1;
+  pointer-events: auto;
+  padding: 10px 6px 6px;
+  border-left: 1px solid var(--line);
 }
 
 .nlm-workspace {
@@ -220,40 +221,48 @@ html[data-theme="day"] {
     grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   }
 
-  .nlm-app.rail-collapsed {
+  .nlm-app.sidebar-collapsed {
+    grid-template-columns: var(--sidebar-rail-w) minmax(0, 1fr);
+  }
+
+  .nlm-app.rail-collapsed,
+  .nlm-app.sidebar-collapsed.rail-collapsed {
     grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   }
 
-  .nlm-rail {
+  .nlm-app.sidebar-collapsed.rail-collapsed {
+    grid-template-columns: var(--sidebar-rail-w) minmax(0, 1fr);
+  }
+
+  .nlm-workspace {
+    padding-right: var(--rail-rail-w);
+    box-sizing: border-box;
+  }
+
+  /* Peek icon rail on the right when closed; full drawer when .rail-open */
+  .nlm-rail,
+  .nlm-app.rail-collapsed .nlm-rail {
     position: fixed;
     z-index: 21;
     inset: 0 0 0 auto;
-    width: min(88vw, var(--rail-w));
-    max-width: min(88vw, var(--rail-w));
-    transform: translateX(105%);
-    transition:
-      transform 200ms ease,
-      opacity 200ms ease;
+    width: var(--rail-rail-w);
+    max-width: var(--rail-rail-w);
+    min-width: var(--rail-rail-w);
+    transform: translateX(0);
+    transition: width 200ms ease, max-width 200ms ease, padding 200ms ease;
     opacity: 1;
     pointer-events: auto;
     overflow: hidden;
-    padding: 0;
+    padding: 10px 6px 6px;
     border-left: 1px solid var(--line);
-  }
-
-  .nlm-app.rail-collapsed .nlm-rail {
-    width: min(88vw, var(--rail-w));
-    max-width: min(88vw, var(--rail-w));
-    opacity: 1;
-    pointer-events: none;
   }
 
   .nlm-app.rail-open .nlm-rail {
-    transform: translateX(0);
-    opacity: 1;
-    pointer-events: auto;
+    width: min(88vw, var(--rail-w));
+    max-width: min(88vw, var(--rail-w));
+    min-width: 0;
     padding: 0;
-    border-left: 1px solid var(--line);
+    pointer-events: auto;
   }
 }
 
@@ -272,8 +281,9 @@ html[data-theme="day"] {
   .nlm-workspace {
     width: 100%;
     max-width: none;
-    /* Leave room for the fixed 56px peek rail */
+    /* Leave room for fixed peek rails on both sides */
     padding-left: var(--sidebar-rail-w);
+    padding-right: var(--rail-rail-w);
     box-sizing: border-box;
   }
 
@@ -290,7 +300,7 @@ html[data-theme="day"] {
     transition: width 200ms ease, max-width 200ms ease, padding 200ms ease;
     opacity: 1;
     pointer-events: auto;
-    padding: 14px 10px 8px;
+    padding: 10px 6px 6px;
     border-right: 1px solid var(--line);
   }
 

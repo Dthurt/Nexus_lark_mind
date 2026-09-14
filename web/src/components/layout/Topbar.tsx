@@ -4,7 +4,6 @@ import {
   Flower2,
   LayoutTemplate,
   Moon,
-  PanelRight,
   Search,
   Sun,
   Trash2,
@@ -66,7 +65,6 @@ export type TopbarProps = {
   workspaceTitle?: string;
   cwd?: string;
   workspaceKind?: string;
-  onToggleRail?: () => void;
   onClear?: () => void;
   onCycleTheme?: () => void;
   onOpenCommand?: () => void;
@@ -82,7 +80,6 @@ export function Topbar({
   workspaceTitle = "",
   cwd = "",
   workspaceKind = "local",
-  onToggleRail,
   onClear,
   onCycleTheme,
   onOpenCommand,
@@ -192,10 +189,6 @@ export function Topbar({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <IconButton title="切换右侧栏" aria-label="切换右侧栏" onClick={onToggleRail}>
-        <PanelRight className="size-4" />
-      </IconButton>
     </header>
   );
 }
