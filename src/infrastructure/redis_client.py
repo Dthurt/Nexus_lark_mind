@@ -9,6 +9,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional, Union
 
 import orjson
 import redis.asyncio as redis
+from redis.exceptions import WatchError
 
 from src.common.config import Settings, get_settings
 from src.common.errors import QueueError
@@ -229,7 +230,7 @@ class RedisClient:
                     pipe.zadd(index, {session_id: time.time()})
                     await pipe.execute()
                     return session
-            except redis.WatchError as exc:
+            except WatchError as exc:
                 last_err = exc
                 continue
         raise QueueError(f"append_session_message conflict: {session_id}") from last_err

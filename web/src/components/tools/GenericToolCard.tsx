@@ -42,7 +42,7 @@ function PreBlock({
       className={cn(
         "max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md p-2 font-mono text-[10.5px]",
         tone === "error"
-          ? "border border-rose-500/25 bg-rose-500/[0.04] text-rose-100/90"
+          ? "border border-rose-500/25 bg-rose-500/[0.04] text-rose-800 dark:text-rose-100/90"
           : "border border-border/50 bg-background/35 text-muted-foreground",
       )}
     >
@@ -107,7 +107,7 @@ export function GenericToolCard({
       ) : null}
       {item.error != null ? (
         <div className="space-y-0.5">
-          <div className="text-[10px] uppercase tracking-wide text-rose-300/80">Error</div>
+          <div className="text-[10px] uppercase tracking-wide text-rose-700 dark:text-rose-300/80">Error</div>
           <PreBlock tone="error">{pretty(item.error)}</PreBlock>
         </div>
       ) : item.result != null ? (

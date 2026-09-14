@@ -81,7 +81,7 @@ export function TeamsPanel({ teamId = "", className }: TeamsPanelProps) {
       </div>
 
       {data && !data.enabled ? (
-        <p className="m-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100">
+        <p className="m-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-900 dark:text-amber-100">
           设置 <code>NLM_EXPERIMENTAL_TEAMS=true</code> 后，模型可用 team_send / team_recv；邮箱与 DAG 仍可在此查看。
         </p>
       ) : null}

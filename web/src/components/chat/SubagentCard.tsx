@@ -170,7 +170,7 @@ export function SubagentCard({
         ) : null}
         {item.error ? (
           <div>
-            <div className="mb-1 text-[10px] uppercase tracking-wide text-rose-300/80">Error</div>
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-rose-700 dark:text-rose-300/80">Error</div>
             <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-rose-500/25 bg-rose-500/[0.04] p-2 font-mono text-xs">
               {pretty(item.error)}
             </pre>

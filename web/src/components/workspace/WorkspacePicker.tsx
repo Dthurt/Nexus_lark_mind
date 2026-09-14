@@ -390,6 +390,13 @@ export function WorkspacePicker({
     );
   }, [browserEntries, browserFilter]);
 
+  const pathSuggestions = useMemo(() => {
+    const typed = browserPathInput.trim().toLowerCase();
+    const dirs = browserEntries.filter((e) => e.is_dir).map((e) => e.path);
+    if (!typed) return dirs.slice(0, 12);
+    return dirs.filter((p) => p.toLowerCase().includes(typed)).slice(0, 12);
+  }, [browserEntries, browserPathInput]);
+
   useEffect(() => {
     if (browserPath) setBrowserPathInput(browserPath);
   }, [browserPath]);
@@ -677,7 +684,7 @@ export function WorkspacePicker({
                           className={cn(
                             "px-1.5 py-0 text-[9px] uppercase",
                             hostBadge(host) === "config" &&
-                              "border-violet-400/35 text-violet-300",
+                              "border-violet-500/35 text-violet-800 dark:text-violet-300",
                             (hostBadge(host) === "key" ||
                               hostBadge(host) === "agent") &&
                               "border-[#6ea8fe]/35 text-[#6ea8fe]",
@@ -887,7 +894,7 @@ export function WorkspacePicker({
 
           {browserReady ? (
             <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center gap-2 border-b border-border bg-black/20 px-3 py-2">
+              <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-2">
                 <Button
                   type="button"
                   variant="ghost"
@@ -902,12 +909,23 @@ export function WorkspacePicker({
                 <Input
                   className="h-8 flex-1 font-mono text-[11px]"
                   value={browserPathInput}
+                  list="nlm-browse-path-suggestions"
                   placeholder={tab === "ssh" ? "/home/user 或 ~" : "输入路径后按 Enter"}
                   onChange={(e) => setBrowserPathInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void goToBrowserPath();
+                    if (e.key === "ArrowDown" && pathSuggestions.length) {
+                      e.preventDefault();
+                      setBrowserPathInput(pathSuggestions[0]);
+                    }
                   }}
+                  autoComplete="off"
                 />
+                <datalist id="nlm-browse-path-suggestions">
+                  {pathSuggestions.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
                 <Button
                   type="button"
                   variant="ghost"

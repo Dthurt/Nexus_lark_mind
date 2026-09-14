@@ -97,7 +97,7 @@ export function WebSearchToolCard({
             target="_blank"
             rel="noopener noreferrer"
           >
-            <div className="text-[12.5px] font-medium text-sky-300/90">{r.title || r.url || "result"}</div>
+            <div className="text-[12.5px] font-medium text-sky-800 dark:text-sky-300/90">{r.title || r.url || "result"}</div>
             {r.url ? (
               <div className="mt-0.5 break-all font-mono text-[10px] text-teal">{r.url}</div>
             ) : null}

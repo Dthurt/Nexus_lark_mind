@@ -43,7 +43,15 @@ export function TurnProcessFold({
     setOpen(next);
   };
 
-  const label = useMemo(() => summary || "本回合过程", [summary]);
+  const label = useMemo(() => {
+    const base = summary || "本回合过程";
+    const n = tools.length;
+    const s = subagents.length;
+    const extras: string[] = [];
+    if (n) extras.push(`${n} 工具`);
+    if (s) extras.push(`${s} 子任务`);
+    return extras.length ? `${base} · ${extras.join(" · ")}` : base;
+  }, [summary, tools.length, subagents.length]);
 
   if (!hasBody) return null;
 

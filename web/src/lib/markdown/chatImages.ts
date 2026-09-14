@@ -292,23 +292,42 @@ function bindGalleryActions(root: any) {
   root._nlmChatImageActions = true;
   root.addEventListener("click", (ev: MouseEvent) => {
     const btn = (ev.target as HTMLElement).closest?.("[data-img-action]");
-    if (!btn || !root.contains(btn)) return;
-    ev.preventDefault();
-    ev.stopPropagation();
-    const fig = btn.closest(".chat-image");
-    const img = fig?.querySelector("img");
-    const src = img?.getAttribute("src") || "";
-    const alt = img?.getAttribute("alt") || "";
-    const act = btn.getAttribute("data-img-action");
-    if (act === "lightbox") {
+    const frame = (ev.target as HTMLElement).closest?.(".chat-image-frame");
+    if (btn && root.contains(btn)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const fig = btn.closest(".chat-image");
+      const img = fig?.querySelector("img");
+      const src = img?.getAttribute("src") || "";
+      const alt = img?.getAttribute("alt") || "";
+      const act = btn.getAttribute("data-img-action");
+      if (act === "lightbox") {
+        const gallery = fig?.closest(".chat-image-gallery");
+        const items = gallery ? collectGalleryItems(gallery) : [{ src, alt }];
+        const idx = gallery ? Math.max(0, [...gallery.querySelectorAll(".chat-image")].indexOf(fig!)) : 0;
+        openLightbox(items, idx);
+      } else if (act === "open" && src) {
+        window.open(src, "_blank", "noopener,noreferrer");
+      } else if (act === "download" && src) {
+        const a = document.createElement("a");
+        a.href = src;
+        a.download = (alt || "image").replace(/[\\/:*?"<>|]/g, "_");
+        a.rel = "noopener";
+        a.click();
+      }
+      return;
+    }
+    if (frame && root.contains(frame)) {
+      ev.preventDefault();
+      const fig = frame.closest(".chat-image");
+      const img = fig?.querySelector("img");
+      const src = img?.getAttribute("src") || "";
+      const alt = img?.getAttribute("alt") || "";
+      if (!src) return;
       const gallery = fig?.closest(".chat-image-gallery");
       const items = gallery ? collectGalleryItems(gallery) : [{ src, alt }];
       const idx = gallery ? Math.max(0, [...gallery.querySelectorAll(".chat-image")].indexOf(fig!)) : 0;
       openLightbox(items, idx);
-    } else if (act === "open" && src) {
-      window.open(src, "_blank", "noopener,noreferrer");
-    } else if (act === "download" && src) {
-      downloadUrl(src, (alt || "image").slice(0, 40));
     }
   });
 }

@@ -45,7 +45,7 @@ export function ToolStopButton({ onStop, disabled, className }: ToolStopButtonPr
       variant="outline"
       size="icon"
       className={cn(
-        "size-6 shrink-0 rounded-md border-border/80 text-muted-foreground hover:border-rose-500/35 hover:bg-rose-500/10 hover:text-rose-300",
+        "size-6 shrink-0 rounded-md border-border/80 text-muted-foreground hover:border-rose-500/35 hover:bg-rose-500/10 hover:text-rose-700 dark:hover:text-rose-300",
         className,
       )}
       title="Stop"

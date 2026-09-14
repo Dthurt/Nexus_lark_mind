@@ -703,7 +703,7 @@ export function Composer({
                 {planOn ? (
                   <button
                     type="button"
-                    className="inline-flex size-[22px] items-center justify-center rounded-md border border-amber-400/35 bg-amber-400/12 text-amber-400 transition-colors hover:bg-amber-400/20"
+                    className="inline-flex size-[22px] items-center justify-center rounded-md border border-amber-500/35 bg-amber-500/12 text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
                     title="Plan Mode（点击关闭）"
                     aria-label="关闭 Plan Mode"
                     disabled={busy}
@@ -715,7 +715,7 @@ export function Composer({
                 {autoAccept ? (
                   <button
                     type="button"
-                    className="inline-flex size-[22px] items-center justify-center rounded-md border border-emerald-400/35 bg-emerald-400/12 text-emerald-400 transition-colors hover:bg-emerald-400/20"
+                    className="inline-flex size-[22px] items-center justify-center rounded-md border border-emerald-500/35 bg-emerald-500/12 text-emerald-800 transition-colors hover:bg-emerald-500/20 dark:text-emerald-300"
                     title="Accept（点击关闭）"
                     aria-label="关闭 Accept"
                     disabled={busy}

@@ -130,7 +130,7 @@ export function ChatFileCard({ item, className }: ChatFileCardProps) {
         {mode === "link" ? (
           remoteUrl ? (
             <a
-              className="inline-flex max-w-full items-center gap-1.5 truncate font-mono text-sm text-sky-300/90 underline-offset-2 hover:underline"
+              className="inline-flex max-w-full items-center gap-1.5 truncate font-mono text-sm text-sky-800 underline-offset-2 hover:underline dark:text-sky-300/90"
               href={remoteUrl}
               title={path || name}
               target="_blank"

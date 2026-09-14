@@ -114,13 +114,15 @@ export function useProviders() {
     let data: ProviderCatalog | undefined;
     try {
       data = await listProviders(true);
+      if (!data?.providers?.length) {
+        data = await listProviders(false);
+      }
       if (data) setCatalog(data);
     } catch {
       /* keep defaults */
     } finally {
       setCatalogLoaded(true);
     }
-    // Do not force stale localStorage over server default_provider.
     applyDefaults(undefined, undefined, data);
   }, [applyDefaults]);
 
