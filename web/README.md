@@ -2,16 +2,30 @@
 
 React + TypeScript + Vite UI for the NLM workbench. Production build is written to `../web-static` and served by Adapters (`:8000`).
 
+## Local debug (recommended)
+
+From repo root:
+
+```bat
+scripts\dev.bat
+```
+
+This starts the Python backend (`:8000`) and Vite (`:5173`). **Open http://127.0.0.1:5173** — `/api` is proxied to the backend (SSE timeouts disabled).
+
+See [docs/local-start.md](../docs/local-start.md).
+
 ## Scripts
 
 ```bash
 npm install
-npm run dev       # Vite :5173, proxies /api → :8000
+npm run dev       # Vite :5173 only (backend must already be on :8000)
 npm run build     # tsc + vite → ../web-static
 npm test          # vitest
 npm run test:e2e  # Playwright (needs backend on :8000)
 npm run lint      # oxlint
 ```
+
+Optional: `NLM_API_PROXY=http://127.0.0.1:8000` overrides the Vite proxy target.
 
 ## Layout
 
@@ -28,9 +42,3 @@ See [docs/client-architecture.md](../docs/client-architecture.md) and [docs/canv
 ## Themes
 
 `day` / `gray` / `night` / `ocean` / `rose` — Topbar cycle; `localStorage` key `nlm-theme`.
-
-## Stack notes
-
-- Path alias `@/` → `src/`
-- UI primitives under `src/components/ui/` (Radix-based)
-- Markdown / Mermaid / ECharts / Draw.io: `src/lib/markdown/`

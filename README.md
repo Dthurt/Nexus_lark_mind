@@ -75,7 +75,8 @@ Dependency direction is one-way: Adapters → Orchestrator → Kernel → Infras
 
 | Method | Best for | Notes |
 |--------|----------|-------|
-| `scripts/start_local.bat` | Day-to-day local dev | Three processes + memory broker; **no Docker / Redis required** |
+| `scripts/start_local.bat` | Daily use / acceptance | All-in-one + memory broker; **no Docker / Redis**; serves `web-static` |
+| `scripts/dev.bat` | **UI development** | Backend + Vite HMR (open :5173) |
 | `docker compose` | Integration / server / Docker Desktop | 4 containers (`redis` + `kernel` + `orchestrator` + `adapters`) |
 
 ---
@@ -225,15 +226,31 @@ More detail: [docs/architecture.md](docs/architecture.md), [docs/workspaces.md](
 
 ## Local development (no Docker)
 
-```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+One-shot host stack (in-memory broker, no Redis):
 
-# Fastest: one-shot three processes
+```bat
 scripts\start_local.bat
+scripts\start_local.bat status
+scripts\start_local.bat stop
+```
 
-# Or start separately (needs local Redis)
+**UI hot-reload** (Vite `:5173`, API on `:8000`):
+
+```bat
+scripts\dev.bat
+```
+
+Build static assets for `:8000` / Docker:
+
+```bat
+scripts\build_web.bat
+```
+
+Full guide: [docs/local-start.md](docs/local-start.md).
+
+Separate processes (needs local Redis):
+
+```bash
 python -m src.entry_kernel
 python -m src.entry_orchestrator
 python -m src.entry_adapters
@@ -244,7 +261,7 @@ python -m src.entry_adapters
 ```bash
 cd web
 npm install
-npm run dev      # Vite :5173, proxies /api → :8000
+npm run dev      # Vite :5173, proxies /api → :8000 (prefer scripts\dev.bat)
 npm run build    # writes to ../web-static
 npm test
 ```

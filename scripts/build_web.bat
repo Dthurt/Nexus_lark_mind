@@ -25,4 +25,7 @@ call npm run build
 if errorlevel 1 exit /b 1
 
 echo [build_web] Done. Output: web-static\
+echo.
+echo Tip: day-to-day UI work → scripts\dev.bat  (Vite HMR on :5173)
+echo      rebuild web-static when using :8000 without Vite / for Docker.
 exit /b 0

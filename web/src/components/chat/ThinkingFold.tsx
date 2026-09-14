@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
+import { MarkdownBody } from "@/components/chat/MarkdownBody";
 import {
   Collapsible,
   CollapsibleContent,
@@ -30,7 +31,7 @@ function livePreview(text: string, streaming: boolean, max = 96) {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
-/** Compact, folded reasoning — default collapsed, one-line live preview while streaming. */
+/** Compact, folded reasoning — default collapsed, markdown when expanded. */
 export function ThinkingFold({ text, streaming = false, className }: ThinkingFoldProps) {
   const [open, setOpen] = useState(false);
   const body = (text || "").trim();
@@ -80,9 +81,17 @@ export function ThinkingFold({ text, streaming = false, className }: ThinkingFol
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <pre className="m-0 max-h-40 overflow-auto whitespace-pre-wrap break-words border-t border-border/50 px-2.5 py-1.5 font-sans text-[11px] leading-relaxed text-muted-foreground">
-          {body || (streaming ? "…" : "")}
-        </pre>
+        <div className="max-h-56 overflow-auto border-t border-border/50 px-2.5 py-2">
+          <MarkdownBody
+            content={body || (streaming ? "…" : "")}
+            streaming={streaming}
+            className={cn(
+              "text-[12px] leading-relaxed text-muted-foreground",
+              "[&_.nlm-md]:text-[12px] [&_.nlm-md]:leading-[1.65] [&_.nlm-md]:text-muted-foreground",
+              "[&_pre]:text-[11px] [&_code]:text-[11px]",
+            )}
+          />
+        </div>
       </CollapsibleContent>
     </Collapsible>
   );

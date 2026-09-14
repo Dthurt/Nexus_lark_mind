@@ -5,7 +5,7 @@
 | [quickstart.md](./quickstart.md) | Fastest path to a running stack |
 | [architecture.md](./architecture.md) | Process layers, RPC, events |
 | [client-architecture.md](./client-architecture.md) | React workbench layout, slots, SSE |
-| [local-start.md](./local-start.md) | Host start without Docker |
+| [local-start.md](./local-start.md) | **本机部署 + 前端 HMR 调试**（start_local / dev） |
 | [workspaces.md](./workspaces.md) | Local / SSH cwd, `.nlm/` artifacts |
 | [ssh-workspaces.md](./ssh-workspaces.md) | Remote workspace details |
 | [interaction-modes.md](./interaction-modes.md) | Plan, approvals, inbox, Delivery |

@@ -10,6 +10,7 @@ import {
   type UIEvent,
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { ChevronDown } from "lucide-react";
 
 import { AskUserForm } from "@/components/chat/AskUserForm";
 import { ChatFileCard } from "@/components/chat/ChatFileCard";
@@ -88,6 +89,24 @@ function nearBottom(el: HTMLElement, threshold = 80) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
 }
 
+/** Pair process fold + assistant answer so we can tighten intra-turn spacing. */
+function groupBlocks(blocks: Block[]): { id: string; parts: Block[] }[] {
+  const groups: { id: string; parts: Block[] }[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.kind === "turn_process") {
+      const next = blocks[i + 1];
+      if (next?.kind === "msg" && next.item?.id === b.botId) {
+        groups.push({ id: b.botId, parts: [b, next] });
+        i += 1;
+        continue;
+      }
+    }
+    groups.push({ id: b.id, parts: [b] });
+  }
+  return groups;
+}
+
 function buildBlocks(items: TimelineItem[]): Block[] {
   const out: Block[] = [];
   // Precompute fold groups keyed by assistant bubble id.
@@ -154,6 +173,7 @@ function buildBlocks(items: TimelineItem[]): Block[] {
     if (item.kind === "msg" && item.role === "assistant" && item.processFold && !item.streaming && !item.live) {
       const bucket = foldBuckets.get(item.id) || { tools: [], subagents: [] };
       const hasThinking = !!(item.reasoning || "").trim();
+      // Process (thinking + tools) above the final answer; keep the pair visually tight.
       if (hasThinking || bucket.tools.length || bucket.subagents.length) {
         out.push({
           kind: "turn_process",
@@ -236,6 +256,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       () => (hiddenCount > 0 ? allBlocks.slice(hiddenCount) : allBlocks),
       [allBlocks, hiddenCount],
     );
+    const blockGroups = useMemo(() => groupBlocks(blocks), [blocks]);
 
     const loadEarlier = useCallback(() => {
       const el = scrollerRef.current;
@@ -324,7 +345,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       <div
         ref={scrollerRef}
         className={cn(
-          "messages flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain px-0.5 pb-3 pt-4",
+          "messages flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overscroll-contain px-0.5 pb-3 pt-4",
           "[scrollbar-gutter:stable]",
         )}
         onScroll={onScroll}
@@ -410,118 +431,139 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
         ) : null}
 
         <AnimatePresence initial={false} mode="sync">
-          {blocks.map((block) => {
-            if (block.kind === "turn_process") {
-              return wrapMotion(
-                block.id,
-                <TurnProcessFold
-                  summary={block.summary}
-                  reasoning={block.reasoning}
-                  tools={block.tools}
-                  subagents={block.subagents}
-                  highlightCallId={highlightCallId}
-                  onInspectTool={onInspectTool}
-                  onStopTool={onStopTool}
-                />,
-              );
-            }
-            if (block.kind === "msg") {
-              const live = !!(block.item.streaming || block.item.live);
-              return wrapMotion(
-                block.id,
-                <MessageBubble
-                  item={block.item as any}
-                  modelProvider={modelProvider}
-                  modelName={modelName}
-                  experienceTier={experienceTier}
-                  onAcceptPlan={() => onAcceptPlan?.(block.item)}
-                />,
-                live,
-              );
-            }
-            if (block.kind === "ask") {
-              return wrapMotion(
-                block.id,
-                <AskUserForm
-                  item={block.item as any}
-                  onSubmit={(ev) =>
-                    onResolveAsk?.({
-                      item: block.item,
-                      action: "submit",
-                      answers: ev.answers as Record<string, unknown> | undefined,
-                    })
-                  }
-                  onDismiss={() => onResolveAsk?.({ item: block.item, action: "deny" })}
-                />,
-              );
-            }
-            if (block.kind === "plan_review") {
-              return wrapMotion(
-                block.id,
-                <PlanReviewCard
-                  item={block.item as any}
-                  modelProvider={modelProvider}
-                  modelName={modelName}
-                  onResolve={(ev) =>
-                    onResolvePlanReview?.({
-                      item: block.item,
-                      action: ev.action,
-                      feedback: ev.feedback || "",
-                    })
-                  }
-                />,
-              );
-            }
-            if (block.kind === "todos") {
-              return wrapMotion(block.id, <TodoListCard item={block.item as any} />);
-            }
-            if (block.kind === "subagent") {
-              return wrapMotion(
-                block.id,
-                <SubagentCard
-                  item={block.item as any}
-                  onInspect={onInspectTool}
-                  onStop={onStopTool}
-                />,
-                block.item.status === "running",
-              );
-            }
-            if (block.kind === "file") {
-              return wrapMotion(
-                block.id,
-                <ChatFileCard item={block.item as any} />,
-              );
-            }
-            if (block.kind === "tools") {
-              const live = block.tools.some((t) => t?.status === "running");
-              if (block.tools.length === 1) {
-                const t = block.tools[0];
+          {blockGroups.map((group, groupIdx) => {
+            const isLastGroup = groupIdx === blockGroups.length - 1;
+            const renderBlock = (block: Block, compactBottom = false) => {
+              if (block.kind === "turn_process") {
                 return wrapMotion(
                   block.id,
-                  <ToolCard
-                    item={t as any}
-                    highlighted={
-                      !!highlightCallId &&
-                      ((t as any).callId === highlightCallId || (t as any).id === highlightCallId)
+                  <TurnProcessFold
+                    summary={block.summary}
+                    reasoning={block.reasoning}
+                    tools={block.tools}
+                    subagents={block.subagents}
+                    highlightCallId={highlightCallId}
+                    onInspectTool={onInspectTool}
+                    onStopTool={onStopTool}
+                  />,
+                );
+              }
+              if (block.kind === "msg") {
+                const live = !!(block.item.streaming || block.item.live);
+                return wrapMotion(
+                  block.id,
+                  <MessageBubble
+                    item={block.item as any}
+                    modelProvider={modelProvider}
+                    modelName={modelName}
+                    experienceTier={experienceTier}
+                    compactBottom={compactBottom}
+                    onAcceptPlan={() => onAcceptPlan?.(block.item)}
+                  />,
+                  live,
+                );
+              }
+              if (block.kind === "ask") {
+                return wrapMotion(
+                  block.id,
+                  <AskUserForm
+                    item={block.item as any}
+                    onSubmit={(ev) =>
+                      onResolveAsk?.({
+                        item: block.item,
+                        action: "submit",
+                        answers: ev.answers as Record<string, unknown> | undefined,
+                      })
                     }
+                    onDismiss={() => onResolveAsk?.({ item: block.item, action: "deny" })}
+                  />,
+                );
+              }
+              if (block.kind === "plan_review") {
+                return wrapMotion(
+                  block.id,
+                  <PlanReviewCard
+                    item={block.item as any}
+                    modelProvider={modelProvider}
+                    modelName={modelName}
+                    onResolve={(ev) =>
+                      onResolvePlanReview?.({
+                        item: block.item,
+                        action: ev.action,
+                        feedback: ev.feedback || "",
+                      })
+                    }
+                  />,
+                );
+              }
+              if (block.kind === "todos") {
+                return wrapMotion(block.id, <TodoListCard item={block.item as any} />);
+              }
+              if (block.kind === "subagent") {
+                return wrapMotion(
+                  block.id,
+                  <SubagentCard
+                    item={block.item as any}
+                    onInspect={onInspectTool}
+                    onStop={onStopTool}
+                  />,
+                  block.item.status === "running",
+                );
+              }
+              if (block.kind === "file") {
+                return wrapMotion(block.id, <ChatFileCard item={block.item as any} />);
+              }
+              if (block.kind === "tools") {
+                const live = block.tools.some((t) => t?.status === "running");
+                if (block.tools.length === 1) {
+                  const t = block.tools[0];
+                  return wrapMotion(
+                    block.id,
+                    <ToolCard
+                      item={t as any}
+                      highlighted={
+                        !!highlightCallId &&
+                        ((t as any).callId === highlightCallId || (t as any).id === highlightCallId)
+                      }
+                      onInspect={onInspectTool}
+                      onStop={onStopTool}
+                    />,
+                    live,
+                  );
+                }
+                return wrapMotion(
+                  block.id,
+                  <ToolCallGroup
+                    tools={block.tools as any}
+                    highlightCallId={highlightCallId}
                     onInspect={onInspectTool}
                     onStop={onStopTool}
                   />,
                   live,
                 );
               }
-              return wrapMotion(
-                block.id,
-                <ToolCallGroup
-                  tools={block.tools as any}
-                  highlightCallId={highlightCallId}
-                  onInspect={onInspectTool}
-                  onStop={onStopTool}
-                />,
-                live,
-              );
+              return null;
+            };
+
+            if (group.parts.length === 1) {
+              const only = group.parts[0];
+              const compact =
+                !isLastGroup && only.kind === "msg" && only.item?.role === "assistant";
+              return <div key={group.id}>{renderBlock(only, compact)}</div>;
             }
-            return null;
+
+            return (
+              <div key={group.id} className="flex w-full flex-col gap-0.5">
+                {group.parts.map((part) =>
+                  renderBlock(
+                    part,
+                    !isLastGroup &&
+                      part.kind === "msg" &&
+                      part.item?.role === "assistant",
+                  ),
+                )}
+              </div>
+            );
           })}
         </AnimatePresence>
       </div>
@@ -529,10 +571,11 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       {!atBottom && items.length > 0 ? (
         <button
           type="button"
-          className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border/70 bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md backdrop-blur hover:bg-muted"
+          className="absolute bottom-3 left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1 rounded-full border border-border/70 bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md backdrop-blur hover:bg-muted"
           onClick={() => scrollToBottom(true)}
         >
           回到底部
+          <ChevronDown className="size-3.5 shrink-0 opacity-80" aria-hidden />
         </button>
       ) : null}
       </div>

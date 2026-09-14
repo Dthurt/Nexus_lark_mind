@@ -61,7 +61,7 @@ export function TurnProcessFold({
         <button
           type="button"
           className={cn(
-            "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1",
+            "flex w-full items-center gap-1.5 rounded-md px-1.5 py-0.5",
             "text-left text-[12px] text-muted-foreground hover:bg-muted/40 hover:text-foreground",
           )}
         >
@@ -71,7 +71,7 @@ export function TurnProcessFold({
           <span className="font-medium">{label}</span>
         </button>
       </CollapsibleTrigger>
-      <CollapsibleContent className="mt-1.5 flex flex-col gap-1.5 pl-1">
+      <CollapsibleContent className="mt-1 flex flex-col gap-1.5 pl-1">
         {(reasoning || "").trim() ? <ThinkingFold text={reasoning} /> : null}
         {tools.length > 0 ? (
           <ToolCallGroup

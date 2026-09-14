@@ -75,7 +75,8 @@ graph LR
 
 | 方式 | 适用 | 说明 |
 |------|------|------|
-| `scripts/start_local.bat` | 日常本机开发 | 三进程 + memory broker，**不需要 Docker / Redis** |
+| `scripts/start_local.bat` | 日常本机使用 / 验收 | 三服务 + memory broker，**不需要 Docker / Redis**，UI 为 `web-static` |
+| `scripts/dev.bat` | **改前端** | 后端 + Vite HMR（打开 :5173） |
 | `docker compose` | 联调 / 服务器 / Docker Desktop 部署 | 4 个容器（redis + kernel + orchestrator + adapters） |
 
 ---
@@ -225,15 +226,31 @@ docker compose up --build -d
 
 ## 本地开发（不经 Docker）
 
-```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+日常一键（内存总线，无需 Redis）：
 
-# 最快：一键三进程
+```bat
 scripts\start_local.bat
+scripts\start_local.bat status
+scripts\start_local.bat stop
+```
 
-# 或分别启动（需本机 Redis）
+**改 React UI** 请用调试脚本（Vite `:5173` 热更新，API 仍走 `:8000`）：
+
+```bat
+scripts\dev.bat
+```
+
+构建静态前端（供 `:8000` / Docker）：
+
+```bat
+scripts\build_web.bat
+```
+
+完整说明：[docs/local-start.md](docs/local-start.md)。
+
+分别启动三进程（需本机 Redis）：
+
+```bash
 python -m src.entry_kernel
 python -m src.entry_orchestrator
 python -m src.entry_adapters
@@ -244,7 +261,7 @@ python -m src.entry_adapters
 ```bash
 cd web
 npm install
-npm run dev      # Vite :5173，代理 /api → :8000
+npm run dev      # Vite :5173，代理 /api → :8000（推荐用 scripts\dev.bat 连后端）
 npm run build    # 输出到 ../web-static
 npm test
 ```

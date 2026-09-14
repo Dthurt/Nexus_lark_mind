@@ -1,54 +1,131 @@
-# 本地脚本启动（无需 Docker / Redis）
+# 本地部署与调试
+
+本机跑 Nexus Lark Mind **不需要 Docker / Redis**。三服务（Adapters / Kernel / Orchestrator）在同一进程里，用内存总线（`REDIS_URL=memory://local`）。
+
+## 两种模式怎么选
+
+| 场景 | 命令 | 打开地址 | 说明 |
+|------|------|----------|------|
+| **日常使用 / 验收** | `scripts\start_local.bat` | http://127.0.0.1:8000 | 后端 + 已构建的 `web-static` |
+| **前端调试（HMR）** | `scripts\dev.bat` | http://127.0.0.1:5173 | 后端 + Vite，改 React 即时刷新 |
+| **只改后端** | `scripts\start_local.bat` | :8000 | 改 Python 后需重启进程 |
+| **交付静态前端** | `scripts\build_web.bat` | — | 输出到 `web-static/`，供 :8000 / Docker |
+
+> [!IMPORTANT]
+> 前端调试请打开 **5173**，不要只看 8000。8000 上的页面是上次 `build_web` 的静态包，不会热更新。
+
+---
 
 ## 前提
 
-安装 [Python 3.11+](https://www.python.org/downloads/windows/)，勾选 **Add python.exe to PATH**。
+- [Python 3.11+](https://www.python.org/downloads/windows/)，勾选 **Add python.exe to PATH**
+- 前端调试另需 [Node.js 20+](https://nodejs.org/)（或仓库内 `.tools\node\…` 便携包）
+- （可选）在 `.env` 填模型 Key；不填则为 demo 回声模式
 
-## 一键启动
+```powershell
+Copy-Item .env.example .env   # 首次
+```
+
+---
+
+## 一键启动（日常）
 
 ```bat
-cd E:\cursor\open_program\Nexus_lark_mind
 scripts\start_local.bat
 ```
 
 或 PowerShell：
 
 ```powershell
-cd E:\cursor\open_program\Nexus_lark_mind
 .\scripts\start_local.ps1
+.\scripts\start_local.ps1 -Open          # 就绪后打开浏览器
+.\scripts\start_local.ps1 -Install       # 强制重装 Python 依赖
+.\scripts\start_local.ps1 status         # 探活
+.\scripts\start_local.ps1 stop           # 释放 8000/8001/8002
 ```
 
-或（Wave E/F）`nlm` / 模块入口：
+脚本会：
+
+1. 解析本机 Python → 创建/复用 `.venv`
+2. **仅在 `requirements.txt` 变化时** pip 安装（可用 `-Install` / `-SkipInstall` 覆盖）
+3. 没有 `.env` 时从 `.env.example` 复制
+4. 释放占用的 8000 / 8001 / 8002
+5. 启动 `python -m src.entry_local`
+
+### 访问
+
+| 服务 | URL |
+|------|-----|
+| Web UI | http://127.0.0.1:8000 |
+| Kernel | http://127.0.0.1:8001/health |
+| Orchestrator | http://127.0.0.1:8002/health |
+
+---
+
+## 前端调试（推荐日常改 UI）
 
 ```bat
-scripts\nlm.cmd web --open
-python -m src chat --cwd E:\proj "hello"
-```
-
-详见 [headless-sdk.md](./headless-sdk.md)。
-
-脚本会自动：创建 venv → 安装依赖 → 用内存总线拉起三服务。启动前会释放已被占用的 8000/8001/8002。
-
-## 停止
-
-另开一个终端：
-
-```bat
-scripts\start_local.bat stop
+scripts\dev.bat
 ```
 
 ```powershell
-.\scripts\start_local.ps1 stop
+.\scripts\dev.ps1
+.\scripts\dev.ps1 -NoOpen        # 不自动开浏览器
+.\scripts\dev.ps1 -BackendOnly   # 只起后端
+.\scripts\dev.ps1 -FrontendOnly  # 后端已在跑时只起 Vite
 ```
 
-会结束占用 8000/8001/8002 的进程。运行中的窗口也可用 Ctrl+C。
+流程：
 
-## 访问
+1. 后台拉起与 `start_local` 相同的后端
+2. 等待 `:8000/health` 就绪
+3. 在 `web/` 跑 `npm run dev`（Vite `:5173`，`/api` 代理到后端，SSE 不超时）
+4. Ctrl+C 结束 Vite，并清理后端端口
 
-- Web：http://127.0.0.1:8000
-- Kernel：http://127.0.0.1:8001/health
-- Orchestrator：http://127.0.0.1:8002/health
+改 `web/src/**` 后浏览器自动热更新；改 Python 仍需重启后端（再跑一次 `dev.bat` 或 `start_local`）。
 
-## 说明
+### 静态包 vs HMR
 
-本地模式使用 `REDIS_URL=memory://local`，三服务跑在同一进程（`src.entry_local`），不需要 Redis / Docker。
+| | `:8000`（web-static） | `:5173`（Vite） |
+|--|----------------------|-----------------|
+| 来源 | `npm run build` 产物 | 源码即时编译 |
+| 何时用 | 验收、Docker、飞书联调整页 | 改 Composer / 主题 / 组件 |
+| 更新方式 | `scripts\build_web.bat` 后刷新 | 保存即更新 |
+
+---
+
+## 停止与探活
+
+```bat
+scripts\start_local.bat stop
+scripts\start_local.bat status
+```
+
+运行中的启动窗口也可 **Ctrl+C**。
+
+---
+
+## 常见问题
+
+| 现象 | 处理 |
+|------|------|
+| 改了前端但 :8000 没变 | 你在看静态包。用 `dev.bat` 开 :5173，或先 `build_web.bat` 再刷新 :8000 |
+| 加号里切模型点了没反应 | 确认已拉最新前端构建；旧包有 Select 被菜单关掉的问题 |
+| 端口被占用 | `scripts\start_local.bat stop` 后再 start |
+| `web-static` 缺失 | `scripts\build_web.bat`，或直接用 `dev.bat` |
+| pip 太慢 / 想跳过 | 默认已跳过未变更依赖；强制：`-Install`；跳过：`-SkipInstall` |
+| 没有模型 Key | 可启动，对话为 demo 回声；在 Settings → Models 或 `.env` 配置 |
+| 飞书收不到消息 | 需本机进程在线 + 开放平台长连接事件订阅，见 [channels.md](./channels.md) |
+
+---
+
+## 与 Docker 的关系
+
+| 方式 | 适用 |
+|------|------|
+| `scripts\start_local.*` / `dev.*` | 本机日常开发，最快 |
+| `docker compose up --build -d` | 接近生产、需要真实 Redis、服务器部署 |
+
+本地脚本会覆盖会话内环境变量（`REDIS_URL=memory://local`、本机 RPC URL），**不会改写** `.env` 里的密钥。
+
+更完整的架构见 [architecture.md](./architecture.md)；无头控制见 [headless-sdk.md](./headless-sdk.md)。

@@ -48,6 +48,8 @@ export type MessageBubbleProps = {
   modelProvider?: string;
   modelName?: string;
   experienceTier?: "fast" | "balanced" | "high" | string;
+  /** Shrink bottom padding when process fold / next turn sits right under this bubble. */
+  compactBottom?: boolean;
   onAcceptPlan?: (item: MessageBubbleItem) => void;
   className?: string;
 };
@@ -57,6 +59,7 @@ export const MessageBubble = memo(function MessageBubble({
   modelProvider = "",
   modelName = "",
   experienceTier = "balanced",
+  compactBottom = false,
   onAcceptPlan,
   className,
 }: MessageBubbleProps) {
@@ -161,7 +164,10 @@ export const MessageBubble = memo(function MessageBubble({
         "msg max-w-full min-w-0 animate-in fade-in duration-150 rounded-xl border px-3.5 py-2.5",
         isUser
           ? "ml-auto w-fit max-w-[min(92%,720px)] self-end rounded-br-sm border-primary/25 bg-primary/10"
-          : "w-full self-start rounded-bl-sm border-transparent bg-transparent px-1 py-1.5 sm:px-2",
+          : cn(
+              "w-full self-start rounded-bl-sm border-transparent bg-transparent px-1 sm:px-2",
+              compactBottom ? "pb-0.5 pt-1" : "py-1.5",
+            ),
         (item.live || item.streaming) && "live",
         className,
       )}
@@ -228,7 +234,7 @@ export const MessageBubble = memo(function MessageBubble({
       ) : null}
 
       {showUsageFooter || showCopyAction ? (
-        <div className="mt-1.5 flex items-end gap-2">
+        <div className={cn("flex items-end gap-2", compactBottom ? "mt-0.5" : "mt-1.5")}>
           {showUsageFooter && usageDetail ? (
             <div className="min-w-0 flex-1">
               <Popover open={openUsage} onOpenChange={setOpenUsage}>

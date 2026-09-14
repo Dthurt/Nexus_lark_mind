@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
+const apiTarget = process.env.NLM_API_PROXY || "http://127.0.0.1:8000";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -15,9 +16,19 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    strictPort: true,
     proxy: {
-      "/api": "http://127.0.0.1:8000",
-      "/health": "http://127.0.0.1:8000",
+      // Chat SSE can stay open for a long time — disable proxy timeouts.
+      "/api": {
+        target: apiTarget,
+        changeOrigin: true,
+        timeout: 0,
+        proxyTimeout: 0,
+      },
+      "/health": {
+        target: apiTarget,
+        changeOrigin: true,
+      },
     },
   },
   build: {

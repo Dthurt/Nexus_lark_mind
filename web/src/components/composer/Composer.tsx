@@ -1,14 +1,17 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type FormEvent,
   type KeyboardEvent,
   type ChangeEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Mic, Paperclip, Plus, Square, ArrowUp, ListTodo, ShieldCheck, Layers2 } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 
 import type { InboxItem } from "@/api/endpoints";
 import { ContextMeter } from "@/components/chat/ContextMeter";
@@ -163,9 +166,6 @@ export function Composer({
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [listening, setListening] = useState(false);
-  const [compactBar, setCompactBar] = useState(
-    () => (typeof window !== "undefined" ? window.matchMedia("(max-width: 720px)").matches : false),
-  );
   const recognitionRef = useRef<any>(null);
   const voiceBaseRef = useRef("");
   const valueRef = useRef(value);
@@ -350,13 +350,26 @@ export function Composer({
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   useEffect(() => {
+    function isInsideFloatingUi(target: EventTarget | null) {
+      if (!(target instanceof Element)) return false;
+      // Radix Select / Popper content is portaled outside the plus-menu root.
+      return !!target.closest(
+        '[data-radix-popper-content-wrapper], [data-radix-select-viewport], [role="listbox"], [data-slot="select-content"]',
+      );
+    }
     function onDocPointer(ev: PointerEvent) {
       if (!menuOpen) return;
+      if (isInsideFloatingUi(ev.target)) return;
       const root = menuRootRef.current;
       if (root && !root.contains(ev.target as Node)) closeMenu();
     }
     function onKey(ev: globalThis.KeyboardEvent) {
-      if (ev.key === "Escape") closeMenu();
+      if (ev.key !== "Escape") return;
+      // Let an open Select close first; don't tear down the whole plus menu.
+      if (document.querySelector('[data-radix-popper-content-wrapper] [role="listbox"], [role="listbox"]')) {
+        return;
+      }
+      closeMenu();
     }
     document.addEventListener("pointerdown", onDocPointer, true);
     document.addEventListener("keydown", onKey, true);
@@ -367,14 +380,6 @@ export function Composer({
   }, [menuOpen, closeMenu]);
 
   useEffect(() => () => stopVoice(), [stopVoice]);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 720px)");
-    const onChange = () => setCompactBar(mq.matches);
-    onChange();
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
 
   function onPrimary(e?: FormEvent) {
     e?.preventDefault();
@@ -560,8 +565,8 @@ export function Composer({
                 "size-[26px] rounded-full text-muted-foreground",
                 menuOpen && "border-foreground/20 bg-muted text-foreground",
               )}
-              title="附件 · 模式 · 模型"
-              aria-label="打开附件与模式菜单"
+              title="附件 · 模式 · 权限 · 模型"
+              aria-label="打开附件、模式与权限菜单"
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((v) => !v)}
             >
@@ -570,7 +575,7 @@ export function Composer({
 
             {menuOpen ? (
               <div
-                className="absolute bottom-[calc(100%+8px)] left-0 z-40 flex w-[min(300px,78vw)] flex-col gap-0.5 rounded-xl border border-border bg-popover p-2 shadow-lg"
+                className="absolute bottom-[calc(100%+8px)] left-0 z-40 flex max-h-[min(72vh,560px)] w-[min(360px,90vw)] flex-col gap-0.5 overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-lg"
                 role="menu"
               >
                 <button
@@ -591,47 +596,6 @@ export function Composer({
 
                 <div className="my-1 h-px bg-border" />
                 <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  模式
-                </div>
-
-                <MenuToggle
-                  label="Plan Mode"
-                  checked={planOn}
-                  onChange={(on) => onAgentModeChange?.(on ? "plan" : "agent")}
-                />
-                {planOn ? (
-                  <MenuToggle
-                    label="Plan 硬约束"
-                    hint={planEnforcement === "soft" ? "当前：软提示" : "当前：禁写/shell"}
-                    checked={planEnforcement !== "soft"}
-                    onChange={(on) => onPlanEnforcementChange?.(on ? "hard" : "soft")}
-                  />
-                ) : null}
-                <MenuToggle
-                  label="Accept"
-                  hint="自动接受写/shell"
-                  checked={autoAccept}
-                  onChange={(on) => onAutoAcceptChange?.(on)}
-                />
-                <MenuToggle
-                  label="Multi-Task"
-                  hint="允许子 agent"
-                  checked={multitask}
-                  onChange={(on) => onMultitaskChange?.(on)}
-                />
-
-                <div className="my-1 h-px bg-border" />
-                <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  工具
-                </div>
-                <MenuToggle
-                  label="启用工具"
-                  checked={toolsEnabled}
-                  onChange={(on) => onToolsEnabledChange?.(on)}
-                />
-
-                <div className="my-1 h-px bg-border" />
-                <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
                   模型
                 </div>
                 {providersDisabled ? (
@@ -641,58 +605,216 @@ export function Composer({
                     中的模型密钥后刷新页面。
                   </p>
                 ) : null}
-                <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
-                  <label className="text-[11px] text-muted-foreground">Provider</label>
-                  <Select
-                    value={providerId ? providerId : "__empty"}
-                    disabled={providersDisabled}
-                    onValueChange={(v) => {
-                      const next = v === "__empty" ? "" : v;
-                      onProviderIdChange?.(next);
-                      onProviderChange?.(next);
-                    }}
-                  >
-                    <SelectTrigger className="h-8 w-full text-xs" aria-label="Provider">
-                      <SelectValue placeholder="选择 Provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {providerOptions.map((opt) => (
-                        <SelectItem
-                          key={opt.value || "empty"}
-                          value={opt.value || "__empty"}
-                        >
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <div className="grid grid-cols-2 gap-2 px-2 pb-2 pt-1">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <label className="text-[11px] text-muted-foreground">Provider</label>
+                    <Select
+                      value={providerId ? providerId : "__empty"}
+                      disabled={providersDisabled}
+                      onValueChange={(v) => {
+                        const next = v === "__empty" ? "" : v;
+                        onProviderIdChange?.(next);
+                        onProviderChange?.(next);
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-full text-xs" aria-label="Provider">
+                        <SelectValue placeholder="Provider" />
+                      </SelectTrigger>
+                      <SelectContent className="z-[200]" position="popper" sideOffset={6}>
+                        {providerOptions.map((opt) => (
+                          <SelectItem
+                            key={opt.value || "empty"}
+                            value={opt.value || "__empty"}
+                          >
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <label className="text-[11px] text-muted-foreground">Model</label>
+                    <Select
+                      value={modelName ? modelName : "__empty"}
+                      disabled={modelsDisabled}
+                      onValueChange={(v) => {
+                        const next = v === "__empty" ? "" : v;
+                        onModelNameChange?.(next);
+                        onModelChange?.(next);
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-full text-xs" aria-label="Model">
+                        <SelectValue placeholder="Model" />
+                      </SelectTrigger>
+                      <SelectContent className="z-[200]" position="popper" sideOffset={6}>
+                        {modelOptions.map((opt) => (
+                          <SelectItem
+                            key={opt.value || "empty"}
+                            value={opt.value || "__empty"}
+                          >
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                <div className="flex flex-col gap-1 px-2 pb-2">
-                  <label className="text-[11px] text-muted-foreground">Model</label>
-                  <Select
-                    value={modelName ? modelName : "__empty"}
-                    disabled={modelsDisabled}
-                    onValueChange={(v) => {
-                      const next = v === "__empty" ? "" : v;
-                      onModelNameChange?.(next);
-                      onModelChange?.(next);
-                    }}
-                  >
-                    <SelectTrigger className="h-8 w-full text-xs" aria-label="Model">
-                      <SelectValue placeholder="选择 Model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modelOptions.map((opt) => (
-                        <SelectItem
-                          key={opt.value || "empty"}
-                          value={opt.value || "__empty"}
-                        >
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+
+                <div className="my-1 h-px bg-border" />
+                <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  模式
                 </div>
+
+                <div className="grid grid-cols-4 gap-1 px-2 pb-1.5 pt-1">
+                  {(
+                    [
+                      {
+                        id: "plan",
+                        label: "Plan",
+                        hint: "只读规划",
+                        checked: planOn,
+                        onChange: (on: boolean) => onAgentModeChange?.(on ? "plan" : "agent"),
+                      },
+                      {
+                        id: "accept",
+                        label: "Accept",
+                        hint: "自动接受写/shell",
+                        checked: autoAccept,
+                        onChange: (on: boolean) => onAutoAcceptChange?.(on),
+                      },
+                      {
+                        id: "multitask",
+                        label: "Multi",
+                        hint: "允许子 agent",
+                        checked: multitask,
+                        onChange: (on: boolean) => onMultitaskChange?.(on),
+                      },
+                      {
+                        id: "tools",
+                        label: "工具",
+                        hint: "启用工具调用",
+                        checked: toolsEnabled,
+                        onChange: (on: boolean) => onToolsEnabledChange?.(on),
+                      },
+                    ] as const
+                  ).map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      title={m.hint}
+                      role="menuitemcheckbox"
+                      aria-checked={m.checked}
+                      className={cn(
+                        "rounded-md px-0.5 py-1.5 text-center text-[11px] font-medium transition-colors",
+                        m.checked
+                          ? "bg-teal/15 text-teal"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                      )}
+                      onClick={() => m.onChange(!m.checked)}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                  {(
+                    [
+                      {
+                        id: "plan",
+                        checked: planOn,
+                        onChange: (on: boolean) => onAgentModeChange?.(on ? "plan" : "agent"),
+                        label: "Plan Mode",
+                      },
+                      {
+                        id: "accept",
+                        checked: autoAccept,
+                        onChange: (on: boolean) => onAutoAcceptChange?.(on),
+                        label: "Accept",
+                      },
+                      {
+                        id: "multitask",
+                        checked: multitask,
+                        onChange: (on: boolean) => onMultitaskChange?.(on),
+                        label: "Multi-Task",
+                      },
+                      {
+                        id: "tools",
+                        checked: toolsEnabled,
+                        onChange: (on: boolean) => onToolsEnabledChange?.(on),
+                        label: "启用工具",
+                      },
+                    ] as const
+                  ).map((m) => (
+                    <div key={`sw-${m.id}`} className="flex justify-center py-0.5">
+                      <Switch
+                        checked={m.checked}
+                        onCheckedChange={m.onChange}
+                        aria-label={m.label}
+                      />
+                    </div>
+                  ))}
+                </div>
+                {planOn ? (
+                  <MenuToggle
+                    label="Plan 硬约束"
+                    hint={planEnforcement === "soft" ? "当前：软提示" : "当前：禁写/shell"}
+                    checked={planEnforcement !== "soft"}
+                    onChange={(on) => onPlanEnforcementChange?.(on ? "hard" : "soft")}
+                  />
+                ) : null}
+
+                <div className="my-1 h-px bg-border" />
+                <ComposerSegmentGroup
+                  label="权限"
+                  hint={
+                    permissionPreset === "read-only"
+                      ? "禁写/shell"
+                      : permissionPreset === "danger-full-access"
+                        ? "不问了"
+                        : "写需审批"
+                  }
+                  options={[
+                    { id: "read-only", label: "只读" },
+                    { id: "workspace-write", label: "可写" },
+                    { id: "danger-full-access", label: "全权限" },
+                  ]}
+                  value={permissionPreset}
+                  onChange={(v) =>
+                    onPermissionPresetChange?.(v as "read-only" | "workspace-write" | "danger-full-access")
+                  }
+                />
+                <ComposerSegmentGroup
+                  label="体验档"
+                  hint={
+                    experienceTier === "fast"
+                      ? "仅 Mermaid"
+                      : experienceTier === "high"
+                        ? "偏 Draw.io"
+                        : "默认"
+                  }
+                  options={[
+                    { id: "fast", label: "Fast" },
+                    { id: "balanced", label: "Balanced" },
+                    { id: "high", label: "High" },
+                  ]}
+                  value={experienceTier}
+                  onChange={(v) => applyExperienceTier(v as ExperienceTierId)}
+                />
+                <ComposerSegmentGroup
+                  label="推理"
+                  hint={
+                    reasoningEffort === "low"
+                      ? "简短"
+                      : reasoningEffort === "high"
+                        ? "更深"
+                        : "默认"
+                  }
+                  options={[
+                    { id: "low", label: "Low" },
+                    { id: "medium", label: "Med" },
+                    { id: "high", label: "High" },
+                  ]}
+                  value={reasoningEffort}
+                  onChange={(v) => onReasoningEffortChange?.(v as "low" | "medium" | "high")}
+                />
               </div>
             ) : null}
           </div>
@@ -833,135 +955,6 @@ export function Composer({
           </div>
         </div>
 
-        {!compactBar ? (
-          <div className="flex flex-wrap items-start gap-x-4 gap-y-2 border-t border-border/60 px-2.5 py-2">
-            <ComposerSegmentGroup
-              label="权限"
-              hint={
-                permissionPreset === "read-only"
-                  ? "禁写/shell"
-                  : permissionPreset === "danger-full-access"
-                    ? "不问了"
-                    : "写需审批"
-              }
-              options={[
-                { id: "read-only", label: "只读" },
-                { id: "workspace-write", label: "可写" },
-                { id: "danger-full-access", label: "全权限" },
-              ]}
-              value={permissionPreset}
-              onChange={(v) =>
-                onPermissionPresetChange?.(v as "read-only" | "workspace-write" | "danger-full-access")
-              }
-            />
-            <ComposerSegmentGroup
-              label="体验档"
-              hint={
-                experienceTier === "fast"
-                  ? "仅 Mermaid"
-                  : experienceTier === "high"
-                    ? "偏 Draw.io"
-                    : "默认"
-              }
-              options={[
-                { id: "fast", label: "Fast" },
-                { id: "balanced", label: "Balanced" },
-                { id: "high", label: "High" },
-              ]}
-              value={experienceTier}
-              onChange={(v) => applyExperienceTier(v as ExperienceTierId)}
-            />
-            <ComposerSegmentGroup
-              label="推理"
-              hint={
-                reasoningEffort === "low"
-                  ? "简短"
-                  : reasoningEffort === "high"
-                    ? "更深"
-                    : "默认"
-              }
-              options={[
-                { id: "low", label: "Low" },
-                { id: "medium", label: "Med" },
-                { id: "high", label: "High" },
-              ]}
-              value={reasoningEffort}
-              onChange={(v) => onReasoningEffortChange?.(v as "low" | "medium" | "high")}
-            />
-          </div>
-        ) : (
-          <div className="flex flex-col gap-1.5 border-t border-border/60 px-2 py-1.5">
-            <div className="flex flex-wrap items-center gap-1">
-              {(
-                [
-                  ["read-only", "只读"],
-                  ["workspace-write", "可写"],
-                  ["danger-full-access", "全开"],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                    permissionPreset === id
-                      ? "bg-primary/15 text-primary"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  onClick={() => onPermissionPresetChange?.(id)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div className="flex flex-wrap items-center gap-1">
-              {(
-                [
-                  ["fast", "Fast"],
-                  ["balanced", "Bal"],
-                  ["high", "High"],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                    experienceTier === id
-                      ? "bg-primary/15 text-primary"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  onClick={() => applyExperienceTier(id as ExperienceTierId)}
-                >
-                  {label}
-                </button>
-              ))}
-              <span className="mx-0.5 text-border">|</span>
-              {(
-                [
-                  ["low", "Low"],
-                  ["medium", "Med"],
-                  ["high", "High"],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={`r-${id}`}
-                  type="button"
-                  className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                    reasoningEffort === id
-                      ? "bg-primary/15 text-primary"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  onClick={() => onReasoningEffortChange?.(id as "low" | "medium" | "high")}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 border-t border-border px-2 pb-2 pt-1.5">
           {cwd ? (
             <div className="inline-flex max-w-[48%] min-w-0 flex-nowrap items-center gap-2" title={cwd}>
@@ -1049,30 +1042,175 @@ function ComposerSegmentGroup({
   onChange: (id: string) => void;
   disabled?: boolean;
 }) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const dragRef = useRef<{ startX: number; moved: boolean; idx: number } | null>(null);
+  const suppressClickRef = useRef(false);
+  const reducedMotion = useReducedMotion();
+  const [pill, setPill] = useState({ left: 0, width: 0, ready: false });
+
+  const selectedIndex = Math.max(
+    0,
+    options.findIndex((o) => o.id === value),
+  );
+
+  const syncPill = useCallback((idx: number) => {
+    const btn = btnRefs.current[idx];
+    if (!btn) return;
+    setPill({ left: btn.offsetLeft, width: btn.offsetWidth, ready: true });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (dragRef.current) return;
+    syncPill(selectedIndex);
+  }, [selectedIndex, syncPill, options.length, value]);
+
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (dragRef.current) return;
+      syncPill(selectedIndex);
+    });
+    ro.observe(track);
+    return () => ro.disconnect();
+  }, [selectedIndex, syncPill]);
+
+  const indexFromClientX = useCallback(
+    (clientX: number) => {
+      const track = trackRef.current;
+      if (!track || !options.length) return selectedIndex;
+      const rect = track.getBoundingClientRect();
+      const x = Math.min(Math.max(clientX - rect.left, 0), Math.max(rect.width - 0.001, 0));
+      return Math.min(options.length - 1, Math.floor((x / rect.width) * options.length));
+    },
+    [options.length, selectedIndex],
+  );
+
+  const commitIndex = useCallback(
+    (idx: number) => {
+      const id = options[idx]?.id;
+      if (!id) return;
+      if (id !== value) onChange(id);
+      else syncPill(idx);
+    },
+    [onChange, options, syncPill, value],
+  );
+
+  const onTrackPointerDown = (ev: ReactPointerEvent<HTMLDivElement>) => {
+    if (disabled || ev.button !== 0) return;
+    ev.currentTarget.setPointerCapture(ev.pointerId);
+    const idx = indexFromClientX(ev.clientX);
+    dragRef.current = { startX: ev.clientX, moved: false, idx };
+    syncPill(idx);
+  };
+
+  const onTrackPointerMove = (ev: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (Math.abs(ev.clientX - drag.startX) > 4) drag.moved = true;
+    const idx = indexFromClientX(ev.clientX);
+    if (idx === drag.idx) return;
+    drag.idx = idx;
+    syncPill(idx);
+  };
+
+  const endDrag = (ev: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    suppressClickRef.current = drag.moved;
+    try {
+      ev.currentTarget.releasePointerCapture(ev.pointerId);
+    } catch {
+      /* already released */
+    }
+    commitIndex(drag.idx);
+  };
+
+  const onTrackKeyDown = (ev: KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight" && ev.key !== "Home" && ev.key !== "End") {
+      return;
+    }
+    ev.preventDefault();
+    let next = selectedIndex;
+    if (ev.key === "ArrowLeft") next = Math.max(0, selectedIndex - 1);
+    if (ev.key === "ArrowRight") next = Math.min(options.length - 1, selectedIndex + 1);
+    if (ev.key === "Home") next = 0;
+    if (ev.key === "End") next = options.length - 1;
+    commitIndex(next);
+  };
+
   return (
-    <div className="min-w-0">
-      <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
+    <div className="min-w-0 px-2 py-1.5">
+      <div className="mb-1.5 flex items-baseline justify-between gap-2 px-0.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {label}
+        </span>
+        <span className="truncate text-[10px] text-muted-foreground/85">{hint}</span>
       </div>
-      <div className="inline-flex rounded-md border border-border/70 p-0.5">
-        {options.map((opt) => (
-          <button
-            key={opt.id}
-            type="button"
-            disabled={disabled}
-            className={cn(
-              "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
-              value === opt.id
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            onClick={() => onChange(opt.id)}
-          >
-            {opt.label}
-          </button>
-        ))}
+      <div
+        ref={trackRef}
+        role="radiogroup"
+        aria-label={label}
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled || undefined}
+        onKeyDown={onTrackKeyDown}
+        onPointerDown={onTrackPointerDown}
+        onPointerMove={onTrackPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        className={cn(
+          "relative flex w-full touch-none select-none rounded-lg bg-black/[0.06] p-0.5 ring-1 ring-border/80 dark:bg-white/[0.08]",
+          "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+          disabled && "pointer-events-none opacity-50",
+        )}
+      >
+        {pill.ready ? (
+          <motion.div
+            aria-hidden
+            className="pointer-events-none absolute top-0.5 bottom-0.5 z-0 rounded-md bg-teal/18 shadow-sm ring-1 ring-teal/35 dark:bg-teal/25 dark:ring-teal/45"
+            initial={false}
+            animate={{ left: pill.left, width: pill.width }}
+            transition={
+              reducedMotion
+                ? { duration: 0 }
+                : { type: "spring", stiffness: 460, damping: 34, mass: 0.7 }
+            }
+          />
+        ) : null}
+        {options.map((opt, i) => {
+          const active = opt.id === value;
+          return (
+            <button
+              key={opt.id}
+              ref={(el) => {
+                btnRefs.current[i] = el;
+              }}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={disabled}
+              className={cn(
+                "relative z-[1] min-w-0 flex-1 rounded-md px-1.5 py-1.5 text-[11px] font-medium transition-colors duration-150",
+                active
+                  ? "text-teal dark:text-teal"
+                  : "text-muted-foreground hover:text-foreground/85",
+              )}
+              onClick={() => {
+                if (suppressClickRef.current) {
+                  suppressClickRef.current = false;
+                  return;
+                }
+                onChange(opt.id);
+              }}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
       </div>
-      <p className="mt-0.5 text-[10px] text-muted-foreground">{hint}</p>
     </div>
   );
 }
