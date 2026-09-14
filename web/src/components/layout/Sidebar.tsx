@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Plus, Settings, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { PanelLeft, Plus, Search, Settings, X } from "lucide-react";
 import { motion } from "motion/react";
 
 import { NlmLogo } from "@/components/brand/Logos";
@@ -25,6 +25,9 @@ export type SidebarProps = {
   workspaces?: SidebarWorkspace[];
   activeId?: string | null;
   status?: string;
+  /** Desktop icon-rail mode (DSH-inspired). */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
   onNew?: () => void;
   onSelect?: (id: string) => void;
   onDelete?: (id: string) => void;
@@ -33,11 +36,41 @@ export type SidebarProps = {
   className?: string;
 };
 
+function RailIconButton({
+  title,
+  onClick,
+  children,
+  className,
+}: {
+  title: string;
+  onClick?: () => void;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      className={cn(
+        "inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors",
+        "hover:bg-foreground/[0.06] hover:text-foreground",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function Sidebar({
   conversations = [],
   workspaces = [],
   activeId,
   status = "ready",
+  collapsed = false,
+  onToggleCollapse,
   onNew,
   onSelect,
   onDelete,
@@ -46,6 +79,8 @@ export function Sidebar({
   className,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
+  const [pendingSearchFocus, setPendingSearchFocus] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const reduced = usePrefersReducedMotion();
 
   const filtered = useMemo(() => {
@@ -57,135 +92,210 @@ export function Sidebar({
     });
   }, [conversations, query]);
 
+  useEffect(() => {
+    if (collapsed || !pendingSearchFocus) return;
+    const t = window.setTimeout(() => {
+      searchRef.current?.focus();
+      setPendingSearchFocus(false);
+    }, 40);
+    return () => window.clearTimeout(t);
+  }, [collapsed, pendingSearchFocus]);
+
+  const onRailSearch = () => {
+    setPendingSearchFocus(true);
+    if (collapsed) onToggleCollapse?.();
+  };
+
   return (
     <aside
       className={cn(
         "nlm-sidebar flex h-full min-h-0 flex-col gap-2.5 overflow-hidden border-r border-border bg-[var(--sidebar-bg)] px-3 py-3.5 backdrop-blur-md",
+        collapsed && "nlm-sidebar--rail items-center gap-2",
         className,
       )}
+      data-collapsed={collapsed || undefined}
     >
-      <div className="flex shrink-0 items-center gap-2.5">
-        <NlmLogo className="size-8 shadow-sm ring-1 ring-border/60" />
-        <div className="min-w-0">
-          <div className="bg-gradient-to-br from-foreground via-teal to-cyan-600 bg-clip-text text-[15px] font-bold tracking-tight text-transparent">
-            Nexus Lark Mind
-          </div>
-          <p className="m-0 mt-0.5 text-[10.5px] uppercase tracking-[0.06em] text-muted-foreground">
-            Agent Console
-          </p>
-        </div>
-      </div>
+      {collapsed ? (
+        <>
+          <button
+            type="button"
+            title="展开侧栏"
+            aria-label="展开侧栏"
+            onClick={() => onToggleCollapse?.()}
+            className="group relative inline-flex size-9 shrink-0 items-center justify-center rounded-lg"
+          >
+            <NlmLogo
+              className="size-7 shadow-sm ring-1 ring-border/50 transition-opacity group-hover:opacity-0"
+              title=""
+            />
+            <PanelLeft
+              className="pointer-events-none absolute size-[18px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+              aria-hidden
+            />
+          </button>
 
-      <Button
-        type="button"
-        className="h-8 w-full justify-start gap-1.5 border border-primary/35 bg-primary/15 text-foreground hover:bg-primary/25"
-        variant="secondary"
-        size="sm"
-        onClick={onNew}
-      >
-        <Plus className="size-3.5" />
-        新对话
-      </Button>
+          <RailIconButton title="新对话" onClick={onNew} className="text-foreground">
+            <Plus className="size-[18px]" />
+          </RailIconButton>
 
-      <div className="mt-1 shrink-0 text-[10.5px] tracking-wide text-muted-foreground">
-        工作目录
-      </div>
-      <div className="flex max-h-[120px] shrink-0 flex-col gap-1 overflow-auto overscroll-contain px-0.5">
-        {workspaces.length === 0 ? (
-          <div className="px-0.5 py-1 text-[11px] text-muted-foreground">
-            在空对话中添加 Workspace
-          </div>
-        ) : (
-          workspaces.map((w) => (
+          <RailIconButton title="搜索会话" onClick={onRailSearch}>
+            <Search className="size-[18px]" />
+          </RailIconButton>
+
+          <div className="min-h-2 flex-1" />
+
+          <RailIconButton title="设置" onClick={onOpenSettings}>
+            <Settings className="size-[18px]" />
+          </RailIconButton>
+        </>
+      ) : (
+        <>
+          <div className="flex shrink-0 items-center gap-2">
             <button
-              key={w.id}
               type="button"
-              title={w.path}
-              className="rounded-lg border border-border bg-foreground/[0.03] px-2 py-1.5 text-left transition-colors hover:border-primary/40"
-              onClick={() => onOpenWorkspace?.(w)}
+              className="shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              title="Nexus Lark Mind"
+              onClick={onNew}
             >
-              <span className="block truncate text-xs">{w.title || w.path}</span>
+              <NlmLogo className="size-8 shadow-sm ring-1 ring-border/60" />
             </button>
-          ))
-        )}
-      </div>
-
-      <div className="mt-1 shrink-0 text-[10.5px] tracking-wide text-muted-foreground">
-        历史记录
-      </div>
-      <Input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="搜索会话…"
-        className="h-7 shrink-0 bg-background/50 text-[11px]"
-      />
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-1 pr-1">
-          {filtered.length === 0 ? (
-            <div className="px-2 py-2 text-[11px] text-muted-foreground">
-              {query.trim() ? "无匹配会话" : "暂无历史"}
+            <div className="min-w-0 flex-1">
+              <div className="bg-gradient-to-br from-foreground via-teal to-cyan-600 bg-clip-text text-[15px] font-bold tracking-tight text-transparent">
+                Nexus Lark Mind
+              </div>
+              <p className="m-0 mt-0.5 text-[10.5px] uppercase tracking-[0.06em] text-muted-foreground">
+                Agent Console
+              </p>
             </div>
-          ) : (
-            filtered.map((c, i) => {
-              const active = c.id === activeId;
-              const preview = c.cwd ? c.workspaceTitle || c.cwd : c.preview || "";
-              return (
-                <motion.button
-                  key={c.id}
-                  type="button"
-                  initial={reduced ? false : { opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: reduced ? 0 : Math.min(i, 8) * 0.02, duration: 0.15 }}
-                  className={cn(
-                    "group grid w-full grid-cols-[1fr_auto] gap-x-1.5 gap-y-1 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors",
-                    "hover:bg-foreground/[0.04]",
-                    active && "border-primary/30 bg-primary/15",
-                  )}
-                  onClick={() => onSelect?.(c.id)}
-                >
-                  <span className="truncate text-xs font-medium">{c.title || "新对话"}</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    title="删除"
-                    className="opacity-0 transition-opacity group-hover:opacity-100"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete?.(c.id);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onDelete?.(c.id);
-                      }
-                    }}
-                  >
-                    <X className="size-3.5 text-muted-foreground hover:text-destructive" />
-                  </span>
-                  {preview ? (
-                    <span className="col-span-2 truncate text-[10.5px] text-muted-foreground">
-                      {preview}
-                    </span>
-                  ) : null}
-                </motion.button>
-              );
-            })
-          )}
-        </div>
-      </ScrollArea>
+            {onToggleCollapse ? (
+              <button
+                type="button"
+                title="收起侧栏"
+                aria-label="收起侧栏"
+                onClick={onToggleCollapse}
+                className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground"
+              >
+                <PanelLeft className="size-4" />
+              </button>
+            ) : null}
+          </div>
 
-      <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border pt-2 text-[10.5px] text-muted-foreground">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 hover:text-foreground"
-          onClick={onOpenSettings}
-        >
-          <Settings className="size-3" />
-          设置
-        </button>
-        <span className="truncate font-mono">{status}</span>
-      </div>
+          <Button
+            type="button"
+            className="h-8 w-full justify-start gap-1.5 border border-primary/35 bg-primary/15 text-foreground hover:bg-primary/25"
+            variant="secondary"
+            size="sm"
+            onClick={onNew}
+          >
+            <Plus className="size-3.5" />
+            新对话
+          </Button>
+
+          <div className="mt-1 shrink-0 text-[10.5px] tracking-wide text-muted-foreground">
+            工作目录
+          </div>
+          <div className="flex max-h-[120px] shrink-0 flex-col gap-1 overflow-auto overscroll-contain px-0.5">
+            {workspaces.length === 0 ? (
+              <div className="px-0.5 py-1 text-[11px] text-muted-foreground">
+                在空对话中添加 Workspace
+              </div>
+            ) : (
+              workspaces.map((w) => (
+                <button
+                  key={w.id}
+                  type="button"
+                  title={w.path}
+                  className="rounded-lg border border-border bg-foreground/[0.03] px-2 py-1.5 text-left transition-colors hover:border-primary/40"
+                  onClick={() => onOpenWorkspace?.(w)}
+                >
+                  <span className="block truncate text-xs">{w.title || w.path}</span>
+                </button>
+              ))
+            )}
+          </div>
+
+          <div className="mt-1 shrink-0 text-[10.5px] tracking-wide text-muted-foreground">
+            历史记录
+          </div>
+          <Input
+            ref={searchRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索会话…"
+            className="h-7 shrink-0 bg-background/50 text-[11px]"
+          />
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="flex flex-col gap-1 pr-1">
+              {filtered.length === 0 ? (
+                <div className="px-2 py-2 text-[11px] text-muted-foreground">
+                  {query.trim() ? "无匹配会话" : "暂无历史"}
+                </div>
+              ) : (
+                filtered.map((c, i) => {
+                  const active = c.id === activeId;
+                  const preview = c.cwd ? c.workspaceTitle || c.cwd : c.preview || "";
+                  return (
+                    <motion.button
+                      key={c.id}
+                      type="button"
+                      initial={reduced ? false : { opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        delay: reduced ? 0 : Math.min(i, 8) * 0.02,
+                        duration: 0.15,
+                      }}
+                      className={cn(
+                        "group grid w-full grid-cols-[1fr_auto] gap-x-1.5 gap-y-1 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors",
+                        "hover:bg-foreground/[0.04]",
+                        active && "border-primary/30 bg-primary/15",
+                      )}
+                      onClick={() => onSelect?.(c.id)}
+                    >
+                      <span className="truncate text-xs font-medium">{c.title || "新对话"}</span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        title="删除"
+                        className="opacity-0 transition-opacity group-hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete?.(c.id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onDelete?.(c.id);
+                          }
+                        }}
+                      >
+                        <X className="size-3.5 text-muted-foreground hover:text-destructive" />
+                      </span>
+                      {preview ? (
+                        <span className="col-span-2 truncate text-[10.5px] text-muted-foreground">
+                          {preview}
+                        </span>
+                      ) : null}
+                    </motion.button>
+                  );
+                })
+              )}
+            </div>
+          </ScrollArea>
+
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border pt-2 text-[10.5px] text-muted-foreground">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 hover:text-foreground"
+              onClick={onOpenSettings}
+            >
+              <Settings className="size-3" />
+              设置
+            </button>
+            <span className="truncate font-mono">{status}</span>
+          </div>
+        </>
+      )}
     </aside>
   );
 }

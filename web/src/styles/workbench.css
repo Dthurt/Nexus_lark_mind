@@ -61,10 +61,11 @@ html[data-theme="day"] {
   max-height: 100%;
   overflow: hidden;
   box-sizing: border-box;
+  transition: grid-template-columns 220ms ease;
 }
 
 .nlm-app.sidebar-collapsed {
-  grid-template-columns: 0 minmax(0, 1fr) var(--rail-w);
+  grid-template-columns: var(--sidebar-rail-w) minmax(0, 1fr) var(--rail-w);
 }
 
 .nlm-app.rail-collapsed {
@@ -72,10 +73,21 @@ html[data-theme="day"] {
 }
 
 .nlm-app.sidebar-collapsed.rail-collapsed {
-  grid-template-columns: 0 minmax(0, 1fr) 0;
+  grid-template-columns: var(--sidebar-rail-w) minmax(0, 1fr) 0;
 }
 
-.nlm-app.sidebar-collapsed .nlm-sidebar,
+/* Desktop: collapsed left nav stays as a 56px icon rail (DSH-inspired). */
+.nlm-app.sidebar-collapsed .nlm-sidebar {
+  width: var(--sidebar-rail-w);
+  max-width: var(--sidebar-rail-w);
+  min-width: var(--sidebar-rail-w);
+  overflow: hidden;
+  opacity: 1;
+  pointer-events: auto;
+  padding: 14px 10px 8px;
+  border-right: 1px solid var(--line);
+}
+
 .nlm-app.rail-collapsed .nlm-rail {
   overflow: hidden;
   padding: 0;
@@ -252,25 +264,40 @@ html[data-theme="day"] {
     padding-inline: var(--shell-pad-x);
   }
 
+  .nlm-app.sidebar-collapsed,
+  .nlm-app.sidebar-collapsed.rail-collapsed {
+    grid-template-columns: 1fr;
+  }
+
   .nlm-workspace {
     width: 100%;
     max-width: none;
+    /* Leave room for the fixed 56px peek rail */
+    padding-left: var(--sidebar-rail-w);
+    box-sizing: border-box;
   }
 
-  .nlm-sidebar {
+  /* Peek icon rail when closed; full drawer when .sidebar-open */
+  .nlm-sidebar,
+  .nlm-app.sidebar-collapsed .nlm-sidebar {
     position: fixed;
     z-index: 20;
     inset: 0 auto 0 0;
-    width: min(82vw, var(--sidebar-w));
-    transform: translateX(-105%);
-    transition: transform 200ms ease;
+    width: var(--sidebar-rail-w);
+    max-width: var(--sidebar-rail-w);
+    min-width: var(--sidebar-rail-w);
+    transform: translateX(0);
+    transition: width 200ms ease, max-width 200ms ease, padding 200ms ease;
+    opacity: 1;
+    pointer-events: auto;
+    padding: 14px 10px 8px;
+    border-right: 1px solid var(--line);
   }
 
   .nlm-app.sidebar-open .nlm-sidebar {
-    transform: translateX(0);
-    opacity: 1;
-    pointer-events: auto;
+    width: min(82vw, var(--sidebar-w));
+    max-width: min(82vw, var(--sidebar-w));
+    min-width: 0;
     padding: 14px 12px;
-    border-right: 1px solid var(--line);
   }
 }

@@ -10,7 +10,16 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 0 2px;
+  flex-wrap: wrap;
+}
+
+.traj-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .traj-label {
@@ -18,6 +27,43 @@
   color: var(--muted);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.traj-search {
+  width: min(180px, 40vw);
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.6);
+  color: inherit;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.traj-search:focus {
+  outline: none;
+  border-color: hsl(var(--primary) / 0.5);
+}
+
+.traj-chip {
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.traj-chip:hover {
+  color: inherit;
+}
+
+.traj-chip.active {
+  border-color: hsl(var(--primary) / 0.4);
+  background: hsl(var(--primary) / 0.12);
+  color: inherit;
 }
 
 .traj-follow {
@@ -29,6 +75,51 @@
   cursor: pointer;
 }
 
+.traj-timing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.traj-timing-track {
+  position: relative;
+  height: 14px;
+  border-radius: 4px;
+  background: hsl(var(--foreground) / 0.06);
+  overflow: hidden;
+}
+
+.traj-timing-seg {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border: 0;
+  border-radius: 3px;
+  background: hsl(var(--primary) / 0.45);
+  cursor: pointer;
+  padding: 0;
+}
+
+.traj-timing-seg:hover,
+.traj-timing-seg.active {
+  background: hsl(var(--primary) / 0.75);
+}
+
+.traj-timing-legend {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.traj-linkish {
+  border: 0;
+  background: none;
+  color: hsl(var(--primary));
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
 .traj-list {
   flex: 1;
   min-height: 0;
@@ -36,8 +127,54 @@
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
   padding: 4px 0 8px;
+}
+
+.traj-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.traj-turn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid hsl(var(--border) / 0.8);
+  background: hsl(var(--foreground) / 0.03);
+  color: inherit;
+  border-radius: 7px;
+  padding: 6px 8px;
+  font: inherit;
+  cursor: pointer;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.traj-turn-head:hover {
+  background: hsl(var(--foreground) / 0.05);
+}
+
+.traj-turn-caret {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  width: 10px;
+}
+
+.traj-turn-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.traj-turn-meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
 }
 
 .traj-empty {
@@ -93,6 +230,14 @@
   color: hsl(var(--teal));
 }
 
+.tr-reasoning .traj-kind {
+  color: hsl(var(--violet, 270 50% 55%));
+}
+
+.tr-subagent .traj-kind {
+  color: hsl(var(--orange, 28 80% 50%));
+}
+
 .tr-system .traj-kind {
   color: var(--muted);
 }
@@ -101,8 +246,8 @@
   color: var(--danger);
 }
 
-.tr-turn .traj-sum {
-  font-weight: 600;
+.tr-running {
+  opacity: 0.85;
 }
 
 .traj-sum {
@@ -116,4 +261,6 @@
   font-family: var(--mono);
   font-size: 10px;
   color: var(--muted);
+  min-width: 2.5rem;
+  text-align: right;
 }

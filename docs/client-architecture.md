@@ -43,6 +43,14 @@ Topbar **Chat | Trajectory** (`ViewRing`):
 
 Same SSE feed; separate stores.
 
+Ledger (DSH-inspired, Nexus-lite):
+
+- **Turn groups** with sticky headers + fold-all  
+- **Tool call/result merged** by `callId` (one row, duration on settle)  
+- First-class **reasoning** / **subagent** rows (not only `system` status)  
+- Toolbar **search** + kind filters + light **timing overview** bar  
+- Click row → RightDock inspector (unchanged)
+
 ## Right dock
 
 `useRightDock` + `RightDock`:

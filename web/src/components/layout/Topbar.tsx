@@ -4,7 +4,6 @@ import {
   Flower2,
   LayoutTemplate,
   Moon,
-  PanelLeft,
   PanelRight,
   Search,
   Sun,
@@ -67,7 +66,6 @@ export type TopbarProps = {
   workspaceTitle?: string;
   cwd?: string;
   workspaceKind?: string;
-  onToggleSidebar?: () => void;
   onToggleRail?: () => void;
   onClear?: () => void;
   onCycleTheme?: () => void;
@@ -84,7 +82,6 @@ export function Topbar({
   workspaceTitle = "",
   cwd = "",
   workspaceKind = "local",
-  onToggleSidebar,
   onToggleRail,
   onClear,
   onCycleTheme,
@@ -108,10 +105,6 @@ export function Topbar({
         className,
       )}
     >
-      <IconButton title="切换左侧栏" aria-label="切换左侧栏" onClick={onToggleSidebar}>
-        <PanelLeft className="size-4" />
-      </IconButton>
-
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
         <NlmLogo className="size-6 shrink-0" title="" />
         <div className="flex min-w-0 items-baseline gap-2.5">

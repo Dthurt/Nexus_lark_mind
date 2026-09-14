@@ -65,6 +65,9 @@ export function WorkbenchPage({
   const [narrowUi, setNarrowUi] = useState(
     () => (typeof window !== "undefined" ? window.matchMedia("(max-width: 1100px)").matches : false),
   );
+  const [drawerUi, setDrawerUi] = useState(
+    () => (typeof window !== "undefined" ? window.matchMedia("(max-width: 820px)").matches : false),
+  );
 
   const timeline = useChatTimeline();
   const trajectory = useTrajectory();
@@ -394,7 +397,7 @@ export function WorkbenchPage({
   ]);
 
   const toggleSidebar = useCallback(() => {
-    if (window.matchMedia("(max-width: 820px)").matches) {
+    if (drawerUi || window.matchMedia("(max-width: 820px)").matches) {
       setLayout((l) => ({
         ...l,
         railOpen: false,
@@ -403,7 +406,7 @@ export function WorkbenchPage({
     } else {
       setLayout((l) => ({ ...l, sidebarCollapsed: !l.sidebarCollapsed }));
     }
-  }, []);
+  }, [drawerUi]);
 
   const toggleRail = useCallback(() => {
     if (narrowUi || window.matchMedia("(max-width: 1100px)").matches) {
@@ -456,12 +459,19 @@ export function WorkbenchPage({
   // Mount: narrow media + load catalogs + ensure session history
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 1100px)");
+    const drawerMq = window.matchMedia("(max-width: 820px)");
     const syncNarrow = () => {
       setNarrowUi(mq.matches);
       if (!mq.matches) setLayout((l) => ({ ...l, railOpen: false }));
     };
+    const syncDrawer = () => {
+      setDrawerUi(drawerMq.matches);
+      if (!drawerMq.matches) setLayout((l) => ({ ...l, sidebarOpen: false }));
+    };
     syncNarrow();
+    syncDrawer();
     mq.addEventListener("change", syncNarrow);
+    drawerMq.addEventListener("change", syncDrawer);
 
     let cancelled = false;
     (async () => {
@@ -482,6 +492,7 @@ export function WorkbenchPage({
     return () => {
       cancelled = true;
       mq.removeEventListener("change", syncNarrow);
+      drawerMq.removeEventListener("change", syncDrawer);
       stream.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once
@@ -513,7 +524,7 @@ export function WorkbenchPage({
     void refreshFromServer();
   }, [sessionId, refreshFromServer]);
 
-  const showMask = narrowUi && (layout.sidebarOpen || layout.railOpen);
+  const showMask = (drawerUi && layout.sidebarOpen) || (narrowUi && layout.railOpen);
 
   const appClass = useMemo(
     () =>
@@ -545,6 +556,8 @@ export function WorkbenchPage({
           workspaces={workspaces}
           activeId={sessionId}
           status={status}
+          collapsed={drawerUi ? !layout.sidebarOpen : layout.sidebarCollapsed}
+          onToggleCollapse={toggleSidebar}
           onNew={startNewConversation}
           onSelect={(id) => void switchConversation(id)}
           onDelete={(id) => void onDeleteConversation(id)}
@@ -560,7 +573,6 @@ export function WorkbenchPage({
             workspaceTitle={workspaceTitle}
             cwd={cwd}
             workspaceKind={workspaceKind}
-            onToggleSidebar={toggleSidebar}
             onToggleRail={toggleRail}
             onClear={() => void clearSession()}
             onOpenCommand={commandPalette.show}

@@ -62,6 +62,7 @@
     --tool: 45 70% 47%;
     --radius: 0.625rem;
     --sidebar-w: 248px;
+    --sidebar-rail-w: 56px;
     --rail-w: 300px;
     --fs: 13px;
     color-scheme: dark;

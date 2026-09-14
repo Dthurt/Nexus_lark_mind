@@ -37,6 +37,8 @@ export type UseChatStreamOpts = {
     | "addToolCall"
     | "addToolResult"
     | "addAssistant"
+    | "addReasoning"
+    | "addSubagent"
     | "addError"
     | "addUser"
     | "endTurn"
@@ -235,7 +237,9 @@ export function useChatStream(opts: UseChatStreamOpts) {
         }
       } else if (type === "task.reasoning") {
         tl.clearRetry();
-        tl.appendReasoning?.(payload.delta || payload.reasoning || "");
+        const reasoningChunk = payload.delta || payload.reasoning || "";
+        tl.appendReasoning?.(reasoningChunk);
+        tr.addReasoning?.(reasoningChunk);
         setStatus("thinking…");
         setActivity("model", "思考中…", modelNameRef.current || "");
       } else if (type === "task.tool_approval") {
@@ -304,13 +308,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
         const actId = tl.pushActivity("SUB", payload);
         tl.renderSubagentEvent(payload, actId);
         const subLabel = payload.label || payload.subagent_id || "";
-        tr.addStatus(
-          payload.phase === "start"
-            ? `subagent ${subLabel}…`
-            : payload.phase === "end"
-              ? `subagent done (${payload.status || "ok"})`
-              : `subagent ${payload.phase}`,
-        );
+        tr.addSubagent?.(payload, actId);
         setStatus("subagent…");
         if (payload.phase === "start") {
           setActivity("subagent", "子 agent 运行中…", subLabel);
@@ -331,6 +329,7 @@ export function useChatStream(opts: UseChatStreamOpts) {
         tl.clearRetry();
         if (payload.reasoning_delta) {
           tl.appendReasoning?.(payload.reasoning_delta);
+          tr.addReasoning?.(payload.reasoning_delta);
         }
         if (payload.delta) {
           tl.appendDelta(payload.delta || "");
