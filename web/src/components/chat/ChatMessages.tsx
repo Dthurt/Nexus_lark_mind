@@ -37,6 +37,8 @@ const WINDOW_STEP = 60;
 
 export type ChatMessagesProps = {
   items?: TimelineItem[];
+  /** When this changes, scroll is forced to the bottom. */
+  sessionId?: string | null;
   showWorkspacePicker?: boolean;
   modelProvider?: string;
   modelName?: string;
@@ -175,6 +177,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
   function ChatMessages(
     {
       items = [],
+      sessionId = null,
       showWorkspacePicker = false,
       modelProvider = "",
       modelName = "",
@@ -193,6 +196,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
   ) {
     const scrollerRef = useRef<HTMLDivElement>(null);
     const followTailRef = useRef(true);
+    const [atBottom, setAtBottom] = useState(true);
     const reducedMotion = usePrefersReducedMotion();
     const itemMotion = reducedMotion ? timelineItemMotionReduced : timelineItemMotion;
     const [windowSize, setWindowSize] = useState(WINDOW_STEP);
@@ -217,6 +221,15 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
         setWindowSize(WINDOW_STEP);
       }
     }, [allBlocks.length]);
+
+    useEffect(() => {
+      followTailRef.current = true;
+      setAtBottom(true);
+      requestAnimationFrame(() => {
+        const el = scrollerRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    }, [sessionId]);
 
     const hiddenCount = Math.max(0, allBlocks.length - windowSize);
     const blocks = useMemo(
@@ -276,12 +289,23 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
     }, [stickKey, items, maybeStickBottom]);
 
     function onScroll(e: UIEvent<HTMLDivElement>) {
-      followTailRef.current = nearBottom(e.currentTarget);
+      const el = e.currentTarget;
+      const near = nearBottom(el);
+      followTailRef.current = near;
+      setAtBottom(near);
     }
 
+    const scrollToBottom = useCallback((smooth = false) => {
+      const el = scrollerRef.current;
+      if (!el) return;
+      followTailRef.current = true;
+      el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+      setAtBottom(true);
+    }, []);
+
     function wrapMotion(id: string, child: ReactNode, live = false) {
-      // Live rows grow every token — layout animation causes flicker/jump.
-      if (live || reducedMotion) {
+      // Keep one stable wrapper — toggling div/motion.div when `live` flips causes flicker.
+      if (reducedMotion) {
         return (
           <div key={id} className="w-full">
             {child}
@@ -289,19 +313,19 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
         );
       }
       return (
-        <motion.div key={id} layout={!reducedMotion} {...itemMotion} className="w-full">
+        <motion.div key={id} layout={!live && !reducedMotion} {...itemMotion} className="w-full">
           {child}
         </motion.div>
       );
     }
 
     return (
+      <div className={cn("relative flex min-h-0 flex-1 flex-col", className)}>
       <div
         ref={scrollerRef}
         className={cn(
           "messages flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain px-0.5 pb-3 pt-4",
           "[scrollbar-gutter:stable]",
-          className,
         )}
         onScroll={onScroll}
       >
@@ -500,6 +524,17 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
             return null;
           })}
         </AnimatePresence>
+      </div>
+
+      {!atBottom && items.length > 0 ? (
+        <button
+          type="button"
+          className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border/70 bg-background/95 px-3 py-1.5 text-xs text-foreground shadow-md backdrop-blur hover:bg-muted"
+          onClick={() => scrollToBottom(true)}
+        >
+          回到底部
+        </button>
+      ) : null}
       </div>
     );
   },

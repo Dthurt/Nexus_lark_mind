@@ -1,0 +1,251 @@
+/**
+ * Chat markdown images — single figure, gallery grid, lightbox overlay.
+ */
+
+@layer components {
+  .nlm-md .chat-image {
+    position: relative;
+    margin: 0.65em 0;
+    max-width: min(100%, 520px);
+  }
+
+  .nlm-md .chat-image-frame {
+    position: relative;
+    overflow: hidden;
+    border-radius: 0.5rem;
+    border: 1px solid hsl(var(--border) / 0.75);
+    background: hsl(var(--muted) / 0.35);
+    cursor: zoom-in;
+  }
+
+  .nlm-md .chat-image-frame img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 420px;
+    object-fit: contain;
+    vertical-align: middle;
+  }
+
+  .nlm-md .chat-image.is-error .chat-image-frame {
+    min-height: 120px;
+    display: grid;
+    place-items: center;
+  }
+
+  .nlm-md .chat-image-error {
+    padding: 1rem;
+    font-size: 12px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .nlm-md .chat-image-cap {
+    margin-top: 0.35rem;
+    font-size: 11px;
+    line-height: 1.4;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .nlm-md .chat-image-actions {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.35rem;
+    display: flex;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  .nlm-md .chat-image:hover .chat-image-actions,
+  .nlm-md .chat-image:focus-within .chat-image-actions {
+    opacity: 1;
+  }
+
+  .nlm-md .chat-image-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 1.65rem;
+    height: 1.65rem;
+    border-radius: 0.375rem;
+    border: 1px solid hsl(var(--border) / 0.8);
+    background: hsl(var(--background) / 0.92);
+    color: hsl(var(--foreground));
+    cursor: pointer;
+  }
+
+  .nlm-md .chat-image-btn:hover {
+    background: hsl(var(--muted));
+  }
+
+  /* —— Gallery —— */
+  .nlm-md .chat-image-gallery {
+    margin: 0.75em 0;
+    border: 1px solid hsl(var(--border) / 0.65);
+    border-radius: 0.625rem;
+    background: hsl(var(--muted) / 0.2);
+    overflow: hidden;
+  }
+
+  .nlm-md .chat-image-gallery.is-collapsed .chat-image-gallery-body {
+    display: none;
+  }
+
+  .nlm-md .chat-image-gallery-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.55rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+    font-size: 11px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .nlm-md .chat-image-gallery-toggle {
+    margin-left: auto;
+    border: 0;
+    background: transparent;
+    color: hsl(var(--foreground));
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0.15rem 0.35rem;
+    border-radius: 0.25rem;
+  }
+
+  .nlm-md .chat-image-gallery-toggle:hover {
+    background: hsl(var(--muted) / 0.6);
+  }
+
+  .nlm-md .chat-image-gallery-body {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.5rem;
+    padding: 0.55rem;
+  }
+
+  .nlm-md .chat-image-gallery .chat-image {
+    margin: 0;
+    max-width: none;
+  }
+
+  .nlm-md .chat-image-gallery .chat-image-frame img {
+    max-height: 200px;
+  }
+
+  /* —— Lightbox —— */
+  html.chat-image-lb-open {
+    overflow: hidden;
+  }
+
+  .chat-image-lb-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: hsl(0 0% 0% / 0.72);
+    backdrop-filter: blur(4px);
+  }
+
+  .chat-image-lb-panel {
+    display: flex;
+    flex-direction: column;
+    width: min(96vw, 1100px);
+    max-height: 96vh;
+    border-radius: 0.75rem;
+    border: 1px solid hsl(var(--border) / 0.55);
+    background: hsl(var(--background) / 0.96);
+    box-shadow: 0 24px 64px hsl(0 0% 0% / 0.35);
+    overflow: hidden;
+  }
+
+  .chat-image-lb-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.45rem 0.55rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.6);
+    font-size: 11px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .chat-image-lb-spacer {
+    flex: 1;
+  }
+
+  .chat-image-lb-btn {
+    display: inline-grid;
+    place-items: center;
+    min-width: 1.75rem;
+    height: 1.75rem;
+    padding: 0 0.35rem;
+    border-radius: 0.375rem;
+    border: 1px solid hsl(var(--border) / 0.7);
+    background: hsl(var(--muted) / 0.45);
+    color: hsl(var(--foreground));
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  .chat-image-lb-btn:hover {
+    background: hsl(var(--muted));
+  }
+
+  .chat-image-lb-stage {
+    position: relative;
+    flex: 1;
+    min-height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background: hsl(var(--muted) / 0.25);
+  }
+
+  .chat-image-lb-img {
+    max-width: 100%;
+    max-height: min(72vh, 820px);
+    object-fit: contain;
+    transition: transform 0.12s ease;
+    user-select: none;
+  }
+
+  .chat-image-lb-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--border) / 0.7);
+    background: hsl(var(--background) / 0.88);
+    color: hsl(var(--foreground));
+    cursor: pointer;
+  }
+
+  .chat-image-lb-nav.prev {
+    left: 0.5rem;
+  }
+
+  .chat-image-lb-nav.next {
+    right: 0.5rem;
+  }
+
+  .chat-image-lb-nav:hover {
+    background: hsl(var(--muted));
+  }
+
+  .chat-image-lb-cap {
+    padding: 0.45rem 0.65rem 0.55rem;
+    font-size: 11px;
+    line-height: 1.45;
+    color: hsl(var(--muted-foreground));
+    border-top: 1px solid hsl(var(--border) / 0.55);
+    max-height: 4.5em;
+    overflow: auto;
+  }
+}

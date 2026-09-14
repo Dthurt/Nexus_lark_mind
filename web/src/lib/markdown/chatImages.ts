@@ -254,13 +254,34 @@ function groupConsecutive(root: HTMLElement) {
     const gallery = document.createElement("div");
     gallery.className = "chat-image-gallery";
     gallery.dataset.count = String(group.length);
+
+    const head = document.createElement("div");
+    head.className = "chat-image-gallery-head";
+    head.innerHTML = `<span class="chat-image-gallery-label">${group.length} 张图片</span>`;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "chat-image-gallery-toggle";
+    toggle.textContent = "收起";
+    toggle.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const collapsed = gallery.classList.toggle("is-collapsed");
+      toggle.textContent = collapsed ? "展开" : "收起";
+    });
+    head.appendChild(toggle);
+
+    const body = document.createElement("div");
+    body.className = "chat-image-gallery-body";
+
     const first = group[0];
     // If images live in consecutive <p>, hoist into gallery at the first paragraph position
     const host = first.parentElement?.tagName === "P" ? first.parentElement : first;
     host.parentNode!.insertBefore(gallery, host);
+    gallery.appendChild(head);
+    gallery.appendChild(body);
     group.forEach((fig) => {
       const p = fig.parentElement;
-      gallery.appendChild(fig);
+      body.appendChild(fig);
       if (p && p.tagName === "P" && !p.textContent!.trim() && !p.children.length) p.remove();
     });
   }

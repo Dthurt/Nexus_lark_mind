@@ -383,12 +383,33 @@ export function putPluginConfig(
 
 // ----- providers -----
 
-export function listProviders(
-  configuredOnly = true,
-): Promise<ProviderCatalog> {
-  return apiGet<ProviderCatalog>(
+/** Unwrap RpcEnvelope nesting when catalog is double-wrapped in `data`. */
+export function normalizeProviderCatalog(raw: unknown): ProviderCatalog {
+  const empty: ProviderCatalog = { default_provider: "", default_model: "", providers: [] };
+  if (!raw || typeof raw !== "object") return empty;
+  const rec = raw as Record<string, unknown>;
+  if (rec.ok === true && rec.data != null) {
+    return normalizeProviderCatalog(rec.data);
+  }
+  if (Array.isArray(rec.providers)) {
+    return raw as ProviderCatalog;
+  }
+  const nested = rec.data;
+  if (
+    nested &&
+    typeof nested === "object" &&
+    Array.isArray((nested as ProviderCatalog).providers)
+  ) {
+    return nested as ProviderCatalog;
+  }
+  return empty;
+}
+
+export async function listProviders(configuredOnly = true): Promise<ProviderCatalog> {
+  const raw = await apiGet<unknown>(
     `/api/providers?configured_only=${configuredOnly ? "true" : "false"}`,
   );
+  return normalizeProviderCatalog(raw);
 }
 
 // ----- settings: models -----

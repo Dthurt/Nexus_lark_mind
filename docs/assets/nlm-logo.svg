@@ -1,0 +1,19 @@
+<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nexus Lark Mind">
+  <title>Nexus Lark Mind</title>
+  <rect width="40" height="40" rx="10" fill="url(#nlm-grad)" />
+  <path
+    d="M10 26V14l8 8 8-8v12"
+    stroke="#F4FBFF"
+    stroke-width="2.4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="28.5" cy="12.5" r="2.2" fill="#7EE0C8" />
+  <defs>
+    <linearGradient id="nlm-grad" x1="6" y1="4" x2="36" y2="38" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F766E" />
+      <stop offset="0.55" stop-color="#0E7490" />
+      <stop offset="1" stop-color="#155E75" />
+    </linearGradient>
+  </defs>
+</svg>

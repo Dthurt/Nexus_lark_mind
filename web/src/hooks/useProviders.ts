@@ -6,6 +6,7 @@ const PROVIDER_KEY = "nlm_provider";
 const MODEL_KEY = "nlm_model";
 
 export function useProviders() {
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [catalog, setCatalog] = useState<ProviderCatalog>({
     default_provider: "glm",
     default_model: "",
@@ -17,14 +18,21 @@ export function useProviders() {
   const providerOptions = useMemo(() => {
     const list = catalog.providers || [];
     if (!list.length) {
-      return [{ value: "", label: "未配置 Provider（请检查 .env API Key）" }];
+      return [
+        {
+          value: "",
+          label: catalogLoaded
+            ? "未配置 Provider（请检查 .env 或 Settings → Models）"
+            : "加载 Provider…",
+        },
+      ];
     }
     return list.map((p) => {
       const base = p.label || p.id;
       const isCustom = p.source === "custom" || p.builtin === false;
       return { value: p.id, label: isCustom ? `${base}（自定义）` : base };
     });
-  }, [catalog.providers]);
+  }, [catalog.providers, catalogLoaded]);
 
   const modelOptions = useMemo(() => {
     const provider = (catalog.providers || []).find((x) => x.id === providerId);
@@ -109,6 +117,8 @@ export function useProviders() {
       if (data) setCatalog(data);
     } catch {
       /* keep defaults */
+    } finally {
+      setCatalogLoaded(true);
     }
     // Do not force stale localStorage over server default_provider.
     applyDefaults(undefined, undefined, data);
@@ -131,6 +141,7 @@ export function useProviders() {
 
   return {
     catalog,
+    catalogLoaded,
     providerId,
     modelName,
     providerOptions,

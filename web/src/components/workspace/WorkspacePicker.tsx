@@ -112,6 +112,8 @@ export function WorkspacePicker({
   const [hint, setHintMsg] = useState("");
   const [hintOk, setHintOk] = useState(false);
   const [showBrowser, setShowBrowser] = useState(false);
+  const [browserPathInput, setBrowserPathInput] = useState("");
+  const [browserFilter, setBrowserFilter] = useState("");
   const [selectedHostId, setSelectedHostId] = useState("");
   const [hostForm, setHostForm] = useState<HostForm>(EMPTY_HOST);
 
@@ -171,9 +173,12 @@ export function WorkspacePicker({
 
   async function openBrowser() {
     setShowBrowser(true);
+    setBrowserFilter("");
     setHint("");
+    const initial = pathInput.trim() || "";
+    setBrowserPathInput(initial);
     try {
-      await browsePath(pathInput.trim() || "");
+      await browsePath(initial);
     } catch (err: any) {
       setHint(String(err?.message || err));
     }
@@ -181,11 +186,15 @@ export function WorkspacePicker({
 
   async function goParent() {
     if (!browse?.parent) return;
+    setBrowserFilter("");
+    setBrowserPathInput(browse.parent);
     await browsePath(browse.parent);
   }
 
   async function enterDir(entry: BrowseEntry) {
     if (!entry.is_dir) return;
+    setBrowserFilter("");
+    setBrowserPathInput(entry.path);
     await browsePath(entry.path);
   }
 
@@ -295,10 +304,13 @@ export function WorkspacePicker({
       return;
     }
     setShowBrowser(true);
+    setBrowserFilter("");
     setHint("浏览远程目录…");
     try {
       const host = sshHosts.find((h) => h.id === selectedHostId);
-      await browseSsh(selectedHostId, host?.default_path || "~");
+      const initial = host?.default_path || "~";
+      setBrowserPathInput(initial);
+      await browseSsh(selectedHostId, initial);
       setHint("");
     } catch (err: any) {
       setHint(String(err?.message || err));
@@ -307,12 +319,39 @@ export function WorkspacePicker({
 
   async function goSshParent() {
     if (!sshBrowse?.parent || !selectedHostId) return;
+    setBrowserFilter("");
+    setBrowserPathInput(sshBrowse.parent);
     await browseSsh(selectedHostId, sshBrowse.parent);
   }
 
   async function enterSshDir(entry: BrowseEntry) {
     if (!entry.is_dir || !selectedHostId) return;
+    setBrowserFilter("");
+    setBrowserPathInput(entry.path);
     await browseSsh(selectedHostId, entry.path);
+  }
+
+  async function goToBrowserPath() {
+    const path = browserPathInput.trim();
+    if (!path) {
+      setHint("请输入要跳转的路径");
+      return;
+    }
+    setBrowserFilter("");
+    setHint("");
+    try {
+      if (tab === "ssh") {
+        if (!selectedHostId) {
+          setHint("请先选择 SSH 主机");
+          return;
+        }
+        await browseSsh(selectedHostId, path);
+      } else {
+        await browsePath(path);
+      }
+    } catch (err: any) {
+      setHint(String(err?.message || err));
+    }
   }
 
   async function useSshBrowsePath() {
@@ -340,6 +379,20 @@ export function WorkspacePicker({
   const browserParent = tab === "local" ? browse?.parent : sshBrowse?.parent;
   const browserReady =
     tab === "local" ? !!browse : tab === "ssh" ? !!sshBrowse : false;
+
+  const filteredBrowserEntries = useMemo(() => {
+    const q = browserFilter.trim().toLowerCase();
+    if (!q) return browserEntries;
+    return browserEntries.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.path.toLowerCase().includes(q),
+    );
+  }, [browserEntries, browserFilter]);
+
+  useEffect(() => {
+    if (browserPath) setBrowserPathInput(browserPath);
+  }, [browserPath]);
 
   return (
     <div
@@ -846,31 +899,64 @@ export function WorkspacePicker({
                 >
                   上级
                 </Button>
-                <code className="flex-1 break-all text-[11px] text-muted-foreground">
-                  {browserPath}
-                </code>
+                <Input
+                  className="h-8 flex-1 font-mono text-[11px]"
+                  value={browserPathInput}
+                  placeholder={tab === "ssh" ? "/home/user 或 ~" : "输入路径后按 Enter"}
+                  onChange={(e) => setBrowserPathInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void goToBrowserPath();
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void goToBrowserPath()}
+                >
+                  前往
+                </Button>
+              </div>
+              <div className="border-b border-border px-3 py-1.5">
+                <Input
+                  className="h-8 text-xs"
+                  value={browserFilter}
+                  placeholder="筛选目录/文件…"
+                  onChange={(e) => setBrowserFilter(e.target.value)}
+                />
               </div>
               <div className="min-h-[180px] max-h-[320px] flex-1 overflow-auto">
-                {browserEntries.map((e) => (
-                  <button
-                    key={e.path}
-                    type="button"
-                    className="flex w-full gap-2.5 border-b border-white/[0.04] px-3 py-2.5 text-left text-sm hover:bg-teal/10"
-                    onClick={() =>
-                      void (tab === "ssh" ? enterSshDir(e) : enterDir(e))
-                    }
-                  >
-                    <span
-                      className={cn(
-                        "w-[2.4em] shrink-0 text-[10px] text-muted-foreground",
-                        e.is_dir && "text-teal",
-                      )}
+                {filteredBrowserEntries.length ? (
+                  filteredBrowserEntries.map((e) => (
+                    <button
+                      key={e.path}
+                      type="button"
+                      className="flex w-full gap-2.5 border-b border-white/[0.04] px-3 py-2.5 text-left text-sm hover:bg-teal/10"
+                      onClick={() =>
+                        void (tab === "ssh" ? enterSshDir(e) : enterDir(e))
+                      }
                     >
-                      {e.is_dir ? "目录" : "文件"}
-                    </span>
-                    <span>{e.name}</span>
-                  </button>
-                ))}
+                      <span
+                        className={cn(
+                          "w-[2.4em] shrink-0 text-[10px] text-muted-foreground",
+                          e.is_dir && "text-teal",
+                        )}
+                      >
+                        {e.is_dir ? "目录" : "文件"}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{e.name}</span>
+                      <span className="max-w-[45%] truncate font-mono text-[10px] text-muted-foreground/70">
+                        {e.path}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    {browserFilter.trim()
+                      ? "无匹配项，请调整筛选或路径"
+                      : "此目录为空"}
+                  </p>
+                )}
               </div>
               <DialogFooter className="border-t border-border px-3 py-2.5 sm:justify-end">
                 <Button

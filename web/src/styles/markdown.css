@@ -2,6 +2,7 @@
  * Chat markdown typography — hierarchy, links, emphasis, math, tables.
  * Diagram chrome lives in diagrams.css; this file owns prose rhythm.
  */
+@import "./chat-images.css";
 
 @layer components {
   .nlm-md.md,

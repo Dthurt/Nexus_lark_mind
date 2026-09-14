@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApprovalDock } from "@/components/chat/ApprovalDock";
-import { QueueDock } from "@/components/chat/QueueDock";
 import { ChatMessages } from "@/components/chat/ChatMessages";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { Composer } from "@/components/composer/Composer";
@@ -575,6 +574,7 @@ export function WorkbenchPage({
                 <>
                   {centerView === "chat" ? (
                     <ChatMessages
+                      sessionId={sessionId}
                       items={timeline.items}
                       showWorkspacePicker={!cwd}
                       modelProvider={providerId}
@@ -605,14 +605,6 @@ export function WorkbenchPage({
                     items={timeline.items.filter((it) => it.kind === "approval") as any}
                     onResolve={(p) => void actions.resolveApproval(p)}
                     onActiveCallIdChange={setActiveApprovalCallId}
-                  />
-
-                  <QueueDock
-                    items={actions.inboxItems}
-                    busyEnterMode={actions.busyEnterMode}
-                    busy={busy}
-                    onRemove={(id) => void actions.removeInboxItem(id)}
-                    onBusyEnterModeChange={actions.setBusyEnterMode}
                   />
 
                   <DiffDock
@@ -674,6 +666,8 @@ export function WorkbenchPage({
                     busy={busy}
                     busyEnterMode={actions.busyEnterMode}
                     onBusyEnterModeChange={actions.setBusyEnterMode}
+                    inboxItems={actions.inboxItems}
+                    onRemoveInboxItem={(id) => void actions.removeInboxItem(id)}
                     onProviderIdChange={onProviderChange}
                     onModelNameChange={onModelChange}
                     onSend={(opts) => void actions.sendChat(undefined, opts)}

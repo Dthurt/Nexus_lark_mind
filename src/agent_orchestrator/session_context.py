@@ -274,7 +274,9 @@ class SessionContext:
         await self.redis.set_session(session_id, session)
 
     async def add_usage(self, session_id: str, usage: Dict[str, Any]) -> Dict[str, Any]:
-        session = await self.redis.get_session(session_id) or {"session_id": session_id, "messages": []}
+        session = await self.redis.get_session(session_id)
+        if session is None:
+            raise ValueError(f"session missing for add_usage: {session_id}")
         cur = session.get("usage") or {}
         prompt = int(cur.get("prompt_tokens") or 0) + int(usage.get("prompt_tokens") or 0)
         completion = int(cur.get("completion_tokens") or 0) + int(usage.get("completion_tokens") or 0)

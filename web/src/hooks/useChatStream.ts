@@ -343,9 +343,9 @@ export function useChatStream(opts: UseChatStreamOpts) {
       } else if (type === "task.completed") {
         tl.clearRetry();
         tl.finalizeBot(payload.content || undefined, payload.usage, {
-          modelName: modelNameRef.current || payload.model_name || "",
+          modelName: payload.model_name || modelNameRef.current || "",
           modelProvider:
-            modelProviderRef.current || payload.model_provider || payload.provider || "",
+            payload.model_provider || payload.provider || modelProviderRef.current || "",
         });
         if (agentModeRef.current === "plan") tl.markPlanReady(payload.content || "");
         tr.addAssistant(payload.content || "", payload.usage);

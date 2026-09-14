@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Mic, Paperclip, Plus, Square, ArrowUp, ListTodo, ShieldCheck, Layers2 } from "lucide-react";
 
+import type { InboxItem } from "@/api/endpoints";
 import { ContextMeter } from "@/components/chat/ContextMeter";
 import { MentionPopover } from "@/components/composer/MentionPopover";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,8 @@ export type ComposerProps = {
   busy?: boolean;
   busyEnterMode?: "queue" | "steer";
   onBusyEnterModeChange?: (v: "queue" | "steer") => void;
+  inboxItems?: InboxItem[];
+  onRemoveInboxItem?: (id: string) => void;
   onProviderChange?: (v: string) => void;
   onModelChange?: (v: string) => void;
   onSend?: (opts?: { alternate?: boolean }) => void;
@@ -145,6 +148,8 @@ export function Composer({
   busy = false,
   busyEnterMode = "queue",
   onBusyEnterModeChange,
+  inboxItems = [],
+  onRemoveInboxItem,
   onProviderChange,
   onModelChange,
   onSend,
@@ -158,6 +163,9 @@ export function Composer({
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [listening, setListening] = useState(false);
+  const [compactBar, setCompactBar] = useState(
+    () => (typeof window !== "undefined" ? window.matchMedia("(max-width: 720px)").matches : false),
+  );
   const recognitionRef = useRef<any>(null);
   const voiceBaseRef = useRef("");
   const valueRef = useRef(value);
@@ -358,11 +366,15 @@ export function Composer({
     };
   }, [menuOpen, closeMenu]);
 
-  useEffect(() => {
-    if (busy) closeMenu();
-  }, [busy, closeMenu]);
-
   useEffect(() => () => stopVoice(), [stopVoice]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 720px)");
+    const onChange = () => setCompactBar(mq.matches);
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   function onPrimary(e?: FormEvent) {
     e?.preventDefault();
@@ -473,7 +485,7 @@ export function Composer({
                 className={cn(
                   "rounded px-2 py-0.5 font-medium transition-colors",
                   busyEnterMode === "steer"
-                    ? "bg-violet-500/20 text-violet-200"
+                    ? "bg-violet-500/20 text-violet-700 dark:text-violet-200"
                     : "text-muted-foreground hover:text-foreground",
                 )}
                 title="在下一个模型步骤前注入，打断当前思路"
@@ -486,7 +498,7 @@ export function Composer({
                 className={cn(
                   "rounded px-2 py-0.5 font-medium transition-colors",
                   busyEnterMode === "queue"
-                    ? "bg-sky-500/20 text-sky-200"
+                    ? "bg-sky-500/20 text-sky-700 dark:text-sky-200"
                     : "text-muted-foreground hover:text-foreground",
                 )}
                 title="等本轮结束后作为下一条用户消息发送"
@@ -502,6 +514,41 @@ export function Composer({
             </span>
           </div>
         ) : null}
+
+        {inboxItems.length ? (
+          <ul className="flex max-h-28 flex-col gap-1 overflow-y-auto border-b border-border/60 px-2.5 py-1.5">
+            {inboxItems.map((it) => (
+              <li
+                key={it.id}
+                className="flex items-start gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-[12px]"
+              >
+                <span
+                  className={cn(
+                    "mt-0.5 shrink-0 rounded px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                    it.kind === "steer"
+                      ? "bg-violet-500/15 text-violet-700 dark:text-violet-300"
+                      : "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+                  )}
+                >
+                  {it.kind === "steer" ? "引导" : "排队"}
+                </span>
+                <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-foreground/90">
+                  {it.content}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 shrink-0 px-1.5 text-[11px] text-muted-foreground"
+                  onClick={() => onRemoveInboxItem?.(it.id)}
+                >
+                  撤销
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
         <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-end gap-1.5 px-2 pb-1 pt-1.5">
           <div ref={menuRootRef} className="relative self-end pb-1.5">
             <Button
@@ -513,11 +560,10 @@ export function Composer({
                 "size-[26px] rounded-full text-muted-foreground",
                 menuOpen && "border-foreground/20 bg-muted text-foreground",
               )}
-              disabled={busy}
               title="附件 · 模式 · 模型"
               aria-label="打开附件与模式菜单"
               aria-expanded={menuOpen}
-              onClick={() => !busy && setMenuOpen((v) => !v)}
+              onClick={() => setMenuOpen((v) => !v)}
             >
               <Plus className="size-3.5" />
             </Button>
@@ -576,84 +622,6 @@ export function Composer({
 
                 <div className="my-1 h-px bg-border" />
                 <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  权限
-                </div>
-                {(
-                  [
-                    ["read-only", "只读", "禁写/shell"],
-                    ["workspace-write", "工作区可写", "写需审批"],
-                    ["danger-full-access", "全权限", "不问了"],
-                  ] as const
-                ).map(([id, label, hint]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    role="menuitem"
-                    className={cn(
-                      "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-muted",
-                      permissionPreset === id && "bg-muted",
-                    )}
-                    onClick={() => onPermissionPresetChange?.(id)}
-                  >
-                    <span className="font-medium">{label}</span>
-                    <span className="text-muted-foreground text-[11px]">{hint}</span>
-                  </button>
-                ))}
-
-                <div className="my-1 h-px bg-border" />
-                <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  体验档
-                </div>
-                {(
-                  [
-                    ["fast", "Fast", "仅 Mermaid"],
-                    ["balanced", "Balanced", "默认"],
-                    ["high", "High", "偏 Draw.io"],
-                  ] as const
-                ).map(([id, label, hint]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    role="menuitem"
-                    className={cn(
-                      "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-muted",
-                      experienceTier === id && "bg-muted",
-                    )}
-                    onClick={() => applyExperienceTier(id)}
-                  >
-                    <span className="font-medium">{label}</span>
-                    <span className="text-muted-foreground text-[11px]">{hint}</span>
-                  </button>
-                ))}
-
-                <div className="my-1 h-px bg-border" />
-                <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  推理强度
-                </div>
-                {(
-                  [
-                    ["low", "Low", "简短"],
-                    ["medium", "Medium", "默认"],
-                    ["high", "High", "更深"],
-                  ] as const
-                ).map(([id, label, hint]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    role="menuitem"
-                    className={cn(
-                      "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-muted",
-                      reasoningEffort === id && "bg-muted",
-                    )}
-                    onClick={() => onReasoningEffortChange?.(id)}
-                  >
-                    <span className="font-medium">{label}</span>
-                    <span className="text-muted-foreground text-[11px]">{hint}</span>
-                  </button>
-                ))}
-
-                <div className="my-1 h-px bg-border" />
-                <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
                   工具
                 </div>
                 <MenuToggle
@@ -666,11 +634,18 @@ export function Composer({
                 <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
                   模型
                 </div>
+                {providersDisabled ? (
+                  <p className="px-2 pb-1 text-[11px] leading-relaxed text-amber-200/90">
+                    未检测到可用 Provider。请在 <strong>Settings → Models</strong> 配置
+                    API Key，或检查 <code className="text-[10px]">.env</code>{" "}
+                    中的模型密钥后刷新页面。
+                  </p>
+                ) : null}
                 <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
                   <label className="text-[11px] text-muted-foreground">Provider</label>
                   <Select
                     value={providerId ? providerId : "__empty"}
-                    disabled={providersDisabled || busy}
+                    disabled={providersDisabled}
                     onValueChange={(v) => {
                       const next = v === "__empty" ? "" : v;
                       onProviderIdChange?.(next);
@@ -696,7 +671,7 @@ export function Composer({
                   <label className="text-[11px] text-muted-foreground">Model</label>
                   <Select
                     value={modelName ? modelName : "__empty"}
-                    disabled={modelsDisabled || busy}
+                    disabled={modelsDisabled}
                     onValueChange={(v) => {
                       const next = v === "__empty" ? "" : v;
                       onModelNameChange?.(next);
@@ -752,7 +727,7 @@ export function Composer({
                 {multitask ? (
                   <button
                     type="button"
-                    className="inline-flex size-[22px] items-center justify-center rounded-md border border-violet-400/35 bg-violet-400/12 text-violet-300 transition-colors hover:bg-violet-400/20"
+                    className="inline-flex size-[22px] items-center justify-center rounded-md border border-violet-400/35 bg-violet-400/12 text-violet-700 transition-colors hover:bg-violet-400/20 dark:text-violet-300"
                     title="Multi-Task 子 agent（点击关闭）"
                     aria-label="关闭 Multi-Task"
                     disabled={busy}
@@ -858,6 +833,92 @@ export function Composer({
           </div>
         </div>
 
+        {!compactBar ? (
+          <div className="flex flex-wrap items-start gap-x-4 gap-y-2 border-t border-border/60 px-2.5 py-2">
+            <ComposerSegmentGroup
+              label="权限"
+              hint={
+                permissionPreset === "read-only"
+                  ? "禁写/shell"
+                  : permissionPreset === "danger-full-access"
+                    ? "不问了"
+                    : "写需审批"
+              }
+              options={[
+                { id: "read-only", label: "只读" },
+                { id: "workspace-write", label: "可写" },
+                { id: "danger-full-access", label: "全权限" },
+              ]}
+              value={permissionPreset}
+              onChange={(v) =>
+                onPermissionPresetChange?.(v as "read-only" | "workspace-write" | "danger-full-access")
+              }
+              disabled={busy}
+            />
+            <ComposerSegmentGroup
+              label="体验档"
+              hint={
+                experienceTier === "fast"
+                  ? "仅 Mermaid"
+                  : experienceTier === "high"
+                    ? "偏 Draw.io"
+                    : "默认"
+              }
+              options={[
+                { id: "fast", label: "Fast" },
+                { id: "balanced", label: "Balanced" },
+                { id: "high", label: "High" },
+              ]}
+              value={experienceTier}
+              onChange={(v) => applyExperienceTier(v as ExperienceTierId)}
+              disabled={busy}
+            />
+            <ComposerSegmentGroup
+              label="推理"
+              hint={
+                reasoningEffort === "low"
+                  ? "简短"
+                  : reasoningEffort === "high"
+                    ? "更深"
+                    : "默认"
+              }
+              options={[
+                { id: "low", label: "Low" },
+                { id: "medium", label: "Med" },
+                { id: "high", label: "High" },
+              ]}
+              value={reasoningEffort}
+              onChange={(v) => onReasoningEffortChange?.(v as "low" | "medium" | "high")}
+              disabled={busy}
+            />
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1 border-t border-border/60 px-2 py-1.5">
+            {(
+              [
+                ["read-only", "只读"],
+                ["workspace-write", "可写"],
+                ["danger-full-access", "全开"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={cn(
+                  "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                  permissionPreset === id
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                disabled={busy}
+                onClick={() => onPermissionPresetChange?.(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 border-t border-border px-2 pb-2 pt-1.5">
           {cwd ? (
             <div className="inline-flex max-w-[48%] min-w-0 flex-nowrap items-center gap-2" title={cwd}>
@@ -894,10 +955,9 @@ export function Composer({
 
           <button
             type="button"
-            className="max-w-[160px] truncate rounded-md border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-xs text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground disabled:opacity-50"
-            disabled={busy}
+            className="max-w-[160px] truncate rounded-md border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-xs text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
             title={modelLabel}
-            onClick={() => !busy && setMenuOpen((v) => !v)}
+            onClick={() => setMenuOpen((v) => !v)}
           >
             {modelLabel}
           </button>
@@ -909,10 +969,10 @@ export function Composer({
             <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">
               {tokenStat}
             </span>
-            <span className="shrink-0 whitespace-nowrap font-mono text-xs text-violet-300/90">
+            <span className="shrink-0 whitespace-nowrap font-mono text-xs text-violet-700 dark:text-violet-300/90">
               {sessionCache.text}
             </span>
-            <span className="shrink-0 whitespace-nowrap font-mono text-xs text-emerald-300/90">
+            <span className="shrink-0 whitespace-nowrap font-mono text-xs text-emerald-700 dark:text-emerald-300/90">
               {sessionCost}
             </span>
             <ContextMeter
@@ -928,6 +988,49 @@ export function Composer({
         </div>
       </div>
     </form>
+  );
+}
+
+function ComposerSegmentGroup({
+  label,
+  hint,
+  options,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  label: string;
+  hint: string;
+  options: { id: string; label: string }[];
+  value: string;
+  onChange: (id: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div className="inline-flex rounded-md border border-border/70 p-0.5">
+        {options.map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            disabled={disabled}
+            className={cn(
+              "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
+              value === opt.id
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => onChange(opt.id)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-0.5 text-[10px] text-muted-foreground">{hint}</p>
+    </div>
   );
 }
 

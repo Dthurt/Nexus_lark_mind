@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { ApprovalDecisionBadge } from "@/components/chat/ApprovalDock";
@@ -72,17 +72,20 @@ export function ToolChipShell({
 }: ToolChipShellProps) {
   const pending = status === "running";
   const duration = formatToolDurationMs(durationMs);
+  const userTouchedRef = useRef(false);
   const [open, setOpen] = useState(() =>
     shouldAutoExpandTool({ status, highlighted, forcedOpen: defaultOpen }),
   );
 
   useEffect(() => {
+    if (userTouchedRef.current) return;
     if (shouldAutoExpandTool({ status, highlighted, forcedOpen: defaultOpen })) {
       setOpen(true);
     }
   }, [status, highlighted, defaultOpen]);
 
   const setOpenBoth = (next: boolean) => {
+    userTouchedRef.current = true;
     setOpen(next);
     onOpenChange?.(next);
   };

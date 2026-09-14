@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional, Union
 
 import orjson
@@ -44,6 +45,8 @@ class RedisClient:
             self.settings.redis_url,
             encoding="utf-8",
             decode_responses=False,
+            health_check_interval=30,
+            socket_keepalive=True,
         )
         await self._redis.ping()
         logger.info("Redis connected: %s", self.settings.redis_url)
@@ -157,7 +160,8 @@ class RedisClient:
             orjson.dumps(payload),
             ex=ttl,
         )
-        await self.r.zadd(self.settings.redis_session_prefix + "index", {session_id: asyncio.get_event_loop().time()})
+        # Wall-clock score — comparable across orchestrator + kernel processes.
+        await self.r.zadd(self.settings.redis_session_prefix + "index", {session_id: time.time()})
 
     async def get_session(self, session_id: str) -> Optional[dict]:
         raw = await self.r.get(self._session_key(session_id))
@@ -203,13 +207,32 @@ class RedisClient:
         return out
 
     async def append_session_message(self, session_id: str, message: dict, ttl: int = 86400) -> dict:
-        session = await self.get_session(session_id) or {
-            "session_id": session_id,
-            "messages": [],
-        }
-        session.setdefault("messages", []).append(message)
-        await self.set_session(session_id, session, ttl=ttl)
-        return session
+        """Append a message with optimistic locking. Never invents an empty session."""
+        key = self._session_key(session_id)
+        index = self.settings.redis_session_prefix + "index"
+        last_err: Optional[Exception] = None
+        for _ in range(8):
+            try:
+                async with self.r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(key)
+                    raw = await self.r.get(key)
+                    if not raw:
+                        await pipe.unwatch()
+                        raise QueueError(f"session missing for append: {session_id}")
+                    session = orjson.loads(raw)
+                    if not isinstance(session, dict):
+                        await pipe.unwatch()
+                        raise QueueError(f"session corrupt for append: {session_id}")
+                    session.setdefault("messages", []).append(message)
+                    pipe.multi()
+                    pipe.set(key, orjson.dumps(session), ex=ttl)
+                    pipe.zadd(index, {session_id: time.time()})
+                    await pipe.execute()
+                    return session
+            except redis.WatchError as exc:
+                last_err = exc
+                continue
+        raise QueueError(f"append_session_message conflict: {session_id}") from last_err
 
     # ----- Generic KV + SSE event ring (Wave C) -----
 

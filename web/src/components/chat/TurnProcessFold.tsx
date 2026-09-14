@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { ThinkingFold } from "@/components/chat/ThinkingFold";
@@ -34,15 +34,21 @@ export function TurnProcessFold({
   onStopTool,
   className,
 }: TurnProcessFoldProps) {
+  const userTouchedRef = useRef(false);
   const [open, setOpen] = useState(false);
   const hasBody = !!(reasoning || "").trim() || tools.length > 0 || subagents.length > 0;
+
+  const handleOpenChange = (next: boolean) => {
+    userTouchedRef.current = true;
+    setOpen(next);
+  };
 
   const label = useMemo(() => summary || "本回合过程", [summary]);
 
   if (!hasBody) return null;
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className={cn("w-full", className)}>
+    <Collapsible open={open} onOpenChange={handleOpenChange} className={cn("w-full", className)}>
       <CollapsibleTrigger asChild>
         <button
           type="button"

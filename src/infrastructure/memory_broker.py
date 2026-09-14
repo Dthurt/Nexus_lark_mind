@@ -137,10 +137,9 @@ class MemoryBroker:
         return out
 
     async def append_session_message(self, session_id: str, message: dict, ttl: int = 86400) -> dict:
-        session = await self.get_session(session_id) or {
-            "session_id": session_id,
-            "messages": [],
-        }
+        session = await self.get_session(session_id)
+        if session is None:
+            raise KeyError(f"session missing for append: {session_id}")
         session.setdefault("messages", []).append(message)
         await self.set_session(session_id, session, ttl=ttl)
         return session

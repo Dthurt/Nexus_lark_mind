@@ -7,6 +7,11 @@ import { MarkdownBody } from "@/components/chat/MarkdownBody";
 import { ThinkingFold } from "@/components/chat/ThinkingFold";
 import { Button } from "@/components/ui/button";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   cacheHitRate,
   estimateCostCny,
   formatCacheHit,
@@ -66,6 +71,8 @@ export const MessageBubble = memo(function MessageBubble({
 
   const resolvedModel = item.modelName || modelName || "";
   const resolvedProvider = item.modelProvider || modelProvider || "";
+  const footerModel = item.modelName || "";
+  const footerProvider = item.modelProvider || modelProvider || "";
 
   const showCaret = useMemo(() => {
     if (!item.streaming) return false;
@@ -77,19 +84,22 @@ export const MessageBubble = memo(function MessageBubble({
   const usageSummary = useMemo(() => {
     if (!item.usage) return "";
     return formatUsageLine(item.usage, {
-      modelName: resolvedModel,
-      providerId: resolvedProvider,
+      modelName: footerModel || resolvedModel,
+      providerId: footerProvider,
     });
-  }, [item.usage, resolvedModel, resolvedProvider]);
+  }, [item.usage, footerModel, footerProvider, resolvedModel]);
 
   const usageDetail = useMemo(() => {
     const u = item.usage;
     if (!u) return null;
-    const cost = estimateCostCny(u, { modelName: resolvedModel, providerId: resolvedProvider });
+    const cost = estimateCostCny(u, {
+      modelName: footerModel || resolvedModel,
+      providerId: footerProvider,
+    });
     const cache = formatCacheHit(u);
-    const rate = resolveModelRate(resolvedModel, resolvedProvider);
+    const rate = resolveModelRate(footerModel || resolvedModel, footerProvider);
     return {
-      model: resolvedModel || "—",
+      model: footerModel || "—",
       prompt: formatTokenCount(Number(u.prompt_tokens || 0)),
       completion: formatTokenCount(Number(u.completion_tokens || 0)),
       total: formatTokenCount(
@@ -104,7 +114,7 @@ export const MessageBubble = memo(function MessageBubble({
       rateText: `输入 ¥${rate.input}/M · 输出 ¥${rate.output}/M · 缓存 ¥${rate.cache}/M`,
       estimated: !!u.estimated,
     };
-  }, [item.usage, resolvedModel, resolvedProvider]);
+  }, [item.usage, footerModel, footerProvider, resolvedModel]);
 
   function onMermaidFixed({ from, to }: { from: string; to: string }) {
     if (!from || !to || from === to) return;
@@ -131,7 +141,9 @@ export const MessageBubble = memo(function MessageBubble({
   }
 
   const isUser = item.role === "user";
-  const showFooter =
+  const showUsageFooter =
+    !isUser && !item.streaming && !item.live && !!item.usage;
+  const showCopyAction =
     !isUser && !item.streaming && !item.live && !!(content || "").trim();
 
   return (
@@ -206,73 +218,81 @@ export const MessageBubble = memo(function MessageBubble({
         </Button>
       ) : null}
 
-      {showFooter ? (
+      {showUsageFooter || showCopyAction ? (
         <div className="mt-1.5 flex items-end gap-2">
-          <div className="min-w-0 flex-1">
-            {item.usage ? (
-              <button
-                type="button"
-                className="token-badge max-w-full cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-[11px] leading-snug text-muted-foreground hover:text-foreground"
-                title="点击查看明细"
-                onClick={() => setOpenUsage((v) => !v)}
-              >
-                {usageSummary}
-              </button>
-            ) : resolvedModel ? (
-              <span className="font-mono text-[11px] text-muted-foreground">{resolvedModel}</span>
-            ) : null}
-
-            {openUsage && usageDetail ? (
-              <div className="mt-1.5 max-w-[300px] rounded-md border border-border bg-background/50 px-2 py-1.5">
-                {(
-                  [
-                    ["模型", usageDetail.model],
-                    ["输入", usageDetail.prompt],
-                    ["输出", usageDetail.completion],
-                    ["合计", usageDetail.total],
-                    ["耗时", usageDetail.duration],
-                    ["缓存命中", usageDetail.cacheText],
-                    ["估算费用", usageDetail.costText],
-                  ] as const
-                ).map(([label, val]) => (
-                  <div key={label} className="flex justify-between gap-3 py-0.5 text-[11px]">
-                    <span className="text-muted-foreground">{label}</span>
-                    <strong className="max-w-[180px] truncate font-mono font-medium" title={String(val)}>
-                      {val}
-                    </strong>
-                  </div>
-                ))}
-                <p className="mt-1 text-[10px] leading-snug text-muted-foreground">{usageDetail.rateText}</p>
-                {usageDetail.estimated ? (
-                  <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-                    含估算 token（接口未返回 usage）
+          {showUsageFooter && usageDetail ? (
+            <div className="min-w-0 flex-1">
+              <Popover open={openUsage} onOpenChange={setOpenUsage}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="token-badge max-w-full cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-[11px] leading-snug text-muted-foreground hover:text-foreground"
+                    title="点击查看明细"
+                  >
+                    {usageSummary}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  side="top"
+                  className="w-[300px] p-2.5 text-xs"
+                  role="dialog"
+                  aria-label="用量明细"
+                >
+                  {(
+                    [
+                      ["模型", usageDetail.model],
+                      ["输入", usageDetail.prompt],
+                      ["输出", usageDetail.completion],
+                      ["合计", usageDetail.total],
+                      ["耗时", usageDetail.duration],
+                      ["缓存命中", usageDetail.cacheText],
+                      ["估算费用", usageDetail.costText],
+                    ] as const
+                  ).map(([label, val]) => (
+                    <div key={label} className="flex justify-between gap-3 py-0.5 text-[11px]">
+                      <span className="text-muted-foreground">{label}</span>
+                      <strong
+                        className="max-w-[180px] truncate font-mono font-medium"
+                        title={String(val)}
+                      >
+                        {val}
+                      </strong>
+                    </div>
+                  ))}
+                  <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+                    {usageDetail.rateText}
                   </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
+                  {usageDetail.estimated ? (
+                    <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                      含估算 token（接口未返回 usage）
+                    </p>
+                  ) : null}
+                </PopoverContent>
+              </Popover>
+            </div>
+          ) : (
+            <div className="min-w-0 flex-1" />
+          )}
 
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
-            title="复制全文"
-            aria-label="复制全文"
-            onClick={() => void copyFullText()}
-          >
-            {copied ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />}
-          </Button>
+          {showCopyAction ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+              title="复制全文"
+              aria-label="复制全文"
+              onClick={() => void copyFullText()}
+            >
+              {copied ? (
+                <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+              ) : (
+                <Copy className="size-3.5" />
+              )}
+            </Button>
+          ) : null}
         </div>
-      ) : item.usage ? (
-        <button
-          type="button"
-          className="token-badge mt-1 max-w-full cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-[11px] leading-snug text-muted-foreground hover:text-foreground"
-          title="点击查看明细"
-          onClick={() => setOpenUsage((v) => !v)}
-        >
-          {usageSummary}
-        </button>
       ) : null}
     </div>
   );

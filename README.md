@@ -1,18 +1,60 @@
-# Nexus-Lark-Mind
+<div align="center">
+
+<img src="docs/assets/nlm-logo.svg" width="140" alt="Nexus Lark Mind" />
+
+# Nexus Lark Mind
+
+**A personal, loosely coupled, layered AI agent orchestration platform.**
 
 **English** | [简体中文](README.zh-CN.md)
-
-A personal, loosely coupled, layered AI agent orchestration platform.
 
 [![GitHub](https://img.shields.io/badge/GitHub-Dthurt%2FNexus__lark__mind-181717?logo=github)](https://github.com/Dthurt/Nexus_lark_mind)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Dthurt/Nexus_lark_mind?style=social)](https://github.com/Dthurt/Nexus_lark_mind/stargazers)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io/)
+
+</div>
+
+## Features
+
+- ✅ Multi-channel adapters — Feishu / DingTalk / WeCom / Web SSE chat UI
+- ✅ Layered architecture — Adapters → Orchestrator → Core Kernel (SQLite only in kernel)
+- ✅ Plugin runtime — CLI scripts, MCP configs, RPC load/unload/invoke
+- ✅ React workbench — themes, Canvas pane, tool views, workspace binding (local + SSH)
+- ✅ Docker or local dev — memory broker for quick iteration without Redis
+
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Which start method to use](#which-start-method-to-use)
+- [Docker deploy](#docker-deploy-production--windows-docker-desktop)
+- [Mount a host project folder](#mount-a-host-project-folder-so-the-agent-can-readwrite-code)
+- [Configuration](#configuration)
+- [Plugins](#plugins)
+- [Local development](#local-development-no-docker)
+- [Frontend (React)](#frontend-react)
+- [Tests](#tests)
+- [Layout](#layout)
+- [License](#license)
+
+---
 
 ## Architecture
 
-```
-Adapters (Feishu/DingTalk/WeCom/Web)  →  Orchestrator (queue/session/events)  →  Core Kernel (models/plugins/SQLite)
-         ↑________________ Redis Event Bus ________________↑
+```mermaid
+graph LR
+  A["Adapters<br/>Feishu · DingTalk · WeCom · Web"]
+  O["Orchestrator<br/>queue · session · events"]
+  K["Core Kernel<br/>models · plugins · SQLite"]
+  R[(Redis<br/>Event Bus)]
+
+  A -->|HTTP| O
+  O -->|RPC| K
+  O -.->|Event Bus| R
+  K -.-> R
 ```
 
 | Process | Port | Role |
@@ -22,8 +64,10 @@ Adapters (Feishu/DingTalk/WeCom/Web)  →  Orchestrator (queue/session/events)  
 | `core-kernel` | 8001 | Model gateway, plugin runtime, **only** SQLite reader/writer |
 | `redis` | 6379 | Task queue + global event bus |
 
-Dependency direction is one-way: Adapters → Orchestrator → Kernel → Infrastructure.  
-**Only Core Kernel may read/write SQLite**; other services talk over HTTP RPC.
+Dependency direction is one-way: Adapters → Orchestrator → Kernel → Infrastructure.
+
+> [!NOTE]
+> **Only Core Kernel may read/write SQLite**; other services talk over HTTP RPC.
 
 ---
 
@@ -64,7 +108,8 @@ New-Item -ItemType Directory -Force data, logs, plugins_volume, workspaces | Out
 | `docker-compose.dev.yml` | Dev overlay: bind-mount `./src` for faster iteration |
 | `docker-compose.crawl.yml` | Overlay to switch to the crawl image |
 
-**Default container count: 4** (`nlm-redis` / `nlm-core-kernel` / `nlm-orchestrator` / `nlm-adapters`).  
+**Default container count: 4** (`nlm-redis` / `nlm-core-kernel` / `nlm-orchestrator` / `nlm-adapters`).
+
 With the crawl overlay you still have 4 services; only the image grows.
 
 ### 3. Start
@@ -82,11 +127,12 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 After start:
 
-- Web: http://localhost:8000  
-- Kernel: http://localhost:8001/health  
-- Orchestrator: http://localhost:8002/health  
+- Web: http://localhost:8000
+- Kernel: http://localhost:8001/health
+- Orchestrator: http://localhost:8002/health
 
-Without model keys the stack runs in **demo mode** (echo replies) so compose still boots cleanly.
+> [!TIP]
+> Without model keys the stack runs in **demo mode** (echo replies) so compose still boots cleanly.
 
 Ops cheatsheet:
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { ToolCard } from "@/components/chat/ToolCard";
@@ -36,9 +36,17 @@ export function ToolCallGroup({
     !!highlightCallId &&
     tools.some((t) => t.callId === highlightCallId || (t as any).id === highlightCallId);
 
+  const userTouchedRef = useRef(false);
   // Live stream: open when running or highlighted; otherwise collapsed summary.
   const [open, setOpen] = useState(pending || hasHighlight || tools.length <= 2);
+
+  const handleOpenChange = (next: boolean) => {
+    userTouchedRef.current = true;
+    setOpen(next);
+  };
+
   useEffect(() => {
+    if (userTouchedRef.current) return;
     if (hasHighlight || pending) setOpen(true);
   }, [hasHighlight, highlightCallId, pending]);
 
@@ -99,7 +107,7 @@ export function ToolCallGroup({
   return (
     <Collapsible
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={handleOpenChange}
       className={cn("tool-group w-full max-w-full self-stretch", className)}
     >
       <div className="flex items-center gap-0.5">
@@ -118,7 +126,7 @@ export function ToolCallGroup({
             <span className="min-w-0 truncate font-mono text-[12px] text-foreground/85">
               {pending ? (
                 <>
-                  <span className="text-sky-300/90">调用中</span>
+                  <span className="text-sky-700 dark:text-sky-300/90">调用中</span>
                   <span className="text-muted-foreground"> · </span>
                   {activeTool}
                 </>

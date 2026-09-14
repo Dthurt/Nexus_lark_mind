@@ -160,7 +160,7 @@ export function ApprovalDock({ items, onResolve, onActiveCallIdChange, className
             type="button"
             variant="outline"
             size="sm"
-            className="h-7 border-emerald-500/50 px-2.5 text-xs text-emerald-400 hover:bg-emerald-500/10"
+            className="h-7 border-emerald-500/50 px-2.5 text-xs text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
             onClick={() => act("allow")}
           >
             仅允许这次
@@ -215,9 +215,9 @@ export function ApprovalDecisionBadge({
     <span
       className={cn(
         "inline-flex h-5 shrink-0 items-center rounded border px-1.5 font-mono text-[10px] font-medium tracking-wide",
-        key === "allowed" && "border-emerald-500/35 bg-emerald-500/10 text-emerald-300/90",
-        key === "allow_session" && "border-sky-500/35 bg-sky-500/10 text-sky-300/90",
-        key === "denied" && "border-rose-500/35 bg-rose-500/10 text-rose-300/90",
+        key === "allowed" && "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300/90",
+        key === "allow_session" && "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300/90",
+        key === "denied" && "border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300/90",
         !DECISION_LABEL[key] && "border-border bg-muted/40 text-muted-foreground",
         className,
       )}

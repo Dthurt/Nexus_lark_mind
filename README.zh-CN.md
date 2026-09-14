@@ -1,18 +1,60 @@
-# Nexus-Lark-Mind
+<div align="center">
+
+<img src="docs/assets/nlm-logo.svg" width="140" alt="Nexus Lark Mind" />
+
+# Nexus Lark Mind
+
+**个人自用、高解耦、分层清晰的现代化 AI Agent 编排平台。**
 
 [English](README.md) | **简体中文**
-
-个人自用、高解耦、分层清晰的现代化 AI Agent 编排平台。
 
 [![GitHub](https://img.shields.io/badge/GitHub-Dthurt%2FNexus__lark__mind-181717?logo=github)](https://github.com/Dthurt/Nexus_lark_mind)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Dthurt/Nexus_lark_mind?style=social)](https://github.com/Dthurt/Nexus_lark_mind/stargazers)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io/)
+
+</div>
+
+## 特性
+
+- ✅ 多渠道适配 — 飞书 / 钉钉 / 企业微信 / Web SSE 对话页
+- ✅ 分层架构 — Adapters → Orchestrator → Core Kernel（仅 Kernel 读写 SQLite）
+- ✅ 插件运行时 — CLI 脚本、MCP 配置、RPC 加载/卸载/调用
+- ✅ React 工作台 — 主题、Canvas 侧栏、工具视图、工作区绑定（本机 + SSH）
+- ✅ Docker 或本地开发 — memory broker 快速迭代，无需 Redis
+
+## 目录
+
+- [架构一览](#架构一览)
+- [两种启动方式怎么选](#两种启动方式怎么选)
+- [Docker 部署](#docker-部署推荐生产--windows-docker-desktop)
+- [挂载本地代码目录](#挂载本地代码目录agent-才能读写你的项目)
+- [配置](#配置)
+- [插件](#插件)
+- [本地开发](#本地开发不经-docker)
+- [前端（React）](#前端react)
+- [测试](#测试)
+- [目录结构](#目录)
+- [开源许可](#开源许可)
+
+---
 
 ## 架构一览
 
-```
-Adapters (飞书/钉钉/企业微信/Web)  →  Orchestrator (队列/会话/事件)  →  Core Kernel (模型网关/插件/SQLite)
-         ↑________________ Redis Event Bus ________________↑
+```mermaid
+graph LR
+  A["Adapters<br/>飞书 · 钉钉 · 企业微信 · Web"]
+  O["Orchestrator<br/>队列 · 会话 · 事件"]
+  K["Core Kernel<br/>模型网关 · 插件 · SQLite"]
+  R[(Redis<br/>事件总线)]
+
+  A -->|HTTP| O
+  O -->|RPC| K
+  O -.->|Event Bus| R
+  K -.-> R
 ```
 
 | 进程 | 端口 | 职责 |
@@ -22,8 +64,10 @@ Adapters (飞书/钉钉/企业微信/Web)  →  Orchestrator (队列/会话/事�
 | `core-kernel` | 8001 | 模型网关、插件运行时、**唯一** SQLite 读写 |
 | `redis` | 6379 | 任务队列 + 全局事件总线 |
 
-依赖单向：Adapters → Orchestrator → Kernel → Infrastructure。  
-**只有 Core Kernel 可以读写 SQLite**；其他服务一律经 HTTP RPC。
+依赖单向：Adapters → Orchestrator → Kernel → Infrastructure。
+
+> [!NOTE]
+> **只有 Core Kernel 可以读写 SQLite**；其他服务一律经 HTTP RPC。
 
 ---
 
@@ -64,7 +108,8 @@ New-Item -ItemType Directory -Force data, logs, plugins_volume, workspaces | Out
 | `docker-compose.dev.yml` | 开发叠加：挂载 `./src` 便于改代码 |
 | `docker-compose.crawl.yml` | 叠加切换 crawl 镜像 |
 
-**容器总量（默认）：4 个**（`nlm-redis` / `nlm-core-kernel` / `nlm-orchestrator` / `nlm-adapters`）。  
+**容器总量（默认）：4 个**（`nlm-redis` / `nlm-core-kernel` / `nlm-orchestrator` / `nlm-adapters`）。
+
 启用 crawl 叠加后仍是 4 个服务，只是 kernel/adapters 使用更大镜像。
 
 ### 3. 启动
@@ -82,11 +127,12 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 启动后：
 
-- Web：http://localhost:8000  
-- Kernel：http://localhost:8001/health  
-- Orchestrator：http://localhost:8002/health  
+- Web：http://localhost:8000
+- Kernel：http://localhost:8001/health
+- Orchestrator：http://localhost:8002/health
 
-未配置模型密钥时进入 **demo mode**（回声回复），保证 compose 可直接跑通。
+> [!TIP]
+> 未配置模型密钥时进入 **demo mode**（回声回复），保证 compose 可直接跑通。
 
 常用运维：
 

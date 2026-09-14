@@ -421,12 +421,17 @@ class TaskDispatcher:
             return
 
         session_usage = await self.sessions.add_usage(task.session_id, usage or {})
+        model_meta = {
+            "usage": usage or {},
+            "model_name": (task.model_name or "").strip(),
+            "model_provider": (task.model_provider or "").strip(),
+        }
         await self.sessions.append(
             task.session_id,
             ChatMessage(
                 role=ChatRole.ASSISTANT,
                 content=collected,
-                metadata={"usage": usage or {}},
+                metadata=model_meta,
             ),
         )
         await self._publish(
@@ -436,6 +441,8 @@ class TaskDispatcher:
                 "content": collected,
                 "usage": usage or {},
                 "session_usage": session_usage,
+                "model_name": model_meta["model_name"],
+                "model_provider": model_meta["model_provider"],
             },
         )
         await self._drain_queue_followup(task)

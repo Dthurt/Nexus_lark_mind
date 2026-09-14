@@ -57,13 +57,13 @@ export function statusShellClass(status: ToolRunStatus) {
 export function statusChipClass(status: ToolRunStatus) {
   switch (status) {
     case "running":
-      return "border-sky-500/25 bg-sky-500/10 text-sky-300/90";
+      return "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300/90";
     case "done":
-      return "border-emerald-600/25 bg-emerald-600/10 text-emerald-300/85";
+      return "border-emerald-600/25 bg-emerald-600/10 text-emerald-700 dark:text-emerald-300/85";
     case "failed":
-      return "border-rose-500/25 bg-rose-500/10 text-rose-300/90";
+      return "border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300/90";
     case "stopped":
-      return "border-amber-600/25 bg-amber-600/10 text-amber-200/85";
+      return "border-amber-600/25 bg-amber-600/10 text-amber-800 dark:text-amber-200/85";
     default:
       return "border-border bg-muted/40 text-muted-foreground";
   }
