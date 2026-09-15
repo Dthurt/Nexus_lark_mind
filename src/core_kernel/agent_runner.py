@@ -476,15 +476,16 @@ async def _run_agent_stream_inner(
                         workspace_meta["_session_broker"] = broker
                 session = await broker.get_session(sid)
                 if session:
-                    claimed = claim_kind(session, "steer")
+                    holder: dict = {"claimed": []}
+
+                    def mutate(sess: dict) -> None:
+                        holder["claimed"] = claim_kind(sess, "steer")
+
+                    # Only mutate inbox — never rewrite messages (orchestrator
+                    # appends tool/assistant rows concurrently on Redis).
+                    await broker.update_session(sid, mutate, preserve_messages=True)
+                    claimed = holder["claimed"]
                     if claimed:
-                        # Only patch inbox — never rewrite messages (orchestrator
-                        # appends tool/assistant rows concurrently on Redis).
-                        await broker.patch_session(
-                            sid,
-                            {"inbox": session.get("inbox") or []},
-                            preserve_messages=True,
-                        )
                         for item in claimed:
                             text = str(item.get("content") or "").strip()
                             if not text:

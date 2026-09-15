@@ -249,6 +249,29 @@ class RedisClient:
         ``messages`` array from a stale snapshot — callers that only need to
         update inbox / metadata must not clobber concurrent appends.
         """
+
+        def mutator(session: dict) -> None:
+            for k, v in (patch or {}).items():
+                if preserve_messages and k == "messages":
+                    continue
+                session[k] = v
+
+        return await self.update_session(
+            session_id,
+            mutator,
+            ttl=ttl,
+            preserve_messages=preserve_messages,
+        )
+
+    async def update_session(
+        self,
+        session_id: str,
+        mutator,
+        *,
+        ttl: int = 86400,
+        preserve_messages: bool = True,
+    ) -> dict:
+        """Load → mutate → write with WATCH; re-runs ``mutator`` on conflict."""
         key = self._session_key(session_id)
         index = self.settings.redis_session_prefix + "index"
         last_err: Optional[Exception] = None
@@ -259,15 +282,15 @@ class RedisClient:
                     raw = await self.r.get(key)
                     if not raw:
                         await pipe.unwatch()
-                        raise QueueError(f"session missing for patch: {session_id}")
+                        raise QueueError(f"session missing for update: {session_id}")
                     session = orjson.loads(raw)
                     if not isinstance(session, dict):
                         await pipe.unwatch()
-                        raise QueueError(f"session corrupt for patch: {session_id}")
-                    for k, v in (patch or {}).items():
-                        if preserve_messages and k == "messages":
-                            continue
-                        session[k] = v
+                        raise QueueError(f"session corrupt for update: {session_id}")
+                    prior_messages = session.get("messages")
+                    mutator(session)
+                    if preserve_messages:
+                        session["messages"] = prior_messages
                     pipe.multi()
                     pipe.set(key, orjson.dumps(session), ex=ttl)
                     pipe.zadd(index, {session_id: time.time()})
@@ -276,7 +299,7 @@ class RedisClient:
             except WatchError as exc:
                 last_err = exc
                 continue
-        raise QueueError(f"patch_session conflict: {session_id}") from last_err
+        raise QueueError(f"update_session conflict: {session_id}") from last_err
 
     # ----- Generic KV + SSE event ring (Wave C) -----
 

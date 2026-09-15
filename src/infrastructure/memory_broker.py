@@ -152,13 +152,34 @@ class MemoryBroker:
         ttl: int = 86400,
         preserve_messages: bool = True,
     ) -> dict:
+        def mutator(session: dict) -> None:
+            for k, v in (patch or {}).items():
+                if preserve_messages and k == "messages":
+                    continue
+                session[k] = v
+
+        return await self.update_session(
+            session_id,
+            mutator,
+            ttl=ttl,
+            preserve_messages=preserve_messages,
+        )
+
+    async def update_session(
+        self,
+        session_id: str,
+        mutator,
+        *,
+        ttl: int = 86400,
+        preserve_messages: bool = True,
+    ) -> dict:
         session = await self.get_session(session_id)
         if session is None:
-            raise KeyError(f"session missing for patch: {session_id}")
-        for k, v in (patch or {}).items():
-            if preserve_messages and k == "messages":
-                continue
-            session[k] = v
+            raise KeyError(f"session missing for update: {session_id}")
+        prior_messages = list(session.get("messages") or [])
+        mutator(session)
+        if preserve_messages:
+            session["messages"] = prior_messages
         await self.set_session(session_id, session, ttl=ttl)
         return session
 

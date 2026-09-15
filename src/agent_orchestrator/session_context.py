@@ -59,7 +59,15 @@ class SessionContext:
                 changed = True
             if changed:
                 existing["updated_at"] = datetime.now(timezone.utc).isoformat()
-                await self.redis.set_session(session_id, existing)
+                patch = {
+                    "cwd": existing["cwd"],
+                    "workspace_id": existing.get("workspace_id") or "",
+                    "workspace_title": existing.get("workspace_title") or "",
+                    "workspace_kind": existing.get("workspace_kind") or "local",
+                    "ssh_host_id": existing.get("ssh_host_id") or "",
+                    "updated_at": existing["updated_at"],
+                }
+                return await self.redis.patch_session(session_id, patch, preserve_messages=True)
             return existing
         now = datetime.now(timezone.utc).isoformat()
         payload = {
@@ -105,47 +113,66 @@ class SessionContext:
         content: str,
         source: str = "user",
     ) -> Dict[str, Any]:
-        session = await self.redis.get_session(session_id)
-        if not session:
-            raise KeyError(session_id)
         item = new_inbox_item(kind=kind, content=content, source=source)  # type: ignore[arg-type]
-        push_inbox(session, item)
-        await self.redis.set_session(session_id, session)
-        return item
+        holder: Dict[str, Any] = {"item": item}
+
+        def mutate(session: Dict[str, Any]) -> None:
+            push_inbox(session, holder["item"])
+            session["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        await self.redis.update_session(session_id, mutate, preserve_messages=True)
+        return holder["item"]
 
     async def remove_inbox_item(self, session_id: str, item_id: str) -> Optional[Dict[str, Any]]:
-        session = await self.redis.get_session(session_id)
-        if not session:
-            raise KeyError(session_id)
-        removed = remove_inbox(session, item_id)
-        await self.redis.set_session(session_id, session)
-        return removed
+        holder: Dict[str, Any] = {"removed": None}
+
+        def mutate(session: Dict[str, Any]) -> None:
+            holder["removed"] = remove_inbox(session, item_id)
+            session["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        await self.redis.update_session(session_id, mutate, preserve_messages=True)
+        return holder["removed"]
 
     async def clear_inbox_items(self, session_id: str) -> List[Dict[str, Any]]:
-        session = await self.redis.get_session(session_id)
-        if not session:
+        holder: Dict[str, Any] = {"prev": []}
+
+        def mutate(session: Dict[str, Any]) -> None:
+            holder["prev"] = clear_inbox(session)
+            session["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        try:
+            await self.redis.update_session(session_id, mutate, preserve_messages=True)
+        except Exception:
             return []
-        prev = clear_inbox(session)
-        await self.redis.set_session(session_id, session)
-        return prev
+        return holder["prev"]
 
     async def claim_steers(self, session_id: str) -> List[Dict[str, Any]]:
-        session = await self.redis.get_session(session_id)
-        if not session:
+        holder: Dict[str, Any] = {"claimed": []}
+
+        def mutate(session: Dict[str, Any]) -> None:
+            holder["claimed"] = claim_kind(session, "steer")
+            if holder["claimed"]:
+                session["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        try:
+            await self.redis.update_session(session_id, mutate, preserve_messages=True)
+        except Exception:
             return []
-        claimed = claim_kind(session, "steer")
-        if claimed:
-            await self.redis.set_session(session_id, session)
-        return claimed
+        return holder["claimed"]
 
     async def claim_next_queued(self, session_id: str) -> Optional[Dict[str, Any]]:
-        session = await self.redis.get_session(session_id)
-        if not session:
+        holder: Dict[str, Any] = {"claimed": None}
+
+        def mutate(session: Dict[str, Any]) -> None:
+            holder["claimed"] = claim_next_queue(session)
+            if holder["claimed"]:
+                session["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        try:
+            await self.redis.update_session(session_id, mutate, preserve_messages=True)
+        except Exception:
             return None
-        claimed = claim_next_queue(session)
-        if claimed:
-            await self.redis.set_session(session_id, session)
-        return claimed
+        return holder["claimed"]
 
     async def bind_workspace(
         self,
@@ -172,8 +199,15 @@ class SessionContext:
         session["workspace_kind"] = (workspace_kind or "local").strip()
         session["ssh_host_id"] = (ssh_host_id or "").strip()
         session["updated_at"] = datetime.now(timezone.utc).isoformat()
-        await self.redis.set_session(session_id, session)
-        return session
+        patch = {
+            "cwd": session["cwd"],
+            "workspace_id": session["workspace_id"],
+            "workspace_title": session["workspace_title"],
+            "workspace_kind": session["workspace_kind"],
+            "ssh_host_id": session["ssh_host_id"],
+            "updated_at": session["updated_at"],
+        }
+        return await self.redis.patch_session(session_id, patch, preserve_messages=True)
 
     async def set_interaction(
         self,
@@ -204,102 +238,120 @@ class SessionContext:
         session = await self.redis.get_session(session_id)
         if not session:
             raise KeyError(session_id)
+        # Apply mutations on a working copy, then patch fields without touching messages.
+        working = dict(session)
         if permission_preset is not None:
             fields = apply_preset_to_session_fields(permission_preset)
-            session.update(fields)
-            # Preset owns auto_accept unless caller also passes auto_accept below.
+            working.update(fields)
         if agent_mode is not None:
             mode = str(agent_mode).strip().lower()
             if mode not in ("agent", "plan"):
                 raise ValueError("agent_mode must be 'agent' or 'plan'")
-            session["agent_mode"] = mode
+            working["agent_mode"] = mode
             if mode == "plan":
-                session["plan_status"] = plan_status or "drafting"
-            elif plan_status is None and session.get("plan_status") == "drafting":
-                session["plan_status"] = "idle"
+                working["plan_status"] = plan_status or "drafting"
+            elif plan_status is None and working.get("plan_status") == "drafting":
+                working["plan_status"] = "idle"
         if auto_accept is not None:
-            # read-only forbids accept; danger forces accept
-            preset = normalize_preset(session.get("permission_preset"))
+            preset = normalize_preset(working.get("permission_preset"))
             if preset == "read-only":
-                session["auto_accept"] = False
+                working["auto_accept"] = False
             elif preset == "danger-full-access":
-                session["auto_accept"] = True
+                working["auto_accept"] = True
             else:
-                session["auto_accept"] = bool(auto_accept)
+                working["auto_accept"] = bool(auto_accept)
         if plan_status is not None:
             status = str(plan_status).strip().lower()
             if status not in ("idle", "drafting", "accepted"):
                 raise ValueError("plan_status must be idle|drafting|accepted")
-            session["plan_status"] = status
+            working["plan_status"] = status
         if plan_enforcement is not None:
-            session["plan_enforcement"] = normalize_plan_enforcement(plan_enforcement)
+            working["plan_enforcement"] = normalize_plan_enforcement(plan_enforcement)
         if experience_tier is not None:
-            session["experience_tier"] = normalize_experience_tier(experience_tier)
+            working["experience_tier"] = normalize_experience_tier(experience_tier)
         if reasoning_effort is not None:
-            session["reasoning_effort"] = normalize_reasoning_effort(reasoning_effort)
+            working["reasoning_effort"] = normalize_reasoning_effort(reasoning_effort)
         if model_provider is not None:
-            session["model_provider"] = str(model_provider).strip()
+            working["model_provider"] = str(model_provider).strip()
         if model_name is not None:
-            session["model_name"] = str(model_name).strip()
+            working["model_name"] = str(model_name).strip()
         if clear_pending_user_text:
-            session["pending_user_text"] = ""
+            working["pending_user_text"] = ""
         elif pending_user_text is not None:
-            session["pending_user_text"] = str(pending_user_text)
-        # Ensure defaults exist on older sessions
-        if not session.get("permission_preset"):
-            session["permission_preset"] = normalize_preset(None)
-        if not session.get("plan_enforcement"):
-            session["plan_enforcement"] = normalize_plan_enforcement(None)
-        if not session.get("experience_tier"):
-            session["experience_tier"] = normalize_experience_tier(None)
-        if not session.get("reasoning_effort"):
-            session["reasoning_effort"] = normalize_reasoning_effort(None)
-        if "model_provider" not in session:
-            session["model_provider"] = ""
-        if "model_name" not in session:
-            session["model_name"] = ""
-        session["updated_at"] = datetime.now(timezone.utc).isoformat()
-        await self.redis.set_session(session_id, session)
-        return session
+            working["pending_user_text"] = str(pending_user_text)
+        if not working.get("permission_preset"):
+            working["permission_preset"] = normalize_preset(None)
+        if not working.get("plan_enforcement"):
+            working["plan_enforcement"] = normalize_plan_enforcement(None)
+        if not working.get("experience_tier"):
+            working["experience_tier"] = normalize_experience_tier(None)
+        if not working.get("reasoning_effort"):
+            working["reasoning_effort"] = normalize_reasoning_effort(None)
+        if "model_provider" not in working:
+            working["model_provider"] = ""
+        if "model_name" not in working:
+            working["model_name"] = ""
+        working["updated_at"] = datetime.now(timezone.utc).isoformat()
+        keys = (
+            "agent_mode",
+            "auto_accept",
+            "plan_status",
+            "permission_preset",
+            "plan_enforcement",
+            "experience_tier",
+            "reasoning_effort",
+            "model_provider",
+            "model_name",
+            "pending_user_text",
+            "updated_at",
+        )
+        patch = {k: working.get(k) for k in keys}
+        return await self.redis.patch_session(session_id, patch, preserve_messages=True)
 
     async def touch_title(self, session_id: str, content: str) -> None:
-        session = await self.redis.get_session(session_id)
-        if not session:
+        def mutate(session: Dict[str, Any]) -> None:
+            title = (session.get("title") or "").strip()
+            if not title or title == "新对话":
+                clean = " ".join((content or "").strip().split())
+                session["title"] = (clean[:36] + "…") if len(clean) > 36 else (clean or "新对话")
+            session["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        try:
+            await self.redis.update_session(session_id, mutate, preserve_messages=True)
+        except Exception:
             return
-        title = (session.get("title") or "").strip()
-        if not title or title == "新对话":
-            clean = " ".join((content or "").strip().split())
-            session["title"] = (clean[:36] + "…") if len(clean) > 36 else (clean or "新对话")
-        session["updated_at"] = datetime.now(timezone.utc).isoformat()
-        await self.redis.set_session(session_id, session)
 
     async def add_usage(self, session_id: str, usage: Dict[str, Any]) -> Dict[str, Any]:
-        session = await self.redis.get_session(session_id)
-        if session is None:
-            raise ValueError(f"session missing for add_usage: {session_id}")
-        cur = session.get("usage") or {}
-        prompt = int(cur.get("prompt_tokens") or 0) + int(usage.get("prompt_tokens") or 0)
-        completion = int(cur.get("completion_tokens") or 0) + int(usage.get("completion_tokens") or 0)
-        cached = int(cur.get("cached_tokens") or 0) + int(usage.get("cached_tokens") or 0)
-        cache_create = int(cur.get("cache_creation_tokens") or 0) + int(
-            usage.get("cache_creation_tokens") or 0
-        )
-        duration = float(cur.get("duration_ms") or 0) + float(usage.get("duration_ms") or 0)
-        totals: Dict[str, Any] = {
-            "prompt_tokens": prompt,
-            "completion_tokens": completion,
-            "total_tokens": prompt + completion,
-            "cached_tokens": cached,
-            "cache_creation_tokens": cache_create,
-        }
-        if duration:
-            totals["duration_ms"] = duration
-        if usage.get("estimated") or cur.get("estimated"):
-            totals["estimated"] = 1
-        session["usage"] = totals
-        session["updated_at"] = datetime.now(timezone.utc).isoformat()
-        await self.redis.set_session(session_id, session)
-        return totals
+        holder: Dict[str, Any] = {"totals": {}}
+
+        def mutate(session: Dict[str, Any]) -> None:
+            cur = session.get("usage") or {}
+            prompt = int(cur.get("prompt_tokens") or 0) + int(usage.get("prompt_tokens") or 0)
+            completion = int(cur.get("completion_tokens") or 0) + int(
+                usage.get("completion_tokens") or 0
+            )
+            cached = int(cur.get("cached_tokens") or 0) + int(usage.get("cached_tokens") or 0)
+            cache_create = int(cur.get("cache_creation_tokens") or 0) + int(
+                usage.get("cache_creation_tokens") or 0
+            )
+            duration = float(cur.get("duration_ms") or 0) + float(usage.get("duration_ms") or 0)
+            totals: Dict[str, Any] = {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "total_tokens": prompt + completion,
+                "cached_tokens": cached,
+                "cache_creation_tokens": cache_create,
+            }
+            if duration:
+                totals["duration_ms"] = duration
+            if usage.get("estimated") or cur.get("estimated"):
+                totals["estimated"] = 1
+            session["usage"] = totals
+            session["updated_at"] = datetime.now(timezone.utc).isoformat()
+            holder["totals"] = totals
+
+        await self.redis.update_session(session_id, mutate, preserve_messages=True)
+        return holder["totals"]
 
     async def clear(self, session_id: str) -> None:
         await self.redis.delete_session(session_id)
