@@ -235,6 +235,49 @@ class RedisClient:
                 continue
         raise QueueError(f"append_session_message conflict: {session_id}") from last_err
 
+    async def patch_session(
+        self,
+        session_id: str,
+        patch: dict,
+        *,
+        ttl: int = 86400,
+        preserve_messages: bool = True,
+    ) -> dict:
+        """Merge ``patch`` into the session with optimistic locking.
+
+        When ``preserve_messages`` is true (default), never replace the
+        ``messages`` array from a stale snapshot — callers that only need to
+        update inbox / metadata must not clobber concurrent appends.
+        """
+        key = self._session_key(session_id)
+        index = self.settings.redis_session_prefix + "index"
+        last_err: Optional[Exception] = None
+        for _ in range(8):
+            try:
+                async with self.r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(key)
+                    raw = await self.r.get(key)
+                    if not raw:
+                        await pipe.unwatch()
+                        raise QueueError(f"session missing for patch: {session_id}")
+                    session = orjson.loads(raw)
+                    if not isinstance(session, dict):
+                        await pipe.unwatch()
+                        raise QueueError(f"session corrupt for patch: {session_id}")
+                    for k, v in (patch or {}).items():
+                        if preserve_messages and k == "messages":
+                            continue
+                        session[k] = v
+                    pipe.multi()
+                    pipe.set(key, orjson.dumps(session), ex=ttl)
+                    pipe.zadd(index, {session_id: time.time()})
+                    await pipe.execute()
+                    return session
+            except WatchError as exc:
+                last_err = exc
+                continue
+        raise QueueError(f"patch_session conflict: {session_id}") from last_err
+
     # ----- Generic KV + SSE event ring (Wave C) -----
 
     def _kv_key(self, key: str) -> str:

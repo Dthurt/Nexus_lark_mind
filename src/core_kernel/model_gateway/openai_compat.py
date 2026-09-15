@@ -232,7 +232,20 @@ class OpenAICompatProvider(BaseModelProvider):
                     retry_wait_seconds=wait,
                     raw={"rate_limited": True},
                 )
-                await asyncio.sleep(wait)
+                # Pulse keepalives during backoff so orchestrator read timeout resets.
+                remaining = float(wait)
+                while remaining > 0:
+                    step = min(15.0, remaining)
+                    await asyncio.sleep(step)
+                    remaining -= step
+                    if remaining > 0:
+                        yield ModelChunk(
+                            content="",
+                            notice=format_retry_notice(attempt + 1, max_retries, remaining),
+                            retry_attempt=attempt + 1,
+                            retry_wait_seconds=remaining,
+                            raw={"keepalive": True, "rate_limited": True},
+                        )
                 attempt += 1
 
     async def _stream_once(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:

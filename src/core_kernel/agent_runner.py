@@ -478,7 +478,13 @@ async def _run_agent_stream_inner(
                 if session:
                     claimed = claim_kind(session, "steer")
                     if claimed:
-                        await broker.set_session(sid, session)
+                        # Only patch inbox — never rewrite messages (orchestrator
+                        # appends tool/assistant rows concurrently on Redis).
+                        await broker.patch_session(
+                            sid,
+                            {"inbox": session.get("inbox") or []},
+                            preserve_messages=True,
+                        )
                         for item in claimed:
                             text = str(item.get("content") or "").strip()
                             if not text:

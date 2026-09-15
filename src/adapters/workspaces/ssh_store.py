@@ -186,16 +186,28 @@ class SshHostStore:
 
 
 _store: Optional[SshHostStore] = None
+_store_mtime: float = 0.0
+
+
+def _store_file_mtime() -> float:
+    try:
+        return STORE_PATH.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def get_ssh_host_store() -> SshHostStore:
-    global _store
-    if _store is None:
+    """Return the host store, reloading when ``data/ssh_hosts.json`` changes."""
+    global _store, _store_mtime
+    mtime = _store_file_mtime()
+    if _store is None or mtime != _store_mtime:
         _store = SshHostStore()
+        _store_mtime = mtime
     return _store
 
 
 def reload_ssh_host_store() -> SshHostStore:
-    global _store
+    global _store, _store_mtime
     _store = SshHostStore()
+    _store_mtime = _store_file_mtime()
     return _store

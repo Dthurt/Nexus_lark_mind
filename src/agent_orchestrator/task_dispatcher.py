@@ -248,6 +248,7 @@ class TaskDispatcher:
 
     async def _dispatch_stream(self, task: StandardTask, abort: asyncio.Event) -> None:
         collected = ""
+        reasoning_collected = ""
         error: Optional[str] = None
         usage: dict = {}
         cancelled = False
@@ -277,6 +278,7 @@ class TaskDispatcher:
                     EventType.TASK_STATUS,
                     {
                         "message": notice,
+
                         "retry_attempt": chunk.get("retry_attempt"),
                         "retry_wait_seconds": chunk.get("retry_wait_seconds"),
                     },
@@ -381,6 +383,7 @@ class TaskDispatcher:
 
             reasoning_delta = chunk.get("reasoning_delta") or ""
             if reasoning_delta:
+                reasoning_collected += reasoning_delta
                 await self._publish(
                     task,
                     EventType.TASK_REASONING,
@@ -426,6 +429,8 @@ class TaskDispatcher:
             "model_name": (task.model_name or "").strip(),
             "model_provider": (task.model_provider or "").strip(),
         }
+        if reasoning_collected:
+            model_meta["reasoning"] = reasoning_collected
         await self.sessions.append(
             task.session_id,
             ChatMessage(
@@ -443,6 +448,7 @@ class TaskDispatcher:
                 "session_usage": session_usage,
                 "model_name": model_meta["model_name"],
                 "model_provider": model_meta["model_provider"],
+                "reasoning": reasoning_collected or None,
             },
         )
         await self._drain_queue_followup(task)

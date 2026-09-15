@@ -144,6 +144,24 @@ class MemoryBroker:
         await self.set_session(session_id, session, ttl=ttl)
         return session
 
+    async def patch_session(
+        self,
+        session_id: str,
+        patch: dict,
+        *,
+        ttl: int = 86400,
+        preserve_messages: bool = True,
+    ) -> dict:
+        session = await self.get_session(session_id)
+        if session is None:
+            raise KeyError(f"session missing for patch: {session_id}")
+        for k, v in (patch or {}).items():
+            if preserve_messages and k == "messages":
+                continue
+            session[k] = v
+        await self.set_session(session_id, session, ttl=ttl)
+        return session
+
     # ----- Generic KV + SSE event ring (Wave C) -----
 
     async def kv_set(self, key: str, value: dict, ttl: int = 86400) -> None:

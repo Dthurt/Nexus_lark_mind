@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     model_retry_base_seconds: float = 2.0
     model_retry_max_seconds: float = 60.0
     model_timeout_seconds: int = 120
+    # Orchestrator → kernel streaming RPC read timeout. Must exceed model
+    # timeout + retry backoff so a slow first token / retry wait does not
+    # tear down the stream before the kernel finishes.
+    rpc_stream_timeout_seconds: float = 600.0
     model_circuit_failure_threshold: int = 5
     model_circuit_reset_seconds: int = 60
 

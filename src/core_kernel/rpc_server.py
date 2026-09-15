@@ -371,6 +371,7 @@ def create_kernel_app() -> FastAPI:
             from src.core_kernel.agent_runner import run_agent_stream
 
             collected = ""
+            reasoning_collected = ""
             error: Optional[str] = None
             saw_done = False
             try:
@@ -406,6 +407,9 @@ def create_kernel_app() -> FastAPI:
                         collected = chunk["content"]
                     elif chunk.get("delta"):
                         collected += chunk["delta"]
+                    reasoning_delta = chunk.get("reasoning_delta") or ""
+                    if reasoning_delta:
+                        reasoning_collected += reasoning_delta
                     if chunk.get("done") and chunk.get("error"):
                         error = chunk["error"]
                     if chunk.get("done"):
@@ -449,11 +453,14 @@ def create_kernel_app() -> FastAPI:
                     tasks = TaskRepository(session)
                     sessions = SessionRepository(session)
                     if error is None:
+                        assistant_msg: dict = {"role": "assistant", "content": collected}
+                        if reasoning_collected:
+                            assistant_msg["metadata"] = {"reasoning": reasoning_collected}
                         await sessions.append_messages(
                             task.session_id,
                             [
                                 {"role": "user", "content": task.content},
-                                {"role": "assistant", "content": collected},
+                                assistant_msg,
                             ],
                         )
                     await tasks.upsert_task(

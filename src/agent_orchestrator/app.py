@@ -32,7 +32,10 @@ def create_orchestrator_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         redis_client = create_broker(settings)
         await redis_client.connect()
-        kernel = RpcClient(settings.kernel_rpc_url)
+        kernel = RpcClient(
+            settings.kernel_rpc_url,
+            stream_timeout=float(settings.rpc_stream_timeout_seconds),
+        )
         await kernel.start()
 
         queue = QueueService(redis_client)
