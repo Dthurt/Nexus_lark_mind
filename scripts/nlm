@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Thin Linux/macOS shim matching scripts/nlm.cmd → python -m src …
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+# Prefer project one-shot console when invoked with no args / boot-ish commands
+if [[ $# -eq 0 ]] || [[ "${1:-}" =~ ^(start|setup|config|crawl|status|stop|repair|open|menu)$ ]]; then
+  exec "$ROOT/nlm" "$@"
+fi
+if [[ -x "$ROOT/.venv/bin/python" ]]; then
+  exec "$ROOT/.venv/bin/python" -m src "$@"
+fi
+exec python3 -m src "$@"

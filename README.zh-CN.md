@@ -75,7 +75,8 @@ graph LR
 
 | 方式 | 适用 | 说明 |
 |------|------|------|
-| `scripts/start_local.bat` | 日常本机使用 / 验收 | 三服务 + memory broker，**不需要 Docker / Redis**，UI 为 `web-static` |
+| **`./nlm` / `nlm.cmd` / `nlm start`** | **推荐本机一键** | Rich TUI（Windows + Linux）：环境检查、依赖安装、模型配置、Crawl4AI、启动与自动修复 |
+| `scripts/start_local.bat` | Windows 无菜单轻量启动 | 三服务 + memory broker，**不需要 Docker / Redis**，UI 为 `web-static` |
 | `scripts/dev.bat` | **改前端** | 后端 + Vite HMR（打开 :5173） |
 | `docker compose` | 联调 / 服务器 / Docker Desktop 部署 | 4 个容器（redis + kernel + orchestrator + adapters） |
 
@@ -226,7 +227,19 @@ docker compose up --build -d
 
 ## 本地开发（不经 Docker）
 
-日常一键（内存总线，无需 Redis）：
+推荐一键（内存总线，无需 Redis；含安装 / 配置向导）：
+
+```bash
+# Linux / macOS
+chmod +x nlm && ./nlm start
+
+# Windows
+nlm start
+```
+
+也可用：`./nlm` · `nlm status` · `nlm stop` · `nlm repair`
+
+轻量无菜单（Windows）：
 
 ```bat
 scripts\start_local.bat

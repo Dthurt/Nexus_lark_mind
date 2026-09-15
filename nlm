@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Nexus Lark Mind — one-command local console (Linux / macOS)
+# Usage: ./nlm | ./nlm start | setup | config | crawl | status | stop | repair
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+BOOT="$ROOT/scripts/nlm_boot.py"
+VENV_PY="$ROOT/.venv/bin/python"
+
+if [[ ! -f "$BOOT" ]]; then
+  echo "[nlm] Missing scripts/nlm_boot.py" >&2
+  exit 1
+fi
+
+find_python() {
+  if [[ -x "$VENV_PY" ]]; then
+    echo "$VENV_PY"
+    return 0
+  fi
+  local c
+  for c in python3.13 python3.12 python3.11 python3 python; do
+    if command -v "$c" >/dev/null 2>&1; then
+      # Skip Windows Store stubs if somehow present under WSL paths
+      local resolved
+      resolved="$(command -v "$c")"
+      if [[ "$resolved" == *WindowsApps* ]]; then
+        continue
+      fi
+      echo "$resolved"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PY="$(find_python || true)"
+if [[ -z "${PY:-}" ]]; then
+  echo "[nlm] Python 3.11+ not found. Install python3 (e.g. apt install python3 python3-venv)." >&2
+  exit 1
+fi
+
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+
+exec "$PY" "$BOOT" "$@"

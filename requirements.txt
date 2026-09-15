@@ -18,7 +18,8 @@ pytest-asyncio==0.25.0
 anyio==4.7.0
 asyncssh==2.19.0
 cryptography==44.0.0
+rich==13.9.4
 
-# Optional browser crawl (Crawl4AI) — install separately:
+# Optional browser crawl (Crawl4AI) — also installable via `nlm` wizard:
 #   pip install -r requirements-crawl.txt && crawl4ai-setup
 # Or Docker: docker compose --profile crawl up --build

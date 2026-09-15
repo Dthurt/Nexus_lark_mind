@@ -1,9 +1,13 @@
-"""CLI entry: `python -m src` / `nlm` — web launcher + headless chat (Wave F)."""
+"""CLI entry: `python -m src` / `nlm` — web launcher + headless chat (Wave F).
+
+For the premium setup wizard, prefer root `nlm.cmd` / `nlm.ps1` (or `python -m src boot`).
+"""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import subprocess
 import sys
 import threading
 import time
@@ -29,6 +33,17 @@ def _ensure_sdk_path() -> None:
         sys.path.insert(0, str(sdk))
 
 
+def _cmd_boot(args: argparse.Namespace) -> int:
+    """Delegate to scripts/nlm_boot.py (rich TUI installer / launcher)."""
+    root = Path(__file__).resolve().parents[1]
+    boot = root / "scripts" / "nlm_boot.py"
+    if not boot.is_file():
+        print("[nlm] missing scripts/nlm_boot.py", file=sys.stderr)
+        return 1
+    extra = list(getattr(args, "boot_args", None) or [])
+    return subprocess.call([sys.executable, str(boot), *extra], cwd=str(root))
+
+
 def _cmd_web(args: argparse.Namespace) -> int:
     from src.common.config import get_settings
     from src.entry_local import run
@@ -42,6 +57,7 @@ def _cmd_web(args: argparse.Namespace) -> int:
     else:
         print(f"[nlm] workbench at {url}", flush=True)
         print("[nlm] tip: python -m src web --open", flush=True)
+        print("[nlm] tip: nlm.cmd  (setup wizard + one-shot start)", flush=True)
     try:
         asyncio.run(run())
     except KeyboardInterrupt:
@@ -74,7 +90,7 @@ def _cmd_chat(args: argparse.Namespace) -> int:
         return 1
     except Exception as exc:
         print(f"[nlm] failed: {exc}", file=sys.stderr)
-        print("[nlm] is the stack running? try: python -m src web", file=sys.stderr)
+        print("[nlm] is the stack running? try: nlm.cmd start", file=sys.stderr)
         return 1
     if result.get("error"):
         print(f"\n[nlm] failed: {result['error']}", file=sys.stderr)
@@ -85,7 +101,7 @@ def _cmd_chat(args: argparse.Namespace) -> int:
 
 def _cmd_session_new(args: argparse.Namespace) -> int:
     _ensure_sdk_path()
-    from nlm_client import NlmClient, NlmClientError
+    from nlm_client import NlmClient
 
     base = (args.base_url or "http://127.0.0.1:8000").rstrip("/")
     try:
@@ -108,6 +124,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="cmd")
 
+    p_boot = sub.add_parser(
+        "boot",
+        help="Premium local console (setup / config / crawl / start / repair)",
+    )
+    p_boot.add_argument(
+        "boot_args",
+        nargs=argparse.REMAINDER,
+        help="Args forwarded to nlm_boot.py (start|setup|config|…)",
+    )
+
     p_web = sub.add_parser("web", help="Start all-in-one local services (default)")
     p_web.add_argument("--open", action="store_true", help="Open workbench in browser")
     p_web.add_argument("--port", type=int, default=None)
@@ -126,13 +152,18 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--base-url", default="http://127.0.0.1:8000")
     p_new.add_argument("--cwd", default=None)
 
-    # Bare `python -m src --open` also works
     parser.add_argument("--open", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--port", type=int, default=None, help=argparse.SUPPRESS)
 
     args = parser.parse_args(argv)
     cmd = args.cmd or "web"
 
+    if cmd == "boot":
+        extra = list(args.boot_args or [])
+        if extra and extra[0] == "--":
+            extra = extra[1:]
+        args.boot_args = extra
+        return _cmd_boot(args)
     if cmd == "web":
         return _cmd_web(args)
     if cmd == "chat":

@@ -75,7 +75,8 @@ Dependency direction is one-way: Adapters → Orchestrator → Kernel → Infras
 
 | Method | Best for | Notes |
 |--------|----------|-------|
-| `scripts/start_local.bat` | Daily use / acceptance | All-in-one + memory broker; **no Docker / Redis**; serves `web-static` |
+| **`./nlm` / `nlm.cmd` / `nlm start`** | **Recommended local one-shot** | Rich TUI (Windows + Linux): env check, deps, model config, Crawl4AI, start + auto-repair |
+| `scripts/start_local.bat` | Windows lightweight (no menu) | All-in-one + memory broker; **no Docker / Redis**; serves `web-static` |
 | `scripts/dev.bat` | **UI development** | Backend + Vite HMR (open :5173) |
 | `docker compose` | Integration / server / Docker Desktop | 4 containers (`redis` + `kernel` + `orchestrator` + `adapters`) |
 
@@ -227,6 +228,20 @@ More detail: [docs/architecture.md](docs/architecture.md), [docs/workspaces.md](
 ## Local development (no Docker)
 
 One-shot host stack (in-memory broker, no Redis):
+
+Recommended one-shot (memory broker, no Redis; includes setup wizard):
+
+```bash
+# Linux / macOS
+chmod +x nlm && ./nlm start
+
+# Windows
+nlm start
+```
+
+Also: `./nlm` · `nlm status` · `nlm stop` · `nlm repair`
+
+Lightweight (Windows, no menu):
 
 ```bat
 scripts\start_local.bat

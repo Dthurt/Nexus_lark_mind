@@ -156,6 +156,7 @@ Usage: .\scripts\start_local.ps1 [start|stop|status|help] [-Open] [-Install] [-S
 
 Frontend HMR debug: .\scripts\dev.ps1
 Rebuild static UI:  .\scripts\build_web.bat
+Premium wizard:     .\nlm.ps1   (or nlm.cmd)
 Docs: docs\local-start.md
 "@
   exit 0

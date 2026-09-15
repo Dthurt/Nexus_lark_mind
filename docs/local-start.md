@@ -6,9 +6,10 @@
 
 | 场景 | 命令 | 打开地址 | 说明 |
 |------|------|----------|------|
-| **日常使用 / 验收** | `scripts\start_local.bat` | http://127.0.0.1:8000 | 后端 + 已构建的 `web-static` |
-| **前端调试（HMR）** | `scripts\dev.bat` | http://127.0.0.1:5173 | 后端 + Vite，改 React 即时刷新 |
-| **只改后端** | `scripts\start_local.bat` | :8000 | 改 Python 后需重启进程 |
+| **推荐一键** | `./nlm`（Linux/macOS）· `nlm.cmd`（Windows） | http://127.0.0.1:8000 | Rich TUI：环境检查 → 依赖 → 配置 → 启动 / 修复 |
+| **日常使用 / 验收** | `nlm start` / `scripts\start_local.bat` | http://127.0.0.1:8000 | 一键启动；Windows 另有无菜单 bat |
+| **前端调试（HMR）** | `scripts\dev.bat` / `scripts/dev.ps1` | http://127.0.0.1:5173 | 后端 + Vite，改 React 即时刷新 |
+| **只改后端** | `nlm start` | :8000 | 改 Python 后需重启进程 |
 | **交付静态前端** | `scripts\build_web.bat` | — | 输出到 `web-static/`，供 :8000 / Docker |
 
 > [!IMPORTANT]
@@ -18,17 +19,68 @@
 
 ## 前提
 
-- [Python 3.11+](https://www.python.org/downloads/windows/)，勾选 **Add python.exe to PATH**
+- **Python 3.11+**（Linux：`python3` + `python3-venv`；Windows：勾选 Add to PATH）
 - 前端调试另需 [Node.js 20+](https://nodejs.org/)（或仓库内 `.tools\node\…` 便携包）
 - （可选）在 `.env` 填模型 Key；不填则为 demo 回声模式
 
-```powershell
-Copy-Item .env.example .env   # 首次
+```bash
+cp .env.example .env   # 首次（或用 nlm config 向导）
 ```
 
 ---
 
-## 一键启动（日常）
+## 一键启动（推荐：`nlm`，Windows + Linux）
+
+仓库根目录：
+
+**Linux / macOS**
+
+```bash
+chmod +x nlm          # 首次
+./nlm
+./nlm start
+./nlm setup
+./nlm config
+./nlm crawl
+./nlm status
+./nlm stop
+./nlm repair
+```
+
+**Windows**
+
+```bat
+nlm
+nlm start
+nlm setup
+nlm config
+nlm crawl
+nlm status
+nlm stop
+nlm repair
+```
+
+PowerShell：
+
+```powershell
+.\nlm.ps1
+.\nlm.ps1 start
+```
+
+等价：`python -m src boot` / `python3 -m src boot start`
+
+`nlm` 会：
+
+1. 检查 Python / `.venv` / 端口 / `web-static` / API Key
+2. 按需创建 venv 并安装 `requirements.txt`（变化时）
+3. 交互配置默认供应商、Base URL、模型名、API Key → 写入 `.env`
+4. 可选安装 **Crawl4AI + Playwright**（网页爬取）
+5. 自动修复常见问题（Docker 残留 URL、占用端口等）
+6. 启动三服务并可选打开浏览器
+
+---
+
+## 轻量脚本（Windows，无菜单）
 
 ```bat
 scripts\start_local.bat
