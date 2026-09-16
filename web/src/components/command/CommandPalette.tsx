@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Gauge,
+  GitFork,
   History,
   LayoutTemplate,
   MessageSquare,
@@ -10,6 +11,7 @@ import {
   Puzzle,
   Search,
   Settings,
+  Sparkles,
   Trash2,
   Wrench,
 } from "lucide-react";
@@ -24,6 +26,7 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
+import { listSkills } from "@/api/endpoints";
 import type { CenterViewId } from "@/components/layout/ViewRing";
 import type { LocalConversation } from "@/hooks/useSessions";
 import { cycleTheme } from "@/hooks/useTheme";
@@ -32,9 +35,12 @@ export type CommandPaletteProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   conversations?: Pick<LocalConversation, "id" | "title">[];
+  cwd?: string;
   onNewChat?: () => void;
   onSelectChat?: (id: string) => void;
   onClearChat?: () => void;
+  onForkChat?: () => void;
+  onInsertText?: (text: string) => void;
   onSetCenterView?: (view: CenterViewId) => void;
   onToggleCanvas?: () => void;
   onNewCanvas?: () => void;
@@ -48,9 +54,12 @@ export function CommandPalette({
   open,
   onOpenChange,
   conversations = [],
+  cwd = "",
   onNewChat,
   onSelectChat,
   onClearChat,
+  onForkChat,
+  onInsertText,
   onSetCenterView,
   onToggleCanvas,
   onNewCanvas,
@@ -60,6 +69,27 @@ export function CommandPalette({
   onCycleTheme,
 }: CommandPaletteProps) {
   const recent = useMemo(() => conversations.slice(0, 8), [conversations]);
+  const [skills, setSkills] = useState<
+    { name: string; description: string; path: string }[]
+  >([]);
+
+  useEffect(() => {
+    if (!open || !cwd) {
+      setSkills([]);
+      return;
+    }
+    let cancelled = false;
+    void listSkills(cwd)
+      .then((data) => {
+        if (!cancelled) setSkills(data.skills || []);
+      })
+      .catch(() => {
+        if (!cancelled) setSkills([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, cwd]);
 
   const run = (fn?: () => void) => {
     fn?.();
@@ -68,7 +98,7 @@ export function CommandPalette({
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
-      <CommandInput placeholder="搜索命令、会话…" />
+      <CommandInput placeholder="搜索命令、会话、技能…" />
       <CommandList>
         <CommandEmpty>无匹配项</CommandEmpty>
 
@@ -77,6 +107,10 @@ export function CommandPalette({
             <Plus className="mr-2 size-4" />
             新对话
             <CommandShortcut>N</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={() => run(onForkChat)}>
+            <GitFork className="mr-2 size-4" />
+            从此会话分叉（Fork）
           </CommandItem>
           <CommandItem onSelect={() => run(onClearChat)}>
             <Trash2 className="mr-2 size-4" />
@@ -89,6 +123,34 @@ export function CommandPalette({
             </CommandItem>
           ))}
         </CommandGroup>
+
+        {skills.length > 0 ? (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Skills">
+              {skills.map((s) => (
+                <CommandItem
+                  key={s.name}
+                  onSelect={() =>
+                    run(() =>
+                      onInsertText?.(
+                        `/skill:${s.name}\n请按技能「${s.name}」执行（路径 ${s.path}）。`,
+                      ),
+                    )
+                  }
+                >
+                  <Sparkles className="mr-2 size-4" />
+                  <span className="flex min-w-0 flex-col">
+                    <span>{s.name}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {s.description}
+                    </span>
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        ) : null}
 
         <CommandSeparator />
 

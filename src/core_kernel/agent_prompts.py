@@ -261,6 +261,11 @@ def build_system_prompt(
         instr = load_workspace_instructions(cwd)
         if instr:
             parts.append(instr)
+        from src.core_kernel.skills_loader import skills_prompt_block
+
+        skills = skills_prompt_block(cwd)
+        if skills:
+            parts.append(skills)
 
     parts.append(
         "## Permission preset\n"

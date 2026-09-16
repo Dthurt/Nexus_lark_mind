@@ -171,9 +171,13 @@ class NlmClient:
         session_id: Optional[str] = None,
         cwd: Optional[str] = None,
         print_deltas: bool = False,
+        jsonl: bool = False,
         **send_kwargs: Any,
     ) -> Dict[str, Any]:
-        """Create/reuse session, send, stream until done; return final payload."""
+        """Create/reuse session, send, stream until done; return final payload.
+
+        When ``jsonl=True``, every SSE event is printed as one JSON line (CI / eval).
+        """
         if not session_id:
             sess = self.create_session(cwd=cwd)
             session_id = str(
@@ -188,25 +192,25 @@ class NlmClient:
         final: Dict[str, Any] = {"session_id": session_id, "queued": queued, "content": "", "error": None}
         collected = ""
         for ev in self.stream_events(session_id):
+            if jsonl:
+                print(json.dumps(ev, ensure_ascii=False), flush=True)
             typ = ev.get("event_type")
             payload = ev.get("payload") or {}
             if typ == "task.delta" and payload.get("delta"):
                 piece = str(payload["delta"])
                 collected += piece
-                if print_deltas:
+                if print_deltas and not jsonl:
                     print(piece, end="", flush=True)
             elif typ == "task.completed":
                 final["content"] = payload.get("content") or collected
                 final["usage"] = payload.get("usage")
-                if print_deltas and not payload.get("content"):
-                    pass
-                elif print_deltas:
-                    print(flush=True)
+                if print_deltas and not jsonl:
+                    if payload.get("content"):
+                        print(flush=True)
                 break
             elif typ == "task.failed":
-                final["error"] = payload.get("error") or "failed"
-                final["content"] = payload.get("partial") or collected
-                if print_deltas:
-                    print(flush=True)
+                final["error"] = payload.get("error") or payload.get("message") or "failed"
+                if print_deltas and not jsonl:
+                    print(f"\n[nlm] failed: {final['error']}", flush=True)
                 break
         return final

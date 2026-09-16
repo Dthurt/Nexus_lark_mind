@@ -516,17 +516,16 @@ async def _run_agent_stream_inner(
             task_id=task_id,
             use_llm=True,
         )
-        if compact_info.get("compacted_via") == "llm":
+        if compact_info.get("compacted_via"):
+            from src.core_kernel.compaction_ledger import make_compaction_entry, notice_from_info
+
+            entry = make_compaction_entry(compact_info)
             yield {
                 "delta": "",
                 "done": False,
-                "notice": "上下文已压缩（LLM checkpoint）",
-            }
-        elif compact_info.get("compacted_via") == "heuristic":
-            yield {
-                "delta": "",
-                "done": False,
-                "notice": "上下文已压缩",
+                "notice": notice_from_info(compact_info),
+                "notice_kind": "compaction",
+                "compaction": entry,
             }
         req = ModelRequest(
             provider=provider,
@@ -604,10 +603,14 @@ async def _run_agent_stream_inner(
                         aggressiveness="aggressive",
                     )
                     if compact_info.get("compacted_via"):
+                        from src.core_kernel.compaction_ledger import make_compaction_entry
+
                         yield {
                             "delta": "",
                             "done": False,
                             "notice": "溢出恢复压缩完成，重试模型调用",
+                            "notice_kind": "compaction",
+                            "compaction": make_compaction_entry(compact_info),
                         }
                     req = ModelRequest(
                         provider=provider,
@@ -779,6 +782,32 @@ async def _run_agent_stream_inner(
                     "error": f"unknown tool: {name}",
                     "duration_ms": (time.perf_counter() - t0) * 1000,
                 }
+
+            from src.core_kernel.tool_hooks import run_pre_tool_hook
+
+            hook = run_pre_tool_hook(
+                tool=name,
+                base=base,
+                arguments=args,
+                plugin_id=plugin_id,
+                session_id=parent_session_id,
+                task_id=task_id,
+                cwd=workspace_cwd or meta0.get("cwd"),
+            )
+            if hook.get("block"):
+                return {
+                    "id": call_id,
+                    "name": name,
+                    "plugin_id": plugin_id,
+                    "success": False,
+                    "result": None,
+                    "error": str(hook.get("reason") or "blocked by pre_tool hook"),
+                    "duration_ms": (time.perf_counter() - t0) * 1000,
+                    "kind": "blocked",
+                }
+            if isinstance(hook.get("arguments"), dict):
+                args = dict(hook["arguments"])
+
             timeout = 60.0
             if base == "run_shell":
                 try:

@@ -217,7 +217,7 @@ Edit `.env` (see `.env.example`):
 - Compaction: `COMPACTION_AGGRESSIVENESS=conservative|balanced|aggressive`
 - Workspace mount: `NLM_HOST_WORKSPACE=...`
 
-More detail: [docs/architecture.md](docs/architecture.md), [docs/workspaces.md](docs/workspaces.md), [docs/interaction-modes.md](docs/interaction-modes.md), [docs/canvas.md](docs/canvas.md), [docs/context-and-diff.md](docs/context-and-diff.md), [docs/diagrams.md](docs/diagrams.md), [docs/client-architecture.md](docs/client-architecture.md).
+More detail: [docs/architecture.md](docs/architecture.md), [docs/workspaces.md](docs/workspaces.md), [docs/interaction-modes.md](docs/interaction-modes.md), [docs/canvas.md](docs/canvas.md), [docs/context-and-diff.md](docs/context-and-diff.md), [docs/diagrams.md](docs/diagrams.md), [docs/client-architecture.md](docs/client-architecture.md), [docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md) (Skills / Fork / Hooks / JSONL).
 
 ## Plugins
 

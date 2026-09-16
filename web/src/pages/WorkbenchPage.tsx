@@ -97,6 +97,7 @@ export function WorkbenchPage({
     startNew,
     switchTo,
     deleteConversation,
+    forkCurrent,
   } = useSessions();
 
   const canvas = useCanvasSession(sessionId);
@@ -828,9 +829,24 @@ export function WorkbenchPage({
         open={commandPalette.open}
         onOpenChange={commandPalette.setOpen}
         conversations={conversations}
+        cwd={cwd}
         onNewChat={startNewConversation}
         onSelectChat={(id) => void switchConversation(id)}
         onClearChat={() => void clearSession()}
+        onForkChat={() => {
+          void (async () => {
+            try {
+              await forkCurrent();
+              toast.success("已分叉会话");
+            } catch (err: any) {
+              toast.error(String(err?.message || err || "分叉失败"));
+            }
+          })();
+        }}
+        onInsertText={(text) => {
+          const cur = actions.input || "";
+          actions.setInput(cur.trim() ? `${cur.trim()}\n${text}` : text);
+        }}
         onSetCenterView={setCenterView}
         onToggleCanvas={canvas.togglePane}
         onNewCanvas={() =>

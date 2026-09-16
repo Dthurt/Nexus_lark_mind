@@ -273,15 +273,33 @@ class TaskDispatcher:
                 break
             notice = chunk.get("notice")
             if notice:
+                payload = {
+                    "message": notice,
+                    "retry_attempt": chunk.get("retry_attempt"),
+                    "retry_wait_seconds": chunk.get("retry_wait_seconds"),
+                }
+                if chunk.get("notice_kind"):
+                    payload["kind"] = chunk.get("notice_kind")
+                if chunk.get("compaction"):
+                    payload["compaction"] = chunk.get("compaction")
+                    # Persist ledger on session for later navigation
+                    try:
+                        entry = chunk["compaction"]
+
+                        def _ledger(sess: dict) -> None:
+                            from src.core_kernel.compaction_ledger import append_compaction_ledger
+
+                            append_compaction_ledger(sess, entry)
+
+                        await self.sessions.redis.update_session(
+                            task.session_id, _ledger, preserve_messages=True
+                        )
+                    except Exception:
+                        pass
                 await self._publish(
                     task,
                     EventType.TASK_STATUS,
-                    {
-                        "message": notice,
-
-                        "retry_attempt": chunk.get("retry_attempt"),
-                        "retry_wait_seconds": chunk.get("retry_wait_seconds"),
-                    },
+                    payload,
                 )
                 continue
 

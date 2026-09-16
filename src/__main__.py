@@ -73,15 +73,20 @@ def _cmd_chat(args: argparse.Namespace) -> int:
     base = (args.base_url or "http://127.0.0.1:8000").rstrip("/")
     prompt = " ".join(args.prompt or []).strip()
     if not prompt:
-        print("usage: nlm chat [--cwd PATH] [--session ID] PROMPT…", file=sys.stderr)
+        print(
+            "usage: nlm chat [--cwd PATH] [--session ID] [--jsonl] PROMPT…",
+            file=sys.stderr,
+        )
         return 2
+    jsonl = bool(getattr(args, "jsonl", False))
     try:
         with NlmClient(base) as client:
             result = client.chat(
                 prompt,
                 session_id=args.session,
                 cwd=args.cwd,
-                print_deltas=True,
+                print_deltas=not jsonl,
+                jsonl=jsonl,
                 auto_accept=bool(args.auto_accept),
                 tools_enabled=not bool(args.no_tools),
             )
@@ -93,9 +98,11 @@ def _cmd_chat(args: argparse.Namespace) -> int:
         print("[nlm] is the stack running? try: nlm.cmd start", file=sys.stderr)
         return 1
     if result.get("error"):
-        print(f"\n[nlm] failed: {result['error']}", file=sys.stderr)
+        if not jsonl:
+            print(f"\n[nlm] failed: {result['error']}", file=sys.stderr)
         return 1
-    print(f"\n[nlm] session={result.get('session_id')}", flush=True)
+    if not jsonl:
+        print(f"\n[nlm] session={result.get('session_id')}", flush=True)
     return 0
 
 
@@ -145,6 +152,11 @@ def main(argv: list[str] | None = None) -> int:
     p_chat.add_argument("--cwd", default=None, help="Bind workspace cwd")
     p_chat.add_argument("--auto-accept", action="store_true")
     p_chat.add_argument("--no-tools", action="store_true")
+    p_chat.add_argument(
+        "--jsonl",
+        action="store_true",
+        help="Print every SSE event as one JSON line (CI / eval)",
+    )
 
     p_sess = sub.add_parser("session", help="Session helpers")
     p_sess_sub = p_sess.add_subparsers(dest="session_cmd")

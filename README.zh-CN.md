@@ -217,7 +217,7 @@ docker compose up --build -d
 - 压缩策略：`COMPACTION_AGGRESSIVENESS=conservative|balanced|aggressive`
 - 工作区挂载：`NLM_HOST_WORKSPACE=...`
 
-详见 [docs/architecture.md](docs/architecture.md)、[docs/workspaces.md](docs/workspaces.md)、[docs/interaction-modes.md](docs/interaction-modes.md)、[docs/canvas.md](docs/canvas.md)、[docs/context-and-diff.md](docs/context-and-diff.md)、[docs/diagrams.md](docs/diagrams.md)、[docs/client-architecture.md](docs/client-architecture.md)。
+详见 [docs/architecture.md](docs/architecture.md)、[docs/workspaces.md](docs/workspaces.md)、[docs/interaction-modes.md](docs/interaction-modes.md)、[docs/canvas.md](docs/canvas.md)、[docs/context-and-diff.md](docs/context-and-diff.md)、[docs/diagrams.md](docs/diagrams.md)、[docs/client-architecture.md](docs/client-architecture.md)、[docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md)（Skills / Fork / Hooks / JSONL）。
 
 ## 插件
 

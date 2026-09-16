@@ -807,6 +807,29 @@ def create_adapters_app() -> FastAPI:
             get_workspace_store().attach_session(wid, sid)
         return RpcEnvelope(ok=True, data=data)
 
+    @app.post("/api/sessions/{session_id}/fork")
+    async def fork_session(session_id: str, request: Request):
+        orch: RpcClient = state["orchestrator"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await orch.call(
+            "POST",
+            f"/rpc/sessions/{session_id}/fork",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/skills")
+    async def list_skills(cwd: str = ""):
+        from src.core_kernel.skills_loader import list_skills_public
+
+        path = (cwd or "").strip()
+        if not path:
+            return RpcEnvelope(ok=True, data={"skills": []})
+        return RpcEnvelope(ok=True, data={"skills": list_skills_public(path), "cwd": path})
+
     @app.patch("/api/sessions/{session_id}/workspace")
     async def bind_session_workspace(session_id: str, request: Request):
         orch: RpcClient = state["orchestrator"]

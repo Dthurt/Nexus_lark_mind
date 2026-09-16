@@ -198,9 +198,15 @@ export function useChatStream(opts: UseChatStreamOpts) {
           }
         }
       } else if (type === "task.status") {
-        tl.showRetry(payload.message || "处理中…");
-        tr.addStatus(payload.message || "处理中…");
-        setActivity("retry", payload.message || "模型限流，重试中…");
+        const msg = payload.message || "处理中…";
+        tl.showRetry(msg);
+        if (payload.kind === "compaction" || payload.compaction) {
+          const via = payload.compaction?.via || "";
+          tr.addStatus(via ? `compaction (${via}): ${msg}` : `compaction: ${msg}`);
+        } else {
+          tr.addStatus(msg);
+        }
+        setActivity("retry", msg);
       } else if (type === "task.tool_call") {
         tl.clearRetry();
         const actId = tl.pushActivity("CALL", payload);

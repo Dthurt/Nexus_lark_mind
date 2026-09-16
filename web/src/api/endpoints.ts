@@ -126,6 +126,24 @@ export function createSession(body: CreateSessionBody): Promise<SessionDetail> {
   return apiPost<SessionDetail>("/api/sessions", body);
 }
 
+export function forkSession(
+  sessionId: string,
+  body: { until_index?: number; title?: string } = {},
+): Promise<SessionDetail> {
+  return apiPost<SessionDetail>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/fork`,
+    body,
+  );
+}
+
+export function listSkills(cwd: string): Promise<{
+  skills: { name: string; description: string; path: string }[];
+  cwd?: string;
+}> {
+  const q = new URLSearchParams({ cwd });
+  return apiGet(`/api/skills?${q.toString()}`);
+}
+
 export function deleteSession(sessionId: string): Promise<unknown> {
   return apiDelete(`/api/sessions/${encodeURIComponent(sessionId)}`);
 }

@@ -268,6 +268,62 @@ def create_orchestrator_app() -> FastAPI:
         )
         return RpcEnvelope(ok=True, data=data)
 
+    @app.post("/rpc/sessions/{session_id}/fork")
+    async def fork_session(session_id: str, request: Request):
+        """Fork conversation: copy messages up to optional index into a new session."""
+        body = await request.json() if request.headers.get("content-length") not in (None, "0") else {}
+        if not isinstance(body, dict):
+            body = {}
+        sessions: SessionContext = state["sessions"]
+        parent = await sessions.redis.get_session(session_id)
+        if not parent:
+            from src.common.errors import NotFoundError
+
+            raise NotFoundError(session_id)
+        from src.common.schemas import new_id
+
+        new_sid = str(body.get("session_id") or "").strip() or new_id("web_")
+        messages = list(parent.get("messages") or [])
+        until = body.get("until_index")
+        if until is not None:
+            try:
+                idx = int(until)
+                if idx >= 0:
+                    messages = messages[: idx + 1]
+            except (TypeError, ValueError):
+                pass
+        # Drop in-flight system noise; keep user/assistant/tool history
+        seeded = [m for m in messages if isinstance(m, dict)]
+        child = await sessions.ensure(
+            new_sid,
+            user_id=str(body.get("user_id") or parent.get("user_id") or "web-user"),
+            channel=str(body.get("channel") or parent.get("channel") or "web"),
+            cwd=str(parent.get("cwd") or "").strip() or None,
+            workspace_id=str(parent.get("workspace_id") or "").strip() or None,
+            workspace_title=str(parent.get("workspace_title") or "").strip() or None,
+            workspace_kind=str(parent.get("workspace_kind") or "").strip() or None,
+            ssh_host_id=str(parent.get("ssh_host_id") or "").strip() or None,
+        )
+
+        def _seed(sess: dict) -> None:
+            sess["messages"] = seeded
+            sess["forked_from"] = session_id
+            sess["title"] = str(body.get("title") or f"Fork of {parent.get('title') or session_id}")[:80]
+            # Copy interaction prefs
+            for key in (
+                "agent_mode",
+                "auto_accept",
+                "permission_preset",
+                "plan_enforcement",
+                "experience_tier",
+                "reasoning_effort",
+            ):
+                if key in parent and parent[key] is not None:
+                    sess[key] = parent[key]
+
+        child = await sessions.redis.update_session(new_sid, _seed, preserve_messages=False)
+        return RpcEnvelope(ok=True, data=child)
+
     @app.patch("/rpc/sessions/{session_id}/workspace")
     async def bind_session_workspace(session_id: str, request: Request):
         body = await request.json()
