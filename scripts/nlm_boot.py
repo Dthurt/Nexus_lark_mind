@@ -1116,6 +1116,9 @@ def needs_setup(*, force: bool = False) -> bool:
 
 def reexec_in_venv() -> None:
     """Re-run this script under .venv (Windows-safe: subprocess, not execv)."""
+    # Never replace the process while pytest owns it (would look like exit code 2).
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        raise RuntimeError("refusing to re-exec under pytest; run via `nlm` CLI instead")
     target = [str(venv_python()), str(Path(__file__).resolve()), *sys.argv[1:]]
     info(f"Switching into .venv …")
     if os.name == "nt":

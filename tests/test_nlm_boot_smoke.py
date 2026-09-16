@@ -11,8 +11,13 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 BOOT = ROOT / "scripts" / "nlm_boot.py"
+
+# Keep these out of the default suite (venv re-exec / full start). Dedicated CI step runs them.
+pytestmark = pytest.mark.nlm_boot
 
 
 def _env() -> dict[str, str]:
@@ -73,13 +78,17 @@ def test_textcolumn_format_constant() -> None:
     assert "TEXT_COL" in src
 
 
-def test_quiet_setup_when_ready() -> None:
+def test_quiet_setup_when_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Quiet path must short-circuit when env is ready — never re-exec under pytest."""
     boot = _load_boot()
     os.environ["NLM_YES"] = "1"
     try:
-        if boot.needs_setup():
-            # Ensure deps so quiet path can succeed on CI/dev machines
-            assert boot.setup_flow(force=False, skip_config=True) is True
+        monkeypatch.setattr(boot, "needs_setup", lambda **_kwargs: False)
+        monkeypatch.setattr(
+            boot,
+            "reexec_in_venv",
+            lambda: (_ for _ in ()).throw(RuntimeError("reexec should not run")),
+        )
         assert boot.setup_flow(quiet_ok=True) is True
     finally:
         os.environ.pop("NLM_YES", None)
@@ -110,6 +119,10 @@ def test_rich_unicode_probe_or_plain_fallback() -> None:
         assert cell_len("测试") >= 2
 
 
+@pytest.mark.skipif(
+    os.environ.get("NLM_E2E", "").strip().lower() not in ("1", "true", "yes"),
+    reason="set NLM_E2E=1 for full start→health→stop (slow; optional)",
+)
 def test_one_shot_start_becomes_healthy() -> None:
     """End-to-end: nlm start --yes --no-open → health OK → stop."""
     repair = _run(["repair", "--yes"], timeout=600)

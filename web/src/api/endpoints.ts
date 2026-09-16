@@ -615,6 +615,7 @@ export type KnowledgeDoc = {
   snippet?: string;
   score?: number;
   chunk_id?: string;
+  heading?: string;
   citation?: string;
 };
 

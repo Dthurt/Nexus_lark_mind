@@ -44,7 +44,7 @@ jobs:
         run: |
           python -m py_compile scripts/nlm_boot.py
           python scripts/nlm_boot.py --help
-          pytest -q --tb=short tests/test_nlm_boot_smoke.py
+          pytest -q --tb=short -o addopts= -m nlm_boot tests/test_nlm_boot_smoke.py
 
       - name: Perf smoke (compaction budget)
         env:
