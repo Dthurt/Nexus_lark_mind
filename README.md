@@ -241,6 +241,8 @@ nlm start
 
 Also: `./nlm` · `nlm status` · `nlm doctor` · `nlm stop` · `nlm repair` · `nlm logs` · `nlm update`
 
+Non-interactive (CI / scripts): `nlm start --yes --no-open` or `NLM_YES=1`
+
 Linux helpers: `./scripts/start_local.sh` · `./scripts/dev.sh`
 
 Lightweight (Windows, no menu):

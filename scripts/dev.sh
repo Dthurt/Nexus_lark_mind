@@ -38,7 +38,7 @@ echo ""
 
 if [[ "$FRONTEND_ONLY" -eq 0 ]]; then
   echo "Starting backend…"
-  "$ROOT/nlm" start --no-open &
+  NLM_YES=1 "$ROOT/nlm" start --yes --no-open &
   BACKEND_PID=$!
   echo "Waiting for backend health…"
   ready=0

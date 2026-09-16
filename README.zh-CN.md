@@ -239,6 +239,8 @@ nlm start
 
 也可用：`./nlm` · `nlm status` · `nlm doctor` · `nlm stop` · `nlm repair` · `nlm logs` · `nlm update`
 
+非交互（CI / 脚本）：`nlm start --yes --no-open` 或 `NLM_YES=1`
+
 Linux 辅助：`./scripts/start_local.sh` · `./scripts/dev.sh`
 
 轻量无菜单（Windows）：

@@ -36,6 +36,19 @@ import webbrowser
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+def _force_utf8_stdio() -> None:
+    """Avoid GBK UnicodeEncodeError on Windows (✓ / rich panels / redirected logs)."""
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
+_force_utf8_stdio()
+
 ROOT = Path(__file__).resolve().parents[1]
 VENV_PY = ROOT / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
     "python.exe" if os.name == "nt" else "python"
@@ -294,7 +307,8 @@ def _ensure_rich() -> bool:
                 "accent": "bold turquoise2",
             }
         )
-        console = Console(theme=theme)
+        # legacy_windows=False avoids Win32 console path that blows up on GBK + ✓
+        console = Console(theme=theme, legacy_windows=False, soft_wrap=True)
         Prompt, Confirm = _Prompt, _Confirm
         Panel, Table, Progress = _Panel, _Table, _Progress
         SpinnerColumn, TextColumn = _SC, _TC
@@ -350,7 +364,8 @@ def step(title: str) -> None:
 
 
 def ok(msg: str) -> None:
-    console.print(f"[ok]✓[/ok] {msg}" if HAS_RICH else f"✓ {msg}")
+    # ASCII markers — never emit ✓/✗ (GBK consoles / redirected pipes crash)
+    console.print(f"[ok]+[/ok] {msg}" if HAS_RICH else f"+ {msg}")
 
 
 def warn(msg: str) -> None:
@@ -358,11 +373,11 @@ def warn(msg: str) -> None:
 
 
 def err(msg: str) -> None:
-    console.print(f"[err]✗[/err] {msg}" if HAS_RICH else f"✗ {msg}")
+    console.print(f"[err]x[/err] {msg}" if HAS_RICH else f"x {msg}")
 
 
 def info(msg: str) -> None:
-    console.print(f"[info]·[/info] {msg}" if HAS_RICH else f"· {msg}")
+    console.print(f"[info]*[/info] {msg}" if HAS_RICH else f"* {msg}")
 
 
 def run_cmd(
@@ -826,13 +841,13 @@ def config_wizard(*, non_interactive: bool = False) -> None:
 
 def install_crawl(*, ask: bool = True) -> bool:
     step("Install web crawl stack (Crawl4AI + Playwright)")
-    if ask and not Confirm.ask("Crawl4AI 体积较大（含 Chromium）。继续安装？", default=True):
+    if ask and not confirm("Crawl4AI 体积较大（含 Chromium）。继续安装？", default=False):
         info("Skipped crawl install")
         return False
     return install_deps(force=True, with_crawl=True)
 
 
-def check_web_static() -> None:
+def check_web_static(*, offer_build: bool = True) -> None:
     index = ROOT / "web-static" / "index.html"
     if index.is_file():
         ok("web-static ready")
@@ -849,7 +864,9 @@ def check_web_static() -> None:
         return
     if not (ROOT / "web" / "package.json").is_file():
         return
-    if Confirm.ask(f"检测到 Node v{major}，现在构建前端？", default=True):
+    if not offer_build:
+        return
+    if confirm(f"检测到 Node v{major}，现在构建前端？", default=False):
         with progress_ctx() as progress:
             progress.add_task("npm install && npm run build", total=None)
             try:
@@ -943,12 +960,26 @@ def repair() -> None:
     ensure_env_file()
     fix_docker_urls_in_env()
     free_ports()
-    check_web_static()
+    check_web_static(offer_build=False)
     ok("Repair pass complete")
     console.print(diagnose())
 
 
-def setup_flow(*, force: bool = False, with_crawl: bool = False, skip_config: bool = False) -> bool:
+def setup_flow(
+    *,
+    force: bool = False,
+    with_crawl: bool = False,
+    skip_config: bool = False,
+    quiet_ok: bool = False,
+) -> bool:
+    """Install/repair local env. Prompts only on first-time / when needed / TTY."""
+    if quiet_ok and not needs_setup(force=force) and not with_crawl:
+        ensure_dirs()
+        ensure_env_file()
+        fix_docker_urls_in_env()
+        ok("Environment already ready — skipping interactive setup")
+        return True
+
     banner()
     step("Environment check")
     console.print(diagnose())
@@ -959,8 +990,8 @@ def setup_flow(*, force: bool = False, with_crawl: bool = False, skip_config: bo
     if not ensure_venv():
         return False
     if Path(sys.executable).resolve() != venv_python().resolve() and venv_python().is_file():
-        info("Switching into .venv …")
-        os.execv(str(venv_python()), [str(venv_python()), str(Path(__file__).resolve()), *sys.argv[1:]])
+        reexec_in_venv()
+        return False  # unreachable on POSIX; Windows raises SystemExit
 
     ensure_dirs()
     if not install_deps(force=force, with_crawl=with_crawl):
@@ -968,16 +999,87 @@ def setup_flow(*, force: bool = False, with_crawl: bool = False, skip_config: bo
         return False
     ensure_env_file()
     fix_docker_urls_in_env()
+
+    first_time = not _has_any_api_key()
     if not skip_config:
-        env = read_env()
-        need = not any(env.get(p["key_var"]) for p in PROVIDER_PRESETS.values())
-        if need or Confirm.ask("运行模型配置向导？", default=need):
+        if first_time:
+            if auto_yes() or not sys.stdin.isatty():
+                info("No API key — demo echo mode (later: nlm config)")
+            elif confirm("未检测到模型 API Key，运行配置向导？", default=True):
+                config_wizard()
+            else:
+                info("Demo echo mode — later: nlm config")
+        elif not auto_yes() and sys.stdin.isatty() and confirm("运行模型配置向导？", default=False):
             config_wizard()
-    if with_crawl or Confirm.ask("安装网页爬取能力 (Crawl4AI)？", default=False):
+
+    if with_crawl:
         install_crawl(ask=False)
-    check_web_static()
+    elif first_time and not auto_yes() and sys.stdin.isatty() and confirm(
+        "安装网页爬取能力 (Crawl4AI)？", default=False
+    ):
+        install_crawl(ask=False)
+
+    check_web_static(offer_build=first_time and sys.stdin.isatty() and not auto_yes())
     ok("Setup finished")
     return True
+
+
+def auto_yes() -> bool:
+    """Non-interactive mode: NLM_YES=1 or --yes (set via env by main)."""
+    return os.environ.get("NLM_YES", "").strip().lower() in ("1", "true", "yes", "y")
+
+
+def confirm(prompt: str, *, default: bool = True) -> bool:
+    if auto_yes():
+        return default
+    if not sys.stdin.isatty():
+        return default
+    return Confirm.ask(prompt, default=default)
+
+
+def deps_hash_ok() -> bool:
+    if not REQ.exists():
+        return True
+    digest = file_sha256(REQ)
+    prev = REQ_HASH.read_text(encoding="utf-8").strip() if REQ_HASH.exists() else ""
+    return digest == prev
+
+
+def venv_imports_ok() -> bool:
+    if not venv_python().is_file():
+        return False
+    try:
+        subprocess.check_output(
+            [str(venv_python()), "-c", "import fastapi, uvicorn, pydantic"],
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def needs_setup(*, force: bool = False) -> bool:
+    if force:
+        return True
+    if not venv_python().is_file():
+        return True
+    if not ENV_PATH.exists():
+        return True
+    if not deps_hash_ok():
+        return True
+    if not venv_imports_ok():
+        return True
+    return False
+
+
+def reexec_in_venv() -> None:
+    """Re-run this script under .venv (Windows-safe: subprocess, not execv)."""
+    target = [str(venv_python()), str(Path(__file__).resolve()), *sys.argv[1:]]
+    info(f"Switching into .venv …")
+    if os.name == "nt":
+        raise SystemExit(subprocess.call(target, cwd=str(ROOT)))
+    os.execv(target[0], target)
 
 
 def _has_any_api_key() -> bool:
@@ -1017,7 +1119,9 @@ def _terminate_process(proc: subprocess.Popen) -> None:
 
 def start_flow(*, open_browser: bool = True, skip_setup: bool = False) -> int:
     if not skip_setup:
-        if not setup_flow(skip_config=_has_any_api_key()):
+        # One-command path: only full setup when something is missing;
+        # never re-prompt crawl/config on every subsequent start.
+        if not setup_flow(quiet_ok=True):
             return 1
     else:
         banner()
@@ -1173,7 +1277,7 @@ def menu() -> int:
     if choice == "0":
         return 0
     if choice == "1":
-        return start_flow(open_browser=Confirm.ask("启动后打开浏览器？", default=True))
+        return start_flow(open_browser=confirm("启动后打开浏览器？", default=True))
     if choice == "2":
         repair()
         return 0
@@ -1216,21 +1320,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_start = sub.add_parser("start", help="One-shot setup + launch")
     p_start.add_argument("--no-open", action="store_true")
     p_start.add_argument("--skip-setup", action="store_true")
+    p_start.add_argument("--yes", "-y", action="store_true", help="Non-interactive (accept defaults)")
 
     p_setup = sub.add_parser("setup", help="Install env/deps and configure")
     p_setup.add_argument("--force", action="store_true")
     p_setup.add_argument("--crawl", action="store_true")
     p_setup.add_argument("--skip-config", action="store_true")
+    p_setup.add_argument("--yes", "-y", action="store_true")
 
     sub.add_parser("config", help="Provider / model / API wizard")
     sub.add_parser("crawl", help="Install Crawl4AI + Playwright")
     sub.add_parser("status", help="Health check")
     sub.add_parser("stop", help="Free local ports")
-    sub.add_parser("restart", help="Stop then start")
-    sub.add_parser("repair", help="Auto-fix common issues")
+    p_restart = sub.add_parser("restart", help="Stop then start")
+    p_restart.add_argument("--yes", "-y", action="store_true")
+    p_restart.add_argument("--no-open", action="store_true")
+    p_repair = sub.add_parser("repair", help="Auto-fix common issues")
+    p_repair.add_argument("--yes", "-y", action="store_true")
     sub.add_parser("doctor", help="Full diagnostics")
     sub.add_parser("open", help="Open Web UI")
-    sub.add_parser("update", help="git pull + re-run setup")
+    p_update = sub.add_parser("update", help="git pull + re-run setup")
+    p_update.add_argument("--yes", "-y", action="store_true")
     sub.add_parser("menu", help="Interactive menu (default)")
 
     p_logs = sub.add_parser("logs", help="Tail logs/")
@@ -1238,6 +1348,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_logs.add_argument("--no-follow", action="store_true")
 
     args = parser.parse_args(argv)
+    if getattr(args, "yes", False):
+        os.environ["NLM_YES"] = "1"
     cmd = args.cmd or "menu"
 
     if cmd == "menu":
@@ -1261,7 +1373,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if cmd == "restart":
         free_ports()
-        return start_flow(open_browser=True, skip_setup=True)
+        return start_flow(open_browser=not getattr(args, "no_open", False), skip_setup=True)
     if cmd == "repair":
         repair()
         return 0
