@@ -21,6 +21,7 @@
 | [multi-backend-subagents.md](./multi-backend-subagents.md) | ACP / backends |
 | [agent-teams.md](./agent-teams.md) | Experimental teams |
 | [headless-sdk.md](./headless-sdk.md) | Python / headless control |
+| [knowledge-base.md](./knowledge-base.md) | **Local KB** — tools, Dock UI, sync, optional embeddings / WeKnora |
 | [deferred.md](./deferred.md) | Done vs still deferred |
 
 Frontend extension notes: [`web/docs/`](../web/docs/).

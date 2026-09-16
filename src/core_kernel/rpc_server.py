@@ -522,6 +522,197 @@ def create_kernel_app() -> FastAPI:
         n = await user_gate.deny_session_gates(session_id, reason=reason)
         return RpcEnvelope(ok=True, data={"denied": n, "session_id": session_id})
 
+    # ----- Knowledge base (SQLite owned by kernel) -----
+
+    def _kb_store():
+        from src.core_kernel.plugin_runtime.knowledge_store import KnowledgeStore
+
+        return KnowledgeStore(state["session_factory"])
+
+    @app.get("/rpc/knowledge/docs")
+    async def kb_list_docs(workspace_id: str = "", limit: int = 50):
+        store = _kb_store()
+        await store.ensure_schema()
+        docs = await store.list_docs(workspace_id=workspace_id or "", limit=min(max(limit, 1), 200))
+        return RpcEnvelope(ok=True, data={"docs": docs})
+
+    @app.get("/rpc/knowledge/search")
+    async def kb_search(query: str = "", workspace_id: str = "", limit: int = 8):
+        store = _kb_store()
+        await store.ensure_schema()
+        q = (query or "").strip()
+        if not q:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "query required"})
+        hits = await store.search(q, workspace_id=workspace_id or "", limit=min(max(limit, 1), 40))
+        return RpcEnvelope(ok=True, data={"query": q, "results": hits})
+
+    @app.get("/rpc/knowledge/docs/{doc_id}")
+    async def kb_get_doc(doc_id: str, include_chunks: bool = False):
+        store = _kb_store()
+        await store.ensure_schema()
+        row = await store.get(doc_id, include_chunks=include_chunks)
+        if not row:
+            return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"doc not found: {doc_id}"})
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.get("/rpc/knowledge/docs/{doc_id}/read")
+    async def kb_read_doc(
+        doc_id: str,
+        offset: int = 0,
+        limit: int = 4000,
+        chunk_index: Optional[int] = None,
+        neighbors: int = 1,
+    ):
+        store = _kb_store()
+        await store.ensure_schema()
+        row = await store.read(
+            doc_id,
+            offset=offset,
+            limit=limit,
+            chunk_index=chunk_index,
+            neighbors=neighbors,
+        )
+        if not row:
+            return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"doc not found: {doc_id}"})
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.post("/rpc/knowledge/docs")
+    async def kb_add_doc(request: Request):
+        from uuid import uuid4
+
+        from src.core_kernel.plugin_runtime.knowledge_store import content_hash
+        from src.core_kernel.plugin_runtime.knowledge_sync import stable_doc_id_for_path
+
+        store = _kb_store()
+        await store.ensure_schema()
+        body = await request.json()
+        if not isinstance(body, dict):
+            return RpcEnvelope(ok=False, error={"code": "BAD", "message": "JSON object required"})
+        path_arg = str(body.get("path") or "").strip()
+        title = str(body.get("title") or "").strip()
+        content = str(body.get("content") or "")
+        tags = str(body.get("tags") or "")
+        source = str(body.get("source") or "")
+        source_uri = str(body.get("source_uri") or "")
+        workspace_id = str(body.get("workspace_id") or "")
+        doc_id = str(body.get("doc_id") or "").strip()
+        cwd = str(body.get("cwd") or "").strip()
+
+        if path_arg:
+            from pathlib import Path
+
+            if not cwd:
+                return RpcEnvelope(
+                    ok=False,
+                    error={"code": "NO_CWD", "message": "path requires cwd"},
+                )
+            root = Path(cwd).resolve()
+            target = (root / path_arg).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                return RpcEnvelope(
+                    ok=False,
+                    error={"code": "PATH", "message": "path escapes workspace"},
+                )
+            if not target.is_file():
+                return RpcEnvelope(
+                    ok=False,
+                    error={"code": "NOT_FOUND", "message": f"file not found: {path_arg}"},
+                )
+            content = target.read_text(encoding="utf-8", errors="replace")
+            rel = target.relative_to(root).as_posix()
+            if not title:
+                title = target.stem
+            source = f"file:{rel}"
+            source_uri = rel
+            if not doc_id:
+                doc_id = stable_doc_id_for_path(rel)
+
+        if not content and not path_arg:
+            return RpcEnvelope(
+                ok=False,
+                error={"code": "EMPTY", "message": "content or path required"},
+            )
+        if not title:
+            title = doc_id or "untitled"
+        if not doc_id:
+            doc_id = f"kb_{uuid4().hex[:12]}"
+
+        row = await store.upsert(
+            doc_id=doc_id,
+            title=title,
+            content=content,
+            tags=tags,
+            source=source,
+            source_uri=source_uri,
+            workspace_id=workspace_id,
+            content_hash_value=content_hash(content),
+        )
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.delete("/rpc/knowledge/docs/{doc_id}")
+    async def kb_delete_doc(doc_id: str):
+        store = _kb_store()
+        await store.ensure_schema()
+        ok = await store.delete(doc_id)
+        return RpcEnvelope(ok=True, data={"ok": ok, "doc_id": doc_id})
+
+    @app.post("/rpc/knowledge/sync/docs")
+    async def kb_sync_workspace_docs(request: Request):
+        from src.core_kernel.plugin_runtime.knowledge_sync import sync_workspace_docs
+
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        cwd = str(body.get("cwd") or "").strip()
+        if not cwd:
+            return RpcEnvelope(ok=False, error={"code": "NO_CWD", "message": "cwd required"})
+        workspace_id = str(body.get("workspace_id") or "")
+        max_files = int(body.get("max_files") or 400)
+        data = await sync_workspace_docs(
+            store,
+            cwd,
+            workspace_id=workspace_id,
+            max_files=max(1, min(max_files, 2000)),
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/rpc/knowledge/sync/feishu")
+    async def kb_sync_feishu(request: Request):
+        from src.core_kernel.plugin_runtime.knowledge_sync import FeishuWikiConnector
+
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        connector = FeishuWikiConnector(
+            space_id=str(body.get("space_id") or ""),
+            enabled=bool(body.get("enabled")),
+        )
+        data = await connector.sync_into(
+            store, workspace_id=str(body.get("workspace_id") or "")
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/rpc/knowledge/sync/log")
+    async def kb_sync_log(workspace_id: str = "", limit: int = 40):
+        store = _kb_store()
+        await store.ensure_schema()
+        rows = await store.list_sync_log(
+            workspace_id=workspace_id or "", limit=min(max(limit, 1), 100)
+        )
+        return RpcEnvelope(ok=True, data={"entries": rows})
+
     return app
 
 

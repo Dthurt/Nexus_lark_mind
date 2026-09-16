@@ -598,3 +598,94 @@ export async function installPluginZip(file: File): Promise<any> {
 export function listAcpBackends(): Promise<{ backends: string[] }> {
   return apiGet("/api/acp/backends");
 }
+
+// ----- Knowledge base -----
+
+export type KnowledgeDoc = {
+  doc_id: string;
+  title?: string;
+  content?: string;
+  content_len?: number;
+  tags?: string;
+  source?: string;
+  source_uri?: string;
+  content_hash?: string;
+  workspace_id?: string;
+  updated_at?: string | null;
+  snippet?: string;
+  score?: number;
+  chunk_id?: string;
+};
+
+export type KnowledgeHit = KnowledgeDoc & {
+  chunk_id?: string;
+  chunk_index?: number;
+  heading?: string;
+  snippet?: string;
+  score?: number;
+};
+
+export function listKnowledgeDocs(params?: {
+  workspace_id?: string;
+  limit?: number;
+}): Promise<{ docs: KnowledgeDoc[] }> {
+  const q = new URLSearchParams();
+  if (params?.workspace_id) q.set("workspace_id", params.workspace_id);
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return apiGet(`/api/knowledge/docs${qs ? `?${qs}` : ""}`);
+}
+
+export function searchKnowledge(params: {
+  query: string;
+  workspace_id?: string;
+  limit?: number;
+}): Promise<{ query: string; results: KnowledgeHit[] }> {
+  const q = new URLSearchParams();
+  q.set("query", params.query);
+  if (params.workspace_id) q.set("workspace_id", params.workspace_id);
+  if (params.limit != null) q.set("limit", String(params.limit));
+  return apiGet(`/api/knowledge/search?${q.toString()}`);
+}
+
+export function getKnowledgeDoc(
+  docId: string,
+  includeChunks = false,
+): Promise<KnowledgeDoc> {
+  const q = includeChunks ? "?include_chunks=true" : "";
+  return apiGet(`/api/knowledge/docs/${encodeURIComponent(docId)}${q}`);
+}
+
+export function addKnowledgeDoc(body: {
+  title?: string;
+  content?: string;
+  path?: string;
+  tags?: string;
+  doc_id?: string;
+  source?: string;
+  workspace_id?: string;
+  cwd?: string;
+}): Promise<KnowledgeDoc> {
+  return apiPost("/api/knowledge/docs", body);
+}
+
+export function deleteKnowledgeDoc(
+  docId: string,
+): Promise<{ ok: boolean; doc_id: string }> {
+  return apiDelete(`/api/knowledge/docs/${encodeURIComponent(docId)}`);
+}
+
+export function syncKnowledgeDocs(body: {
+  cwd: string;
+  workspace_id?: string;
+  max_files?: number;
+}): Promise<{
+  scanned?: number;
+  added?: number;
+  updated?: number;
+  skipped?: number;
+  errors?: string[];
+}> {
+  return apiPost("/api/knowledge/sync/docs", body);
+}
+

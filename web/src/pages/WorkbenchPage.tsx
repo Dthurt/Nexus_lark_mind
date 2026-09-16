@@ -729,6 +729,7 @@ export function WorkbenchPage({
           draft={actions.input}
           teamId={sessionId}
           sessionId={sessionId}
+          workspaceId={workspaceId}
           delivery={delivery}
           onInspectJob={onInspectTool}
           onStopJob={() => void actions.stopGeneration(currentTaskId)}

@@ -85,7 +85,11 @@ async def init_database(settings: Optional[Settings] = None) -> async_sessionmak
         )
         # Import models so metadata is populated
         from src.infrastructure.storage import models  # noqa: F401
-        from src.core_kernel.plugin_runtime.knowledge_store import KnowledgeDoc  # noqa: F401
+        from src.core_kernel.plugin_runtime.knowledge_store import (  # noqa: F401
+            KnowledgeChunk,
+            KnowledgeDoc,
+            KnowledgeSyncLog,
+        )
 
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)

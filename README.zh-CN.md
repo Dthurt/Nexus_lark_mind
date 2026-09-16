@@ -24,6 +24,7 @@
 - ✅ 分层架构 — Adapters → Orchestrator → Core Kernel（仅 Kernel 读写 SQLite）
 - ✅ 插件运行时 — CLI 脚本、MCP 配置、RPC 加载/卸载/调用
 - ✅ React 工作台 — 主题、Canvas 侧栏、工具视图、工作区绑定（本机 + SSH）
+- ✅ 本地知识库 — SQLite 分块检索、Dock 面板、可选 embeddings / WeKnora 桥（见 [docs/knowledge-base.md](docs/knowledge-base.md)）
 - ✅ Docker 或本地开发 — memory broker 快速迭代，无需 Redis
 
 ## 目录
@@ -217,7 +218,7 @@ docker compose up --build -d
 - 压缩策略：`COMPACTION_AGGRESSIVENESS=conservative|balanced|aggressive`
 - 工作区挂载：`NLM_HOST_WORKSPACE=...`
 
-详见 [docs/architecture.md](docs/architecture.md)、[docs/workspaces.md](docs/workspaces.md)、[docs/interaction-modes.md](docs/interaction-modes.md)、[docs/canvas.md](docs/canvas.md)、[docs/context-and-diff.md](docs/context-and-diff.md)、[docs/diagrams.md](docs/diagrams.md)、[docs/client-architecture.md](docs/client-architecture.md)、[docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md)（Skills / Fork / Hooks / JSONL）。
+详见 [docs/architecture.md](docs/architecture.md)、[docs/workspaces.md](docs/workspaces.md)、[docs/interaction-modes.md](docs/interaction-modes.md)、[docs/canvas.md](docs/canvas.md)、[docs/context-and-diff.md](docs/context-and-diff.md)、[docs/diagrams.md](docs/diagrams.md)、[docs/client-architecture.md](docs/client-architecture.md)、[docs/knowledge-base.md](docs/knowledge-base.md)（本地知识库）、[docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md)（Skills / Fork / Hooks / JSONL）。
 
 ## 插件
 

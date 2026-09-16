@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
+  BookOpen,
   Gauge,
   History,
   Package,
@@ -21,6 +22,7 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { TeamsPanel } from "@/components/layout/TeamsPanel";
 import { DeliveryPanel } from "@/components/layout/DeliveryPanel";
+import { KnowledgePanel } from "@/components/layout/KnowledgePanel";
 import { MarketplacePanel } from "@/components/layout/MarketplacePanel";
 import { ExtensionsPanel } from "@/components/layout/ExtensionsPanel";
 import type { MarketplaceCatalog } from "@/api/endpoints";
@@ -49,6 +51,7 @@ export type RightDockController = ReturnType<typeof useRightDock>;
 
 const RAIL_TAB_META: Record<string, { title: string; Icon: LucideIcon }> = {
   plugins: { title: "插件", Icon: Puzzle },
+  knowledge: { title: "知识库", Icon: BookOpen },
   delivery: { title: "Delivery", Icon: Package },
   teams: { title: "Teams", Icon: Users },
   jobs: { title: "Jobs", Icon: Wrench },
@@ -111,6 +114,7 @@ export type RightDockProps = {
   /** Plan→Diagram→Changes delivery artifact. */
   delivery?: DeliveryArtifactApi | null;
   sessionId?: string;
+  workspaceId?: string;
   onTogglePlugin?: (pluginId: string, enabled: boolean) => void | Promise<void>;
   onReload?: () => void | Promise<void>;
   onReloadOne?: (pluginId: string) => void | Promise<void>;
@@ -165,6 +169,7 @@ export function RightDock({
   teamId = "",
   delivery = null,
   sessionId = "",
+  workspaceId = "",
   onTogglePlugin,
   onReload,
   onReloadOne,
@@ -411,6 +416,9 @@ export function RightDock({
                     onInstallPluginZip={onInstallPluginZip}
                     onEnableFromMarket={(id) => void onTogglePlugin?.(id, true)}
                   />
+                )}
+                {kind === "knowledge" && (
+                  <KnowledgePanel cwd={cwd} workspaceId={workspaceId} />
                 )}
                 {kind === "teams" && <TeamsPanel teamId={teamId} />}
                 {kind === "delivery" && delivery ? (

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  BookOpen,
   Bot,
   Gauge,
   GitFork,
@@ -44,7 +45,9 @@ export type CommandPaletteProps = {
   onSetCenterView?: (view: CenterViewId) => void;
   onToggleCanvas?: () => void;
   onNewCanvas?: () => void;
-  onOpenDockTab?: (tab: "plugins" | "activity" | "usage" | "inspector") => void;
+  onOpenDockTab?: (
+    tab: "plugins" | "knowledge" | "activity" | "usage" | "inspector",
+  ) => void;
   onToggleTools?: () => void;
   onOpenSettings?: () => void;
   onCycleTheme?: () => void;
@@ -179,6 +182,10 @@ export function CommandPalette({
           <CommandItem onSelect={() => run(() => onOpenDockTab?.("plugins"))}>
             <Puzzle className="mr-2 size-4" />
             插件
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => onOpenDockTab?.("knowledge"))}>
+            <BookOpen className="mr-2 size-4" />
+            知识库
           </CommandItem>
           <CommandItem onSelect={() => run(() => onOpenDockTab?.("activity"))}>
             <Search className="mr-2 size-4" />

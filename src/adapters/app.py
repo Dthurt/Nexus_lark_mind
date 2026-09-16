@@ -1215,6 +1215,107 @@ def create_adapters_app() -> FastAPI:
         data = build_marketplace(installed_ids=installed_ids)
         return RpcEnvelope(ok=True, data=data)
 
+    # ----- Knowledge base (proxied to kernel SQLite) -----
+
+    @app.get("/api/knowledge/docs")
+    async def knowledge_list(workspace_id: str = "", limit: int = 50):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            "/rpc/knowledge/docs",
+            params={"workspace_id": workspace_id or "", "limit": limit},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/search")
+    async def knowledge_search(query: str = "", workspace_id: str = "", limit: int = 8):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            "/rpc/knowledge/search",
+            params={"query": query, "workspace_id": workspace_id or "", "limit": limit},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/docs/{doc_id}")
+    async def knowledge_get(doc_id: str, include_chunks: bool = False):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            f"/rpc/knowledge/docs/{doc_id}",
+            params={"include_chunks": include_chunks},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/docs/{doc_id}/read")
+    async def knowledge_read(
+        doc_id: str,
+        offset: int = 0,
+        limit: int = 4000,
+        chunk_index: Optional[int] = None,
+        neighbors: int = 1,
+    ):
+        kernel: RpcClient = state["kernel"]
+        params: Dict[str, Any] = {
+            "offset": offset,
+            "limit": limit,
+            "neighbors": neighbors,
+        }
+        if chunk_index is not None:
+            params["chunk_index"] = chunk_index
+        data = await kernel.call(
+            "GET",
+            f"/rpc/knowledge/docs/{doc_id}/read",
+            params=params,
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/docs")
+    async def knowledge_add(request: Request):
+        kernel: RpcClient = state["kernel"]
+        body = await request.json()
+        payload = dict(body) if isinstance(body, dict) else {}
+        data = await kernel.call("POST", "/rpc/knowledge/docs", json=payload)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.delete("/api/knowledge/docs/{doc_id}")
+    async def knowledge_delete(doc_id: str):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call("DELETE", f"/rpc/knowledge/docs/{doc_id}")
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/sync/docs")
+    async def knowledge_sync_docs(request: Request):
+        kernel: RpcClient = state["kernel"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        payload = dict(body) if isinstance(body, dict) else {}
+        data = await kernel.call("POST", "/rpc/knowledge/sync/docs", json=payload)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/sync/feishu")
+    async def knowledge_sync_feishu(request: Request):
+        kernel: RpcClient = state["kernel"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        payload = dict(body) if isinstance(body, dict) else {}
+        data = await kernel.call("POST", "/rpc/knowledge/sync/feishu", json=payload)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/sync/log")
+    async def knowledge_sync_log(workspace_id: str = "", limit: int = 40):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            "/rpc/knowledge/sync/log",
+            params={"workspace_id": workspace_id or "", "limit": limit},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
     @app.post("/api/plugins/install")
     async def install_plugin_package(request: Request):
         """Install a local plugin package (directory path or uploaded zip)."""
