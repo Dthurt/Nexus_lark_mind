@@ -42,9 +42,15 @@ chmod +x nlm          # 首次
 ./nlm setup
 ./nlm config
 ./nlm crawl
-./nlm status
+./nlm status          # doctor
+./nlm doctor
 ./nlm stop
+./nlm restart
 ./nlm repair
+./nlm logs
+./nlm update          # git pull + setup
+./scripts/start_local.sh start|stop|status
+./scripts/dev.sh                 # Vite HMR
 ```
 
 **Windows**
@@ -56,8 +62,12 @@ nlm setup
 nlm config
 nlm crawl
 nlm status
+nlm doctor
 nlm stop
+nlm restart
 nlm repair
+nlm logs
+nlm update
 ```
 
 PowerShell：
@@ -71,12 +81,12 @@ PowerShell：
 
 `nlm` 会：
 
-1. 检查 Python / `.venv` / 端口 / `web-static` / API Key
-2. 按需创建 venv 并安装 `requirements.txt`（变化时）
-3. 交互配置默认供应商、Base URL、模型名、API Key → 写入 `.env`
-4. 可选安装 **Crawl4AI + Playwright**（网页爬取）
-5. 自动修复常见问题（Docker 残留 URL、占用端口等）
-6. 启动三服务并可选打开浏览器
+1. 检查 Python / `.venv` / 端口 / `web-static` / Node / API Key
+2. 按需创建 venv；**多镜像重试**安装依赖（官方 / 清华 / 阿里 / 豆瓣）
+3. Rich 装不上时自动降级纯文本 UI（不再崩溃）
+4. 交互配置供应商（含 Custom OpenAI-compatible）→ 写入 `.env`
+5. 损坏 `.venv` / 占用端口自动修复；可选 Crawl4AI
+6. Ctrl+C 优雅停服；`nlm repair` / `nlm update` 自愈与升级
 
 ---
 
@@ -118,6 +128,14 @@ scripts\start_local.bat
 
 ```bat
 scripts\dev.bat
+```
+
+Linux / macOS：
+
+```bash
+./scripts/dev.sh
+./scripts/dev.sh --no-open
+./scripts/dev.sh --backend-only
 ```
 
 ```powershell

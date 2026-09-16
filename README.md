@@ -239,7 +239,9 @@ chmod +x nlm && ./nlm start
 nlm start
 ```
 
-Also: `./nlm` · `nlm status` · `nlm stop` · `nlm repair`
+Also: `./nlm` · `nlm status` · `nlm doctor` · `nlm stop` · `nlm repair` · `nlm logs` · `nlm update`
+
+Linux helpers: `./scripts/start_local.sh` · `./scripts/dev.sh`
 
 Lightweight (Windows, no menu):
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nexus Lark Mind — premium local console (one command to setup + run).
+"""Nexus Lark Mind — cross-platform local console (self-install / self-repair).
 
 Usage:
   nlm                 Interactive menu (recommended)
@@ -9,7 +9,11 @@ Usage:
   nlm crawl           Install Crawl4AI + Playwright browsers
   nlm status          Health check
   nlm stop            Free ports 8000/8001/8002
+  nlm restart         Stop then start
   nlm repair          Auto-fix common local issues
+  nlm doctor          Full diagnostics
+  nlm logs            Tail logs/
+  nlm update          git pull + re-run setup
   nlm open            Open Web UI in browser
 """
 
@@ -20,15 +24,17 @@ import hashlib
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 VENV_PY = ROOT / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
@@ -40,6 +46,16 @@ REQ_HASH = ROOT / ".venv" / ".nlm_req_hash"
 ENV_PATH = ROOT / ".env"
 ENV_EXAMPLE = ROOT / ".env.example"
 PORTS = (8000, 8001, 8002)
+LOG_DIR = ROOT / "logs"
+TEXT_COL = "[progress.description]{task.description}"
+
+# Prefer official PyPI, then common CN mirrors (helps when one index times out).
+PIP_INDEXES: Tuple[str, ...] = (
+    "https://pypi.org/simple",
+    "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "https://mirrors.aliyun.com/pypi/simple",
+    "https://pypi.douban.com/simple",
+)
 
 PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
     "glm": {
@@ -82,47 +98,228 @@ PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap rich (may not be installed yet)
+# Plain UI fallback (when rich cannot be installed — e.g. offline / bad mirror)
 # ---------------------------------------------------------------------------
 
-def _ensure_rich() -> Any:
+class _PlainConsole:
+    def print(self, *args: Any, **kwargs: Any) -> None:
+        parts = []
+        for a in args:
+            parts.append(str(a))
+        text = " ".join(parts)
+        text = re.sub(r"\[/?[^\]]+\]", "", text)
+        print(text, flush=True)
+
+
+class _PlainPrompt:
+    @staticmethod
+    def ask(prompt: str, *, choices: Optional[List[str]] = None, default: Any = None, password: bool = False) -> str:
+        hint = f" [{default}]" if default is not None else ""
+        while True:
+            try:
+                if password:
+                    import getpass
+
+                    raw = getpass.getpass(f"{prompt}{hint}: ")
+                else:
+                    raw = input(f"{prompt}{hint}: ")
+            except EOFError:
+                raw = ""
+            val = (raw or "").strip() or ("" if default is None else str(default))
+            if choices is None or val in choices:
+                return val
+            print(f"Choose one of: {', '.join(choices)}", flush=True)
+
+
+class _PlainConfirm:
+    @staticmethod
+    def ask(prompt: str, *, default: bool = True) -> bool:
+        yn = "Y/n" if default else "y/N"
+        try:
+            raw = input(f"{prompt} [{yn}]: ").strip().lower()
+        except EOFError:
+            raw = ""
+        if not raw:
+            return default
+        return raw in ("y", "yes", "1", "true")
+
+
+class _PlainPanel:
+    def __init__(self, renderable: Any, **kwargs: Any) -> None:
+        self.renderable = renderable
+
+    def __str__(self) -> str:
+        return str(self.renderable)
+
+
+class _PlainTable:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.rows: List[Tuple[str, ...]] = []
+        self.title = kwargs.get("title", "")
+
+    def add_column(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def add_row(self, *cells: Any) -> None:
+        self.rows.append(tuple(str(c) for c in cells))
+
+    def __str__(self) -> str:
+        lines = [self.title] if self.title else []
+        for row in self.rows:
+            lines.append("  |  ".join(re.sub(r"\[/?[^\]]+\]", "", c) for c in row))
+        return "\n".join(lines)
+
+
+class _PlainProgress:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._desc = ""
+
+    def __enter__(self) -> "_PlainProgress":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def add_task(self, description: str = "", total: Any = None) -> int:
+        self._desc = description
+        print(f"  … {description}", flush=True)
+        return 0
+
+    def update(self, task_id: int, description: Optional[str] = None, **kwargs: Any) -> None:
+        if description:
+            self._desc = description
+            print(f"  … {description}", flush=True)
+
+
+HAS_RICH = False
+console: Any = _PlainConsole()
+Prompt: Any = _PlainPrompt
+Confirm: Any = _PlainConfirm
+Panel: Any = _PlainPanel
+Table: Any = _PlainTable
+Progress: Any = _PlainProgress
+SpinnerColumn: Any = object
+TextColumn: Any = object
+Align: Any = None
+Group: Any = None
+Rule: Any = None
+Text: Any = None
+box: Any = None
+
+
+def _pip_install(packages: Sequence[str], *, python: Optional[str] = None, quiet: bool = True) -> bool:
+    """Install packages trying multiple indexes until one succeeds."""
+    py = python or sys.executable
+    q = ["-q"] if quiet else []
+    last_err = ""
+    for index in PIP_INDEXES:
+        cmd = [
+            py,
+            "-m",
+            "pip",
+            "install",
+            *q,
+            "--retries",
+            "2",
+            "--timeout",
+            "30",
+            "-i",
+            index,
+            *packages,
+        ]
+        print(f"[nlm] pip install ({index}) …", flush=True)
+        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+        if proc.returncode == 0:
+            return True
+        last_err = (proc.stderr or proc.stdout or "").strip()[-400:]
+        print(f"[nlm] index failed, trying next…", flush=True)
+    if last_err:
+        print(f"[nlm] pip error: {last_err}", flush=True)
+    return False
+
+
+def _pip_install_requirements(req_file: Path, *, python: Optional[str] = None) -> bool:
+    py = python or sys.executable
+    last_err = ""
+    for index in PIP_INDEXES:
+        cmd = [
+            py,
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "--retries",
+            "2",
+            "--timeout",
+            "60",
+            "-i",
+            index,
+            "-r",
+            str(req_file),
+        ]
+        print(f"[nlm] pip install -r {req_file.name} ({index}) …", flush=True)
+        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+        if proc.returncode == 0:
+            return True
+        last_err = (proc.stderr or proc.stdout or "").strip()[-500:]
+        print(f"[nlm] index failed, trying next…", flush=True)
+    if last_err:
+        print(f"[nlm] pip error: {last_err}", flush=True)
+    return False
+
+
+def _ensure_rich() -> bool:
+    global HAS_RICH, console, Prompt, Confirm, Panel, Table, Progress
+    global SpinnerColumn, TextColumn, Align, Group, Rule, Text, box
     try:
-        from rich.console import Console
-        from rich import box  # noqa: F401
+        from rich import box as _box
+        from rich.align import Align as _Align
+        from rich.console import Console, Group as _Group
+        from rich.panel import Panel as _Panel
+        from rich.progress import Progress as _Progress, SpinnerColumn as _SC, TextColumn as _TC
+        from rich.prompt import Confirm as _Confirm, Prompt as _Prompt
+        from rich.rule import Rule as _Rule
+        from rich.table import Table as _Table
+        from rich.text import Text as _Text
+        from rich.theme import Theme
+
+        theme = Theme(
+            {
+                "info": "cyan",
+                "ok": "bold green",
+                "warn": "bold yellow",
+                "err": "bold red",
+                "muted": "dim",
+                "brand": "bold cyan",
+                "accent": "bold turquoise2",
+            }
+        )
+        console = Console(theme=theme)
+        Prompt, Confirm = _Prompt, _Confirm
+        Panel, Table, Progress = _Panel, _Table, _Progress
+        SpinnerColumn, TextColumn = _SC, _TC
+        Align, Group, Rule, Text, box = _Align, _Group, _Rule, _Text, _box
+        HAS_RICH = True
         return True
     except ImportError:
         print("[nlm] Installing rich (terminal UI)…", flush=True)
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-q", "rich==13.9.4"],
-        )
-        return True
+        if not _pip_install(["rich==13.9.4"]):
+            print("[nlm] WARN: rich unavailable — using plain text UI", flush=True)
+            return False
+        try:
+            return _ensure_rich()
+        except Exception:
+            print("[nlm] WARN: rich import failed — using plain text UI", flush=True)
+            return False
 
 
 _ensure_rich()
 
-from rich import box
-from rich.align import Align
-from rich.console import Console, Group
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.prompt import Confirm, Prompt
-from rich.rule import Rule
-from rich.table import Table
-from rich.text import Text
-from rich.theme import Theme
 
-THEME = Theme(
-    {
-        "info": "cyan",
-        "ok": "bold green",
-        "warn": "bold yellow",
-        "err": "bold red",
-        "muted": "dim",
-        "brand": "bold cyan",
-        "accent": "bold turquoise2",
-    }
-)
-console = Console(theme=THEME)
+def progress_ctx() -> Any:
+    if HAS_RICH:
+        return Progress(SpinnerColumn(), TextColumn(TEXT_COL), console=console)
+    return Progress()
 
 
 # ---------------------------------------------------------------------------
@@ -130,41 +327,42 @@ console = Console(theme=THEME)
 # ---------------------------------------------------------------------------
 
 def banner() -> None:
-    # Prefer a compact brand panel — avoids legacy code-page mojibake of big ASCII art.
-    title = Text()
-    title.append("NEXUS LARK MIND", style="bold cyan")
-    title.append("\n")
-    title.append("Local Console", style="turquoise2")
-    title.append("  ·  ", style="dim")
-    title.append("setup · configure · crawl · start · repair", style="dim")
-    console.print(
-        Panel(
-            Align.center(title),
-            border_style="cyan",
-            box=box.DOUBLE_EDGE,
-            padding=(1, 4),
-        )
-    )
+    if HAS_RICH and Align is not None and Text is not None:
+        title = Text()
+        title.append("NEXUS LARK MIND", style="bold cyan")
+        title.append("\n")
+        title.append("Local Console", style="turquoise2")
+        title.append("  ·  ", style="dim")
+        title.append("setup · configure · crawl · start · repair", style="dim")
+        console.print(Panel(Align.center(title), border_style="cyan", box=box.DOUBLE_EDGE, padding=(1, 4)))
+    else:
+        print("=" * 60, flush=True)
+        print("  NEXUS LARK MIND · Local Console", flush=True)
+        print("  setup · configure · crawl · start · repair", flush=True)
+        print("=" * 60, flush=True)
 
 
 def step(title: str) -> None:
-    console.print(Rule(f"[accent]{title}[/accent]", style="cyan"))
+    if HAS_RICH and Rule is not None:
+        console.print(Rule(f"[accent]{title}[/accent]", style="cyan"))
+    else:
+        print(f"\n=== {title} ===", flush=True)
 
 
 def ok(msg: str) -> None:
-    console.print(f"[ok]✓[/ok] {msg}")
+    console.print(f"[ok]✓[/ok] {msg}" if HAS_RICH else f"✓ {msg}")
 
 
 def warn(msg: str) -> None:
-    console.print(f"[warn]![/warn] {msg}")
+    console.print(f"[warn]![/warn] {msg}" if HAS_RICH else f"! {msg}")
 
 
 def err(msg: str) -> None:
-    console.print(f"[err]✗[/err] {msg}")
+    console.print(f"[err]✗[/err] {msg}" if HAS_RICH else f"✗ {msg}")
 
 
 def info(msg: str) -> None:
-    console.print(f"[info]·[/info] {msg}")
+    console.print(f"[info]·[/info] {msg}" if HAS_RICH else f"· {msg}")
 
 
 def run_cmd(
@@ -205,7 +403,6 @@ def read_env(path: Path = ENV_PATH) -> Dict[str, str]:
 
 
 def write_env_value(key: str, value: str, path: Path = ENV_PATH) -> None:
-    """Upsert KEY=value in .env, preserving comments/order when possible."""
     if not path.exists():
         if ENV_EXAMPLE.exists():
             path.write_text(ENV_EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
@@ -224,20 +421,15 @@ def write_env_value(key: str, value: str, path: Path = ENV_PATH) -> None:
     if not replaced:
         if new_lines and new_lines[-1].strip():
             new_lines.append("")
-        new_lines.append(f"# set by nlm wizard")
+        new_lines.append("# set by nlm wizard")
         new_lines.append(f"{key}={value}")
     path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
 def find_system_python() -> Optional[str]:
-    """Prefer a real 3.11+ interpreter on Windows, Linux, and macOS."""
     if os.name == "nt":
-        candidates = [
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Python/Python312/python.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Python/Python311/python.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Python/Python313/python.exe",
-        ]
-        for c in candidates:
+        for ver in ("Python312", "Python311", "Python313"):
+            c = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Python" / ver / "python.exe"
             if c.is_file():
                 return str(c)
     else:
@@ -245,11 +437,8 @@ def find_system_python() -> Optional[str]:
             p = shutil.which(name)
             if p:
                 return p
-
-    # Prefer the interpreter currently running this script if it's 3.11+
     if sys.version_info >= (3, 11):
         return sys.executable
-
     for name in ("python3", "python"):
         p = shutil.which(name)
         if p and "WindowsApps" not in p:
@@ -263,7 +452,7 @@ def venv_python() -> Path:
 
 def ensure_dirs() -> None:
     (ROOT / "data").mkdir(exist_ok=True)
-    (ROOT / "logs").mkdir(exist_ok=True)
+    LOG_DIR.mkdir(exist_ok=True)
 
 
 def port_in_use(port: int) -> bool:
@@ -276,11 +465,7 @@ def _pids_listening_on_port(port: int) -> set[int]:
     pids: set[int] = set()
     if os.name == "nt":
         try:
-            out = subprocess.check_output(
-                ["netstat", "-ano"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
+            out = subprocess.check_output(["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL)
         except Exception:
             return pids
         for line in out.splitlines():
@@ -293,14 +478,9 @@ def _pids_listening_on_port(port: int) -> set[int]:
                         pass
         return pids
 
-    # Linux / macOS: lsof → fuser → ss
     if shutil.which("lsof"):
         try:
-            out = subprocess.check_output(
-                ["lsof", "-ti", f":{port}"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
+            out = subprocess.check_output(["lsof", "-ti", f":{port}"], text=True, stderr=subprocess.DEVNULL)
             for tok in out.split():
                 try:
                     pids.add(int(tok))
@@ -308,18 +488,12 @@ def _pids_listening_on_port(port: int) -> set[int]:
                     pass
             if pids:
                 return pids
-        except subprocess.CalledProcessError:
-            pass
-        except Exception:
+        except (subprocess.CalledProcessError, Exception):
             pass
 
     if shutil.which("fuser"):
         try:
-            out = subprocess.check_output(
-                ["fuser", f"{port}/tcp"],
-                text=True,
-                stderr=subprocess.STDOUT,
-            )
+            out = subprocess.check_output(["fuser", f"{port}/tcp"], text=True, stderr=subprocess.STDOUT)
             for tok in out.replace(":", " ").split():
                 try:
                     pids.add(int(tok))
@@ -328,8 +502,7 @@ def _pids_listening_on_port(port: int) -> set[int]:
             if pids:
                 return pids
         except subprocess.CalledProcessError as exc:
-            blob = exc.output or ""
-            for tok in str(blob).replace(":", " ").split():
+            for tok in str(exc.output or "").replace(":", " ").split():
                 try:
                     pids.add(int(tok))
                 except ValueError:
@@ -342,9 +515,7 @@ def _pids_listening_on_port(port: int) -> set[int]:
     if shutil.which("ss"):
         try:
             out = subprocess.check_output(
-                ["ss", "-ltnp", f"sport = :{port}"],
-                text=True,
-                stderr=subprocess.DEVNULL,
+                ["ss", "-ltnp", f"sport = :{port}"], text=True, stderr=subprocess.DEVNULL
             )
             for m in re.finditer(r"pid=(\d+)", out):
                 pids.add(int(m.group(1)))
@@ -354,26 +525,17 @@ def _pids_listening_on_port(port: int) -> set[int]:
 
 
 def free_ports() -> None:
-    import signal
-
     for port in PORTS:
         pids = _pids_listening_on_port(port)
         if not pids and port_in_use(port):
             warn(f"Port {port} busy but PID unknown — free it manually.")
             continue
         for pid in sorted(pids):
-            if pid <= 0:
-                continue
-            # Never kill our own process tree by accident on weird PID 0/1
-            if pid == os.getpid() or pid == 1:
+            if pid <= 0 or pid == os.getpid() or pid == 1:
                 continue
             info(f"Stopping PID {pid} on :{port}")
             if os.name == "nt":
-                subprocess.run(
-                    ["taskkill", "/F", "/PID", str(pid)],
-                    capture_output=True,
-                    check=False,
-                )
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False)
             else:
                 try:
                     os.kill(pid, signal.SIGTERM)
@@ -382,17 +544,12 @@ def free_ports() -> None:
                 except PermissionError:
                     warn(f"No permission to stop PID {pid} on :{port}")
                     continue
-                # Brief wait then escalate
                 time.sleep(0.4)
                 try:
                     os.kill(pid, 0)
-                except ProcessLookupError:
-                    continue
-                try:
                     os.kill(pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
                     pass
-
 
 
 def health_urls() -> List[Tuple[str, str]]:
@@ -403,16 +560,16 @@ def health_urls() -> List[Tuple[str, str]]:
     ]
 
 
-def probe_health(timeout: float = 2.0) -> Table:
-    table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="accent")
+def probe_health(timeout: float = 2.0) -> Any:
+    table = Table(box=box.SIMPLE_HEAVY if HAS_RICH else None, show_header=True, header_style="accent")
     table.add_column("Service")
     table.add_column("URL")
     table.add_column("Status")
     for name, url in health_urls():
         try:
             with urllib.request.urlopen(url, timeout=timeout) as resp:
-                code = getattr(resp, "status", 200)
-                if 200 <= int(code) < 300:
+                code = int(getattr(resp, "status", 200))
+                if 200 <= code < 300:
                     table.add_row(name, url, "[ok]OK[/ok]")
                 else:
                     table.add_row(name, url, f"[err]HTTP {code}[/err]")
@@ -449,7 +606,21 @@ def local_runtime_env() -> Dict[str, str]:
     env["WEB_STATIC_DIR"] = "web-static"
     env["DATABASE_URL"] = "sqlite+aiosqlite:///data/nexus.db"
     env["PYTHONPATH"] = str(ROOT)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     return env
+
+
+def node_major_version() -> Optional[int]:
+    node = shutil.which("node")
+    if not node:
+        return None
+    try:
+        out = subprocess.check_output([node, "--version"], text=True, stderr=subprocess.DEVNULL).strip()
+        m = re.match(r"v?(\d+)", out)
+        return int(m.group(1)) if m else None
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -468,14 +639,29 @@ def ensure_venv() -> bool:
     py = find_system_python()
     if not py:
         err("Python 3.11+ not found. Install from https://www.python.org/downloads/ (Add to PATH).")
+        if os.name != "nt":
+            info("Linux tip: sudo apt install python3 python3-venv python3-pip")
         return False
     if venv_python().is_file():
-        ok(f"venv ready · {venv_python()}")
-        return True
+        # Sanity: broken venv?
+        try:
+            subprocess.check_output([str(venv_python()), "-c", "import sys"], stderr=subprocess.DEVNULL)
+            ok(f"venv ready · {venv_python()}")
+            return True
+        except Exception:
+            warn("Broken .venv detected — recreating")
+            shutil.rmtree(ROOT / ".venv", ignore_errors=True)
     step("Create virtualenv")
-    with Progress(SpinnerColumn(), TextColumn(), console=console) as progress:
+    with progress_ctx() as progress:
         progress.add_task("python -m venv .venv", total=None)
-        run_cmd([py, "-m", "venv", str(ROOT / ".venv")])
+        try:
+            run_cmd([py, "-m", "venv", str(ROOT / ".venv")])
+        except subprocess.CalledProcessError:
+            err("venv creation failed. On Debian/Ubuntu: sudo apt install python3-venv")
+            return False
+    if not venv_python().is_file():
+        err("venv created but python binary missing")
+        return False
     ok("Created .venv")
     return True
 
@@ -493,31 +679,40 @@ def install_deps(*, force: bool = False, with_crawl: bool = False) -> bool:
         want = True
 
     if not want:
-        ok("Python deps up to date (use setup --force to reinstall)")
+        ok("Python deps up to date (use setup --force / repair to reinstall)")
         return True
 
     step("Install Python dependencies")
     py = str(venv_python())
-    with Progress(SpinnerColumn(), TextColumn(), console=console) as progress:
-        t = progress.add_task("pip install -r requirements.txt", total=None)
-        run_cmd([py, "-m", "pip", "install", "-q", "--upgrade", "pip"])
-        run_cmd([py, "-m", "pip", "install", "-q", "-r", str(REQ)])
+    with progress_ctx() as progress:
+        t = progress.add_task("upgrade pip", total=None)
+        _pip_install(["--upgrade", "pip"], python=py)
+        progress.update(t, description="pip install -r requirements.txt")
+        if not _pip_install_requirements(REQ, python=py):
+            err("Failed to install requirements.txt from all mirrors")
+            return False
         progress.update(t, description="requirements.txt OK")
         if with_crawl and REQ_CRAWL.exists():
             progress.update(t, description="pip install crawl4ai…")
-            run_cmd([py, "-m", "pip", "install", "-q", "-r", str(REQ_CRAWL)])
-            progress.update(t, description="crawl4ai-setup (Playwright)…")
-            crawl_bin = ROOT / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
-                "crawl4ai-setup.exe" if os.name == "nt" else "crawl4ai-setup"
-            )
-            if crawl_bin.exists():
-                run_cmd([str(crawl_bin)], check=False)
+            if not _pip_install_requirements(REQ_CRAWL, python=py):
+                warn("Crawl4AI install failed — core stack still usable")
             else:
-                run_cmd(
-                    [py, "-c", "import shutil,subprocess; p=shutil.which('crawl4ai-setup'); "
-                     "subprocess.call([p] if p else ['echo','crawl4ai-setup not found'])"],
-                    check=False,
+                progress.update(t, description="crawl4ai-setup (Playwright)…")
+                crawl_bin = ROOT / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
+                    "crawl4ai-setup.exe" if os.name == "nt" else "crawl4ai-setup"
                 )
+                if crawl_bin.exists():
+                    run_cmd([str(crawl_bin)], check=False)
+                else:
+                    run_cmd(
+                        [
+                            py,
+                            "-c",
+                            "import shutil,subprocess; p=shutil.which('crawl4ai-setup'); "
+                            "raise SystemExit(subprocess.call([p]) if p else 0)",
+                        ],
+                        check=False,
+                    )
     if REQ.exists():
         REQ_HASH.parent.mkdir(parents=True, exist_ok=True)
         REQ_HASH.write_text(file_sha256(REQ), encoding="utf-8")
@@ -538,11 +733,11 @@ def ensure_env_file() -> None:
 
 
 def fix_docker_urls_in_env() -> None:
-    """Replace compose hostnames with localhost for script mode."""
+    """Normalize known Docker-compose service hostnames for local script mode."""
     if not ENV_PATH.exists():
         return
     env = read_env()
-    changes = {
+    local_defaults = {
         "KERNEL_RPC_URL": "http://127.0.0.1:8001",
         "ORCHESTRATOR_RPC_URL": "http://127.0.0.1:8002",
         "REDIS_URL": "memory://local",
@@ -550,16 +745,24 @@ def fix_docker_urls_in_env() -> None:
         "WEB_STATIC_DIR": "web-static",
         "DATABASE_URL": "sqlite+aiosqlite:///data/nexus.db",
     }
+    # Only rewrite keys we own for service discovery — never touch model base URLs.
+    dockerish = {
+        "KERNEL_RPC_URL": ("core-kernel", "http://kernel", "kernel:"),
+        "ORCHESTRATOR_RPC_URL": ("orchestrator:", "http://orchestrator"),
+        "REDIS_URL": ("redis://redis",),
+        "PLUGINS_DIR": ("/app/plugins",),
+        "WEB_STATIC_DIR": ("/app/web-static",),
+        "DATABASE_URL": ("/app/data",),
+    }
     dirty = False
-    for k, v in changes.items():
+    for k, v in local_defaults.items():
         cur = env.get(k, "")
-        if k == "REDIS_URL" and cur.startswith("redis://redis"):
+        if not cur and k in ("KERNEL_RPC_URL", "ORCHESTRATOR_RPC_URL", "REDIS_URL"):
             write_env_value(k, v)
             dirty = True
-        elif "core-kernel" in cur or "orchestrator:" in cur or cur.startswith("/app/"):
-            write_env_value(k, v)
-            dirty = True
-        elif k in ("KERNEL_RPC_URL", "ORCHESTRATOR_RPC_URL") and not cur:
+            continue
+        markers = dockerish.get(k, ())
+        if any(m in cur for m in markers):
             write_env_value(k, v)
             dirty = True
     if dirty:
@@ -573,28 +776,44 @@ def config_wizard(*, non_interactive: bool = False) -> None:
         info("Non-interactive: skipped prompts (edit .env later)")
         return
 
-    console.print(
-        Panel(
-            "选择默认供应商并填写 API Key / Base URL / 模型名。\n"
-            "可稍后在 Web Settings → Models 再改。",
-            title="Configuration",
-            border_style="cyan",
-        )
+    body = (
+        "选择默认供应商并填写 API Key / Base URL / 模型名。\n"
+        "可稍后在 Web Settings → Models 再改。"
+        if HAS_RICH
+        else "Configure default provider / API key / base URL / model."
     )
+    console.print(Panel(body, title="Configuration", border_style="cyan") if HAS_RICH else body)
+
     keys = list(PROVIDER_PRESETS.keys())
-    labels = [f"{i+1}. {PROVIDER_PRESETS[k]['label']}  ({k})" for i, k in enumerate(keys)]
-    console.print("\n".join(labels))
-    console.print("5. 跳过（稍后再配）")
-    choice = Prompt.ask("选择", choices=["1", "2", "3", "4", "5"], default="1")
-    if choice == "5":
+    for i, k in enumerate(keys, 1):
+        console.print(f"{i}. {PROVIDER_PRESETS[k]['label']}  ({k})")
+    console.print("5. Custom OpenAI-compatible (vLLM / Ollama / LM Studio / Azure…)")
+    console.print("6. 跳过（稍后再配）")
+    choice = Prompt.ask("选择", choices=["1", "2", "3", "4", "5", "6"], default="1")
+    if choice == "6":
         info("Skipped provider config")
         return
+
+    if choice == "5":
+        console.print("\nCustom OpenAI-compatible endpoint")
+        api_key = Prompt.ask("OPENAI_API_KEY (可空)", password=True, default="")
+        base = Prompt.ask("OPENAI_BASE_URL", default="http://127.0.0.1:11434/v1")
+        model = Prompt.ask("DEFAULT_MODEL_NAME", default="llama3.2")
+        write_env_value("DEFAULT_MODEL_PROVIDER", "openai")
+        write_env_value("DEFAULT_MODEL_NAME", model)
+        write_env_value("OPENAI_BASE_URL", base)
+        write_env_value("OPENAI_DEFAULT_MODEL", model)
+        if api_key.strip():
+            write_env_value("OPENAI_API_KEY", api_key.strip())
+        ok(f"Default provider → openai (custom) / {model}")
+        return
+
     pid = keys[int(choice) - 1]
     preset = PROVIDER_PRESETS[pid]
-    console.print(f"\n[accent]{preset['label']}[/accent]")
-    api_key = Prompt.ask(f"{preset['key_var']}", password=True, default="")
-    base = Prompt.ask(f"{preset['base_var']}", default=preset["default_base"])
-    model = Prompt.ask(f"{preset['model_var']}", default=preset["default_model"])
+    console.print(f"\n{preset['label']}")
+    api_key = Prompt.ask(preset["key_var"], password=True, default="")
+    base = Prompt.ask(preset["base_var"], default=preset["default_base"])
+    model = Prompt.ask(preset["model_var"], default=preset["default_model"])
 
     write_env_value("DEFAULT_MODEL_PROVIDER", preset["provider_id"])
     write_env_value("DEFAULT_MODEL_NAME", model)
@@ -619,24 +838,34 @@ def check_web_static() -> None:
         ok("web-static ready")
         return
     warn("web-static/index.html missing — UI on :8000 will be empty until you build")
-    node = shutil.which("node")
+    major = node_major_version()
     npm = shutil.which("npm")
-    if node and npm and (ROOT / "web" / "package.json").is_file():
-        if Confirm.ask("检测到 Node.js，现在构建前端？", default=True):
-            with Progress(SpinnerColumn(), TextColumn(), console=console) as progress:
-                progress.add_task("npm install && npm run build", total=None)
+    if major is None or not npm:
+        info("Tip: install Node.js 20+ LTS, then: cd web && npm install && npm run build")
+        info("Or use scripts/dev.sh (Linux) / scripts/dev.bat (Windows) for Vite HMR")
+        return
+    if major < 18:
+        warn(f"Node v{major} is too old — need 18+ (prefer 20 LTS)")
+        return
+    if not (ROOT / "web" / "package.json").is_file():
+        return
+    if Confirm.ask(f"检测到 Node v{major}，现在构建前端？", default=True):
+        with progress_ctx() as progress:
+            progress.add_task("npm install && npm run build", total=None)
+            try:
                 run_cmd([npm, "install"], cwd=ROOT / "web")
                 run_cmd([npm, "run", "build"], cwd=ROOT / "web")
-            if index.is_file():
-                ok("Frontend built → web-static/")
-            else:
-                err("Build finished but index.html still missing")
-    else:
-        info("Tip: install Node 20+ then run scripts\\build_web.bat, or use scripts\\dev.bat for HMR")
+            except subprocess.CalledProcessError as exc:
+                err(f"Frontend build failed: {exc}")
+                return
+        if index.is_file():
+            ok("Frontend built → web-static/")
+        else:
+            err("Build finished but index.html still missing")
 
 
-def diagnose() -> Table:
-    table = Table(title="Environment", box=box.ROUNDED, border_style="cyan")
+def diagnose() -> Any:
+    table = Table(title="Environment", box=box.ROUNDED if HAS_RICH else None, border_style="cyan")
     table.add_column("Check")
     table.add_column("Result")
     good, py_msg = check_python()
@@ -647,15 +876,18 @@ def diagnose() -> Table:
         "web-static",
         "[ok]yes[/ok]" if (ROOT / "web-static" / "index.html").is_file() else "[warn]missing[/warn]",
     )
+    major = node_major_version()
+    if major is None:
+        table.add_row("Node.js", "[muted]optional · not installed[/muted]")
+    elif major < 18:
+        table.add_row("Node.js", f"[warn]v{major} (need 18+)[/warn]")
+    else:
+        table.add_row("Node.js", f"[ok]v{major}[/ok]")
     env = read_env()
     prov = env.get("DEFAULT_MODEL_PROVIDER") or "(unset)"
     model = env.get("DEFAULT_MODEL_NAME") or "(unset)"
     table.add_row("Default model", f"{prov} / {model}")
-    key_ok = False
-    for p in PROVIDER_PRESETS.values():
-        if env.get(p["key_var"]):
-            key_ok = True
-            break
+    key_ok = any(env.get(p["key_var"]) for p in PROVIDER_PRESETS.values())
     table.add_row("API key", "[ok]configured[/ok]" if key_ok else "[warn]none (demo echo mode)[/warn]")
     for port in PORTS:
         table.add_row(f"Port :{port}", "[warn]busy[/warn]" if port_in_use(port) else "[ok]free[/ok]")
@@ -665,7 +897,39 @@ def diagnose() -> Table:
         table.add_row("Crawl4AI", "[ok]installed[/ok]")
     except Exception:
         table.add_row("Crawl4AI", "[muted]optional · not installed[/muted]")
+    table.add_row("Rich UI", "[ok]yes[/ok]" if HAS_RICH else "[warn]plain fallback[/warn]")
     return table
+
+
+def doctor() -> int:
+    banner()
+    step("Doctor")
+    console.print(diagnose())
+    console.print(probe_health())
+    issues = 0
+    good, _ = check_python()
+    if not good:
+        issues += 1
+        err("Python < 3.11")
+    if not venv_python().is_file():
+        issues += 1
+        err("Missing .venv — run: nlm setup")
+    elif REQ.exists():
+        digest = file_sha256(REQ)
+        prev = REQ_HASH.read_text(encoding="utf-8").strip() if REQ_HASH.exists() else ""
+        if digest != prev:
+            issues += 1
+            warn("requirements.txt changed since last install — run: nlm repair")
+    if not ENV_PATH.exists():
+        issues += 1
+        warn("Missing .env — run: nlm config")
+    if not (ROOT / "web-static" / "index.html").is_file():
+        warn("Missing web-static — UI empty until build")
+    if issues == 0:
+        ok("Doctor: no critical issues")
+    else:
+        warn(f"Doctor: {issues} issue(s) — try: nlm repair")
+    return 0 if issues == 0 else 1
 
 
 def repair() -> None:
@@ -673,7 +937,9 @@ def repair() -> None:
     ensure_dirs()
     if not ensure_venv():
         return
-    install_deps(force=True)
+    if not install_deps(force=True):
+        err("Dependency repair failed")
+        return
     ensure_env_file()
     fix_docker_urls_in_env()
     free_ports()
@@ -692,13 +958,14 @@ def setup_flow(*, force: bool = False, with_crawl: bool = False, skip_config: bo
         return False
     if not ensure_venv():
         return False
-    # Re-exec under venv if we're on system python without deps
     if Path(sys.executable).resolve() != venv_python().resolve() and venv_python().is_file():
         info("Switching into .venv …")
         os.execv(str(venv_python()), [str(venv_python()), str(Path(__file__).resolve()), *sys.argv[1:]])
 
     ensure_dirs()
-    install_deps(force=force, with_crawl=with_crawl)
+    if not install_deps(force=force, with_crawl=with_crawl):
+        err("Dependency install failed — try another network / nlm repair")
+        return False
     ensure_env_file()
     fix_docker_urls_in_env()
     if not skip_config:
@@ -706,7 +973,7 @@ def setup_flow(*, force: bool = False, with_crawl: bool = False, skip_config: bo
         need = not any(env.get(p["key_var"]) for p in PROVIDER_PRESETS.values())
         if need or Confirm.ask("运行模型配置向导？", default=need):
             config_wizard()
-    if with_crawl or Confirm.ask("安装网页爬取能力 (Crawl4AI)？", default=True):
+    if with_crawl or Confirm.ask("安装网页爬取能力 (Crawl4AI)？", default=False):
         install_crawl(ask=False)
     check_web_static()
     ok("Setup finished")
@@ -716,6 +983,36 @@ def setup_flow(*, force: bool = False, with_crawl: bool = False, skip_config: bo
 def _has_any_api_key() -> bool:
     env = read_env()
     return any(bool(env.get(p["key_var"])) for p in PROVIDER_PRESETS.values())
+
+
+def _terminate_process(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        else:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    free_ports()
 
 
 def start_flow(*, open_browser: bool = True, skip_setup: bool = False) -> int:
@@ -733,21 +1030,31 @@ def start_flow(*, open_browser: bool = True, skip_setup: bool = False) -> int:
     console.print(diagnose())
 
     step("Launch")
-    console.print(
-        Panel(
-            Group(
-                Text.from_markup("[accent]Web UI[/accent]        http://127.0.0.1:8000"),
-                Text.from_markup("[accent]Kernel[/accent]        http://127.0.0.1:8001/health"),
-                Text.from_markup("[accent]Orchestrator[/accent]  http://127.0.0.1:8002/health"),
-                Text.from_markup("[muted]Broker[/muted]         memory://local"),
-                Text(""),
-                Text.from_markup("[muted]Ctrl+C to stop · nlm stop · nlm status[/muted]"),
-            ),
-            title="Services",
-            border_style="green",
-            box=box.ROUNDED,
-        )
+    urls = (
+        "Web UI        http://127.0.0.1:8000\n"
+        "Kernel        http://127.0.0.1:8001/health\n"
+        "Orchestrator  http://127.0.0.1:8002/health\n"
+        "Broker        memory://local\n\n"
+        "Ctrl+C to stop · nlm stop · nlm status"
     )
+    if HAS_RICH and Group is not None and Text is not None:
+        console.print(
+            Panel(
+                Group(
+                    Text.from_markup("[accent]Web UI[/accent]        http://127.0.0.1:8000"),
+                    Text.from_markup("[accent]Kernel[/accent]        http://127.0.0.1:8001/health"),
+                    Text.from_markup("[accent]Orchestrator[/accent]  http://127.0.0.1:8002/health"),
+                    Text.from_markup("[muted]Broker[/muted]         memory://local"),
+                    Text(""),
+                    Text.from_markup("[muted]Ctrl+C to stop · nlm stop · nlm status[/muted]"),
+                ),
+                title="Services",
+                border_style="green",
+                box=box.ROUNDED,
+            )
+        )
+    else:
+        print(urls, flush=True)
 
     env = local_runtime_env()
     py = str(venv_python() if venv_python().is_file() else sys.executable)
@@ -760,41 +1067,109 @@ def start_flow(*, open_browser: bool = True, skip_setup: bool = False) -> int:
                 except Exception:
                     pass
 
-        import threading
-
         threading.Thread(target=_open, daemon=True).start()
 
+    popen_kwargs: Dict[str, Any] = {"cwd": str(ROOT), "env": env}
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    proc = subprocess.Popen([py, "-m", "src.entry_local"], **popen_kwargs)
+
+    def _on_signal(signum: int, frame: Any) -> None:
+        warn("Stopping services…")
+        _terminate_process(proc)
+        raise SystemExit(0)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _on_signal)
+        except Exception:
+            pass
+
     try:
-        proc = subprocess.Popen(
-            [py, "-m", "src.entry_local"],
-            cwd=str(ROOT),
-            env=env,
-        )
-        return proc.wait()
+        return int(proc.wait() or 0)
     except KeyboardInterrupt:
-        console.print("\n[warn]Stopping…[/warn]")
-        free_ports()
+        warn("Stopping…")
+        _terminate_process(proc)
         return 0
+
+
+def cmd_logs(*, follow: bool = True, lines: int = 80) -> int:
+    ensure_dirs()
+    logs = sorted(LOG_DIR.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not logs:
+        warn(f"No log files in {LOG_DIR}")
+        info("Services may log to stdout only when started via nlm start")
+        return 0
+    target = logs[0]
+    info(f"Tailing {target.name} (last {lines} lines)")
+    try:
+        content = target.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in content[-lines:]:
+            print(line)
+    except Exception as exc:
+        err(str(exc))
+        return 1
+    if not follow:
+        return 0
+    info("Follow mode — Ctrl+C to stop")
+    try:
+        with target.open("r", encoding="utf-8", errors="replace") as fh:
+            fh.seek(0, os.SEEK_END)
+            while True:
+                line = fh.readline()
+                if line:
+                    print(line, end="")
+                else:
+                    time.sleep(0.4)
+    except KeyboardInterrupt:
+        return 0
+
+
+def cmd_update() -> int:
+    step("Update from git")
+    if not (ROOT / ".git").is_dir():
+        err("Not a git checkout — cannot pull")
+        return 1
+    try:
+        run_cmd(["git", "pull", "--ff-only"])
+        ok("git pull OK")
+    except subprocess.CalledProcessError:
+        err("git pull failed — resolve conflicts / check network")
+        return 1
+    return 0 if setup_flow(force=True, skip_config=True) else 1
 
 
 def menu() -> int:
     banner()
     console.print(diagnose())
     console.print()
-    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
-    table.add_column("Key", style="accent", width=4)
-    table.add_column("Action")
-    table.add_row("1", "一键启动  — 环境检查 → 依赖 → 配置 → 启动（推荐）")
-    table.add_row("2", "安装 / 修复环境")
-    table.add_row("3", "配置向导  — 默认供应商 / 模型 / API Key / Base URL")
-    table.add_row("4", "安装网页爬取 (Crawl4AI + Playwright)")
-    table.add_row("5", "状态检查")
-    table.add_row("6", "停止服务（释放 8000–8002）")
-    table.add_row("7", "打开 Web UI")
-    table.add_row("0", "退出")
-    console.print(Panel(table, title="Menu", border_style="cyan", box=box.ROUNDED))
+    rows = [
+        ("1", "一键启动  — 环境检查 → 依赖 → 配置 → 启动（推荐）"),
+        ("2", "安装 / 修复环境 (repair)"),
+        ("3", "配置向导  — 供应商 / 模型 / API Key / Base URL"),
+        ("4", "安装网页爬取 (Crawl4AI + Playwright)"),
+        ("5", "状态检查 / Doctor"),
+        ("6", "停止服务（释放 8000–8002）"),
+        ("7", "打开 Web UI"),
+        ("8", "查看日志 (logs)"),
+        ("9", "更新代码 (git pull + setup)"),
+        ("0", "退出"),
+    ]
+    if HAS_RICH:
+        table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+        table.add_column("Key", style="accent", width=4)
+        table.add_column("Action")
+        for k, v in rows:
+            table.add_row(k, v)
+        console.print(Panel(table, title="Menu", border_style="cyan", box=box.ROUNDED))
+    else:
+        for k, v in rows:
+            print(f"  {k}. {v}")
 
-    choice = Prompt.ask("选择", choices=list("01234567"), default="1")
+    choice = Prompt.ask("选择", choices=[r[0] for r in rows], default="1")
     if choice == "0":
         return 0
     if choice == "1":
@@ -811,8 +1186,7 @@ def menu() -> int:
         install_crawl()
         return 0
     if choice == "5":
-        console.print(probe_health())
-        return 0
+        return doctor()
     if choice == "6":
         free_ports()
         ok("Ports cleared")
@@ -821,11 +1195,18 @@ def menu() -> int:
         webbrowser.open("http://127.0.0.1:8000")
         ok("Opened http://127.0.0.1:8000")
         return 0
+    if choice == "8":
+        return cmd_logs()
+    if choice == "9":
+        return cmd_update()
     return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     os.chdir(ROOT)
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
     parser = argparse.ArgumentParser(
         prog="nlm",
         description="Nexus Lark Mind local console — setup, configure, run, repair",
@@ -845,9 +1226,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("crawl", help="Install Crawl4AI + Playwright")
     sub.add_parser("status", help="Health check")
     sub.add_parser("stop", help="Free local ports")
+    sub.add_parser("restart", help="Stop then start")
     sub.add_parser("repair", help="Auto-fix common issues")
+    sub.add_parser("doctor", help="Full diagnostics")
     sub.add_parser("open", help="Open Web UI")
+    sub.add_parser("update", help="git pull + re-run setup")
     sub.add_parser("menu", help="Interactive menu (default)")
+
+    p_logs = sub.add_parser("logs", help="Tail logs/")
+    p_logs.add_argument("-n", "--lines", type=int, default=80)
+    p_logs.add_argument("--no-follow", action="store_true")
 
     args = parser.parse_args(argv)
     cmd = args.cmd or "menu"
@@ -866,20 +1254,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         ensure_venv()
         return 0 if install_crawl() else 1
     if cmd == "status":
-        banner()
-        console.print(diagnose())
-        console.print(probe_health())
-        return 0
+        return doctor()
     if cmd == "stop":
         free_ports()
         ok("Stopped")
         return 0
+    if cmd == "restart":
+        free_ports()
+        return start_flow(open_browser=True, skip_setup=True)
     if cmd == "repair":
         repair()
         return 0
+    if cmd == "doctor":
+        return doctor()
     if cmd == "open":
         webbrowser.open("http://127.0.0.1:8000")
         return 0
+    if cmd == "update":
+        return cmd_update()
+    if cmd == "logs":
+        return cmd_logs(follow=not args.no_follow, lines=args.lines)
     parser.print_help()
     return 2
 

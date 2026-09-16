@@ -37,6 +37,15 @@ jobs:
           mkdir -p data logs
           pytest -q --tb=short
 
+      - name: nlm boot console smoke
+        env:
+          PYTHONPATH: .
+          PYTHONUTF8: "1"
+        run: |
+          python -m py_compile scripts/nlm_boot.py
+          python scripts/nlm_boot.py --help
+          pytest -q --tb=short tests/test_nlm_boot_smoke.py
+
       - name: Perf smoke (compaction budget)
         env:
           PYTHONPATH: .

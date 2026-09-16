@@ -139,6 +139,8 @@ function Set-LocalEnv {
   $env:WEB_STATIC_DIR = "web-static"
   $env:DATABASE_URL = "sqlite+aiosqlite:///data/nexus.db"
   $env:PYTHONPATH = $Root
+  $env:PYTHONUTF8 = "1"
+  $env:PYTHONIOENCODING = "utf-8"
 }
 
 if ($Action -eq "help") {

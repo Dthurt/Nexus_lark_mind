@@ -237,7 +237,9 @@ chmod +x nlm && ./nlm start
 nlm start
 ```
 
-也可用：`./nlm` · `nlm status` · `nlm stop` · `nlm repair`
+也可用：`./nlm` · `nlm status` · `nlm doctor` · `nlm stop` · `nlm repair` · `nlm logs` · `nlm update`
+
+Linux 辅助：`./scripts/start_local.sh` · `./scripts/dev.sh`
 
 轻量无菜单（Windows）：
 
