@@ -284,9 +284,13 @@ def _pip_install_requirements(req_file: Path, *, python: Optional[str] = None) -
 def _ensure_rich() -> bool:
     global HAS_RICH, console, Prompt, Confirm, Panel, Table, Progress
     global SpinnerColumn, TextColumn, Align, Group, Rule, Text, box
-    try:
+
+    def _activate() -> bool:
+        global HAS_RICH, console, Prompt, Confirm, Panel, Table, Progress
+        global SpinnerColumn, TextColumn, Align, Group, Rule, Text, box
         from rich import box as _box
         from rich.align import Align as _Align
+        from rich.cells import cell_len
         from rich.console import Console, Group as _Group
         from rich.panel import Panel as _Panel
         from rich.progress import Progress as _Progress, SpinnerColumn as _SC, TextColumn as _TC
@@ -295,6 +299,10 @@ def _ensure_rich() -> bool:
         from rich.table import Table as _Table
         from rich.text import Text as _Text
         from rich.theme import Theme
+
+        # Python 3.13+ / Unicode 17 needs rich>=14.3 (_unicode_data.unicode17-0-0).
+        # Probe early so we fall back to plain UI instead of crashing on Confirm.ask.
+        cell_len("测试OK")
 
         theme = Theme(
             {
@@ -315,15 +323,24 @@ def _ensure_rich() -> bool:
         Align, Group, Rule, Text, box = _Align, _Group, _Rule, _Text, _box
         HAS_RICH = True
         return True
-    except ImportError:
-        print("[nlm] Installing rich (terminal UI)…", flush=True)
-        if not _pip_install(["rich==13.9.4"]):
+
+    try:
+        return _activate()
+    except Exception as first_exc:
+        print(f"[nlm] Installing/upgrading rich (terminal UI)… ({first_exc.__class__.__name__})", flush=True)
+        # Prefer a Unicode-17-capable build for Python 3.13+
+        if not _pip_install(["rich>=14.3.0,<15"]):
             print("[nlm] WARN: rich unavailable — using plain text UI", flush=True)
             return False
         try:
-            return _ensure_rich()
-        except Exception:
-            print("[nlm] WARN: rich import failed — using plain text UI", flush=True)
+            # Fresh import after upgrade
+            for mod in list(sys.modules):
+                if mod == "rich" or mod.startswith("rich."):
+                    del sys.modules[mod]
+            return _activate()
+        except Exception as exc:
+            print(f"[nlm] WARN: rich unusable ({exc}) — plain text UI", flush=True)
+            HAS_RICH = False
             return False
 
 
@@ -647,6 +664,10 @@ def check_python() -> Tuple[bool, str]:
     msg = f"Python {ver.major}.{ver.minor}.{ver.micro} ({sys.executable})"
     if ver < (3, 11):
         return False, msg + " — need 3.11+"
+    if ver >= (3, 14):
+        return False, msg + " — unsupported (use 3.11–3.13)"
+    if ver >= (3, 13):
+        msg += " — OK (prefer 3.11/3.12 if issues)"
     return True, msg
 
 
@@ -804,16 +825,16 @@ def config_wizard(*, non_interactive: bool = False) -> None:
         console.print(f"{i}. {PROVIDER_PRESETS[k]['label']}  ({k})")
     console.print("5. Custom OpenAI-compatible (vLLM / Ollama / LM Studio / Azure…)")
     console.print("6. 跳过（稍后再配）")
-    choice = Prompt.ask("选择", choices=["1", "2", "3", "4", "5", "6"], default="1")
+    choice = ask_text("选择", choices=["1", "2", "3", "4", "5", "6"], default="1")
     if choice == "6":
         info("Skipped provider config")
         return
 
     if choice == "5":
         console.print("\nCustom OpenAI-compatible endpoint")
-        api_key = Prompt.ask("OPENAI_API_KEY (可空)", password=True, default="")
-        base = Prompt.ask("OPENAI_BASE_URL", default="http://127.0.0.1:11434/v1")
-        model = Prompt.ask("DEFAULT_MODEL_NAME", default="llama3.2")
+        api_key = ask_text("OPENAI_API_KEY (可空)", password=True, default="")
+        base = ask_text("OPENAI_BASE_URL", default="http://127.0.0.1:11434/v1")
+        model = ask_text("DEFAULT_MODEL_NAME", default="llama3.2")
         write_env_value("DEFAULT_MODEL_PROVIDER", "openai")
         write_env_value("DEFAULT_MODEL_NAME", model)
         write_env_value("OPENAI_BASE_URL", base)
@@ -826,9 +847,9 @@ def config_wizard(*, non_interactive: bool = False) -> None:
     pid = keys[int(choice) - 1]
     preset = PROVIDER_PRESETS[pid]
     console.print(f"\n{preset['label']}")
-    api_key = Prompt.ask(preset["key_var"], password=True, default="")
-    base = Prompt.ask(preset["base_var"], default=preset["default_base"])
-    model = Prompt.ask(preset["model_var"], default=preset["default_model"])
+    api_key = ask_text(preset["key_var"], password=True, default="")
+    base = ask_text(preset["base_var"], default=preset["default_base"])
+    model = ask_text(preset["model_var"], default=preset["default_model"])
 
     write_env_value("DEFAULT_MODEL_PROVIDER", preset["provider_id"])
     write_env_value("DEFAULT_MODEL_NAME", model)
@@ -1034,7 +1055,27 @@ def confirm(prompt: str, *, default: bool = True) -> bool:
         return default
     if not sys.stdin.isatty():
         return default
-    return Confirm.ask(prompt, default=default)
+    try:
+        if HAS_RICH:
+            return bool(Confirm.ask(prompt, default=default))
+    except Exception as exc:
+        # Python 3.13 + old rich: ModuleNotFoundError unicode17-0-0 during render
+        print(f"[nlm] prompt fallback ({exc.__class__.__name__})", flush=True)
+    return bool(_PlainConfirm.ask(prompt, default=default))
+
+
+def ask_text(prompt: str, *, default: str = "", password: bool = False, choices: Optional[List[str]] = None) -> str:
+    try:
+        if HAS_RICH:
+            kwargs: Dict[str, Any] = {"default": default}
+            if password:
+                kwargs["password"] = True
+            if choices is not None:
+                kwargs["choices"] = choices
+            return str(Prompt.ask(prompt, **kwargs))
+    except Exception as exc:
+        print(f"[nlm] prompt fallback ({exc.__class__.__name__})", flush=True)
+    return str(_PlainPrompt.ask(prompt, default=default, password=password, choices=choices))
 
 
 def deps_hash_ok() -> bool:
@@ -1118,6 +1159,8 @@ def _terminate_process(proc: subprocess.Popen) -> None:
 
 
 def start_flow(*, open_browser: bool = True, skip_setup: bool = False) -> int:
+    # Free ports first so a previous crashed run does not block install/start.
+    free_ports()
     if not skip_setup:
         # One-command path: only full setup when something is missing;
         # never re-prompt crawl/config on every subsequent start.
@@ -1273,7 +1316,7 @@ def menu() -> int:
         for k, v in rows:
             print(f"  {k}. {v}")
 
-    choice = Prompt.ask("选择", choices=[r[0] for r in rows], default="1")
+    choice = ask_text("选择", choices=[r[0] for r in rows], default="1")
     if choice == "0":
         return 0
     if choice == "1":

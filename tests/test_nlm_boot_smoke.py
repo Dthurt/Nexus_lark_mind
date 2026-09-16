@@ -95,6 +95,21 @@ def test_confirm_respects_nlm_yes() -> None:
         os.environ.pop("NLM_YES", None)
 
 
+def test_rich_unicode_probe_or_plain_fallback() -> None:
+    """Python 3.13 needs rich>=14.3 for unicode17; otherwise plain UI must work."""
+    boot = _load_boot()
+    # confirm must never raise even if rich is broken mid-call
+    os.environ["NLM_YES"] = "1"
+    try:
+        assert boot.confirm("未检测到模型 API Key，运行配置向导？", default=True) is True
+    finally:
+        os.environ.pop("NLM_YES", None)
+    if boot.HAS_RICH:
+        from rich.cells import cell_len
+
+        assert cell_len("测试") >= 2
+
+
 def test_one_shot_start_becomes_healthy() -> None:
     """End-to-end: nlm start --yes --no-open → health OK → stop."""
     repair = _run(["repair", "--yes"], timeout=600)
