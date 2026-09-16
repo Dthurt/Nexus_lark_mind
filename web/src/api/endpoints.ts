@@ -615,6 +615,7 @@ export type KnowledgeDoc = {
   snippet?: string;
   score?: number;
   chunk_id?: string;
+  citation?: string;
 };
 
 export type KnowledgeHit = KnowledgeDoc & {
@@ -623,6 +624,27 @@ export type KnowledgeHit = KnowledgeDoc & {
   heading?: string;
   snippet?: string;
   score?: number;
+  citation?: string;
+};
+
+export type KnowledgeStats = {
+  docs: number;
+  chunks: number;
+  chunks_with_embedding: number;
+  embeddings_configured: boolean;
+  embedding_model?: string;
+  hybrid_ready: boolean;
+};
+
+export type KnowledgeSyncEntry = {
+  id?: number;
+  source?: string;
+  source_uri?: string;
+  content_hash?: string;
+  status?: string;
+  message?: string;
+  workspace_id?: string;
+  created_at?: string | null;
 };
 
 export function listKnowledgeDocs(params?: {
@@ -640,12 +662,21 @@ export function searchKnowledge(params: {
   query: string;
   workspace_id?: string;
   limit?: number;
-}): Promise<{ query: string; results: KnowledgeHit[] }> {
+}): Promise<{ query: string; results: KnowledgeHit[]; citations_md?: string }> {
   const q = new URLSearchParams();
   q.set("query", params.query);
   if (params.workspace_id) q.set("workspace_id", params.workspace_id);
   if (params.limit != null) q.set("limit", String(params.limit));
   return apiGet(`/api/knowledge/search?${q.toString()}`);
+}
+
+export function getKnowledgeStats(params?: {
+  workspace_id?: string;
+}): Promise<KnowledgeStats> {
+  const q = new URLSearchParams();
+  if (params?.workspace_id) q.set("workspace_id", params.workspace_id);
+  const qs = q.toString();
+  return apiGet(`/api/knowledge/stats${qs ? `?${qs}` : ""}`);
 }
 
 export function getKnowledgeDoc(
@@ -669,10 +700,36 @@ export function addKnowledgeDoc(body: {
   return apiPost("/api/knowledge/docs", body);
 }
 
+export function patchKnowledgeDoc(
+  docId: string,
+  body: {
+    title?: string;
+    content?: string;
+    tags?: string;
+    source?: string;
+    source_uri?: string;
+  },
+): Promise<KnowledgeDoc> {
+  return apiPatch(`/api/knowledge/docs/${encodeURIComponent(docId)}`, body);
+}
+
 export function deleteKnowledgeDoc(
   docId: string,
 ): Promise<{ ok: boolean; doc_id: string }> {
   return apiDelete(`/api/knowledge/docs/${encodeURIComponent(docId)}`);
+}
+
+export function reindexKnowledge(body?: {
+  workspace_id?: string;
+  limit?: number;
+}): Promise<{
+  ok?: boolean;
+  updated?: number;
+  scanned?: number;
+  error?: string;
+  errors?: string[];
+}> {
+  return apiPost("/api/knowledge/reindex", body || {});
 }
 
 export function syncKnowledgeDocs(body: {
@@ -687,5 +744,16 @@ export function syncKnowledgeDocs(body: {
   errors?: string[];
 }> {
   return apiPost("/api/knowledge/sync/docs", body);
+}
+
+export function listKnowledgeSyncLog(params?: {
+  workspace_id?: string;
+  limit?: number;
+}): Promise<{ entries: KnowledgeSyncEntry[] }> {
+  const q = new URLSearchParams();
+  if (params?.workspace_id) q.set("workspace_id", params.workspace_id);
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return apiGet(`/api/knowledge/sync/log${qs ? `?${qs}` : ""}`);
 }
 

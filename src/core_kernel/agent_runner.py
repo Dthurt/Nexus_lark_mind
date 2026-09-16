@@ -32,6 +32,9 @@ SAFE_TOOLS = {
     "kb_get",
     "kb_list",
     "kb_sync_docs",
+    "kb_stats",
+    "kb_reindex",
+    "weknora_search",
     "web_search",
     "literature_search",
     "image_search",
@@ -53,10 +56,12 @@ PLAN_ALLOWED_TOOLS = {
     "kb_read",
     "kb_get",
     "kb_list",
+    "kb_stats",
     "web_search",
     "literature_search",
     "image_search",
     "web_crawl",
+    "weknora_search",
 }
 
 

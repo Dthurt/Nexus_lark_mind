@@ -59,6 +59,7 @@ class PluginManager:
             "literature_search",
             "image_search",
             "web_crawl",
+            "weknora_search",
         }:
             return tool_name
         return f"{plugin_id}.{tool_name}".replace(".", "_")

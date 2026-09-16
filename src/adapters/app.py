@@ -1237,6 +1237,16 @@ def create_adapters_app() -> FastAPI:
         )
         return RpcEnvelope(ok=True, data=data)
 
+    @app.get("/api/knowledge/stats")
+    async def knowledge_stats(workspace_id: str = ""):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            "/rpc/knowledge/stats",
+            params={"workspace_id": workspace_id or ""},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
     @app.get("/api/knowledge/docs/{doc_id}")
     async def knowledge_get(doc_id: str, include_chunks: bool = False):
         kernel: RpcClient = state["kernel"]
@@ -1278,10 +1288,29 @@ def create_adapters_app() -> FastAPI:
         data = await kernel.call("POST", "/rpc/knowledge/docs", json=payload)
         return RpcEnvelope(ok=True, data=data)
 
+    @app.patch("/api/knowledge/docs/{doc_id}")
+    async def knowledge_patch(doc_id: str, request: Request):
+        kernel: RpcClient = state["kernel"]
+        body = await request.json()
+        payload = dict(body) if isinstance(body, dict) else {}
+        data = await kernel.call("PATCH", f"/rpc/knowledge/docs/{doc_id}", json=payload)
+        return RpcEnvelope(ok=True, data=data)
+
     @app.delete("/api/knowledge/docs/{doc_id}")
     async def knowledge_delete(doc_id: str):
         kernel: RpcClient = state["kernel"]
         data = await kernel.call("DELETE", f"/rpc/knowledge/docs/{doc_id}")
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/reindex")
+    async def knowledge_reindex(request: Request):
+        kernel: RpcClient = state["kernel"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        payload = dict(body) if isinstance(body, dict) else {}
+        data = await kernel.call("POST", "/rpc/knowledge/reindex", json=payload)
         return RpcEnvelope(ok=True, data=data)
 
     @app.post("/api/knowledge/sync/docs")

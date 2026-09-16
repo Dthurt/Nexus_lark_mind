@@ -92,9 +92,95 @@ def content_hash(text_body: str) -> str:
     return hashlib.sha256((text_body or "").encode("utf-8")).hexdigest()
 
 
+_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+")
+
+
 def _tokens(q: str) -> List[str]:
-    parts = re.split(r"[\s,;|/]+", (q or "").strip().lower())
-    return [p for p in parts if len(p) >= 2][:12]
+    """Keyword tokens + CJK character bigrams for better Chinese matching."""
+    raw = (q or "").strip().lower()
+    if not raw:
+        return []
+    parts = re.split(r"[\s,;|/]+", raw)
+    out: List[str] = []
+    seen: set[str] = set()
+
+    def _add(t: str) -> None:
+        t = t.strip()
+        if len(t) < 2 or t in seen:
+            return
+        seen.add(t)
+        out.append(t)
+
+    for p in parts:
+        if not p:
+            continue
+        _add(p)
+        # Split mixed latin/CJK runs
+        for m in re.finditer(r"[a-z0-9_]+|[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+", p):
+            piece = m.group(0)
+            if _CJK_RE.fullmatch(piece):
+                if len(piece) <= 4:
+                    _add(piece)
+                for i in range(len(piece) - 1):
+                    _add(piece[i : i + 2])
+            else:
+                _add(piece)
+    # Whole-query CJK bigrams when query is a continuous phrase
+    for m in _CJK_RE.finditer(raw.replace(" ", "")):
+        s = m.group(0)
+        if len(s) >= 2:
+            _add(s)
+            for i in range(len(s) - 1):
+                _add(s[i : i + 2])
+    return out[:24]
+
+
+def format_citation(
+    *,
+    title: str,
+    source: str = "",
+    source_uri: str = "",
+    doc_id: str = "",
+    chunk_index: Optional[int] = None,
+    heading: str = "",
+) -> str:
+    """Human-readable provenance line for chat / tool results."""
+    label = (title or doc_id or "untitled").strip()
+    path = (source_uri or "").strip()
+    if not path and (source or "").startswith("file:"):
+        path = source[5:]
+    parts = [f"**{label}**"]
+    if path:
+        parts.append(f"`{path}`")
+    elif source:
+        parts.append(f"({source})")
+    if heading:
+        parts.append(f"§ {heading}")
+    if chunk_index is not None:
+        parts.append(f"chunk #{chunk_index}")
+    if doc_id:
+        parts.append(f"[{doc_id}]")
+    return " — ".join(parts)
+
+
+def citations_markdown(hits: List[Dict[str, Any]]) -> str:
+    if not hits:
+        return ""
+    lines = ["### Knowledge references"]
+    for i, h in enumerate(hits, 1):
+        cite = h.get("citation") or format_citation(
+            title=str(h.get("title") or ""),
+            source=str(h.get("source") or ""),
+            source_uri=str(h.get("source_uri") or ""),
+            doc_id=str(h.get("doc_id") or ""),
+            chunk_index=h.get("chunk_index") if "chunk_index" in h else None,
+            heading=str(h.get("heading") or ""),
+        )
+        snip = (h.get("snippet") or "").replace("\n", " ").strip()
+        if len(snip) > 160:
+            snip = snip[:157] + "…"
+        lines.append(f"{i}. {cite}" + (f" — {snip}" if snip else ""))
+    return "\n".join(lines)
 
 
 def chunk_markdown(
@@ -418,16 +504,21 @@ class KnowledgeStore:
     ) -> List[Dict[str, Any]]:
         tokens = _tokens(query)
         q = (query or "").strip()
+        use_vec = embeddings_configured() and bool(q)
+        query_vec: Optional[List[float]] = None
+        if use_vec:
+            query_vec = await embed_one(q)
+
         async with self.session_factory() as session:
-            # Prefer chunk hits; fall back to whole-doc if no chunks yet
-            stmt = select(KnowledgeChunk)
+            ws_filter = None
             if workspace_id:
-                stmt = stmt.where(
-                    or_(
-                        KnowledgeChunk.workspace_id == workspace_id,
-                        KnowledgeChunk.workspace_id == "",
-                    )
+                ws_filter = or_(
+                    KnowledgeChunk.workspace_id == workspace_id,
+                    KnowledgeChunk.workspace_id == "",
                 )
+
+            # --- Keyword candidate pool ---
+            kw_chunks: List[KnowledgeChunk] = []
             likes = []
             if q:
                 likes.append(KnowledgeChunk.content.ilike(f"%{q}%"))
@@ -436,9 +527,31 @@ class KnowledgeStore:
                 likes.append(KnowledgeChunk.content.ilike(f"%{t}%"))
                 likes.append(KnowledgeChunk.heading.ilike(f"%{t}%"))
             if likes:
-                stmt = stmt.where(or_(*likes))
-            stmt = stmt.limit(120)
-            chunks = list((await session.execute(stmt)).scalars().all())
+                stmt = select(KnowledgeChunk)
+                if ws_filter is not None:
+                    stmt = stmt.where(ws_filter)
+                stmt = stmt.where(or_(*likes)).limit(160)
+                kw_chunks = list((await session.execute(stmt)).scalars().all())
+
+            # --- Vector candidate pool (even when keyword miss) ---
+            vec_chunks: List[KnowledgeChunk] = []
+            if query_vec is not None:
+                vstmt = select(KnowledgeChunk).where(KnowledgeChunk.embedding != "")
+                if ws_filter is not None:
+                    vstmt = vstmt.where(ws_filter)
+                vstmt = vstmt.order_by(KnowledgeChunk.updated_at.desc()).limit(400)
+                vec_chunks = list((await session.execute(vstmt)).scalars().all())
+
+            by_id: Dict[str, KnowledgeChunk] = {}
+            for c in kw_chunks:
+                by_id[c.chunk_id] = c
+            for c in vec_chunks:
+                by_id.setdefault(c.chunk_id, c)
+            chunks = list(by_id.values())
+
+            if not chunks:
+                # Legacy whole-doc fallback when nothing chunked yet
+                return await self._search_docs(session, query, tokens, workspace_id, limit)
 
             doc_ids = {c.doc_id for c in chunks}
             docs_by_id: Dict[str, KnowledgeDoc] = {}
@@ -449,14 +562,6 @@ class KnowledgeStore:
                     )
                 ).scalars().all()
                 docs_by_id = {d.doc_id: d for d in drows}
-
-            # If no chunks matched, fall back to document-level search (legacy rows)
-            if not chunks:
-                return await self._search_docs(session, query, tokens, workspace_id, limit)
-
-        query_vec: Optional[List[float]] = None
-        if embeddings_configured() and q:
-            query_vec = await embed_one(q)
 
         scored: List[Tuple[float, KnowledgeChunk, KnowledgeDoc]] = []
         for c in chunks:
@@ -476,7 +581,10 @@ class KnowledgeStore:
                 if emb:
                     vec_score = cosine_similarity(query_vec, emb) * 6.0
             total = kw + vec_score
+            # Pure semantic: keep decent cosine hits even with kw=0
             if total <= 0 and tokens and not query_vec:
+                continue
+            if query_vec and kw <= 0 and vec_score < 1.2:
                 continue
             scored.append((total, c, doc))
 
@@ -484,10 +592,17 @@ class KnowledgeStore:
         out: List[Dict[str, Any]] = []
         seen_docs: set[str] = set()
         for sc, c, doc in scored:
-            # Prefer diverse docs but allow multiple chunks if room
             if doc.doc_id in seen_docs and len(out) >= max(2, limit // 2):
                 continue
             seen_docs.add(doc.doc_id)
+            cite = format_citation(
+                title=doc.title or "",
+                source=doc.source or "",
+                source_uri=getattr(doc, "source_uri", "") or "",
+                doc_id=doc.doc_id,
+                chunk_index=c.chunk_index,
+                heading=c.heading or "",
+            )
             item = {
                 "doc_id": doc.doc_id,
                 "chunk_id": c.chunk_id,
@@ -500,6 +615,7 @@ class KnowledgeStore:
                 "workspace_id": doc.workspace_id,
                 "score": round(sc, 3),
                 "snippet": self._snippet(c.content or "", tokens or [query]),
+                "citation": cite,
                 "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             }
             out.append(item)
@@ -547,8 +663,158 @@ class KnowledgeStore:
             item["score"] = round(sc, 3)
             item["snippet"] = self._snippet(r.content or "", tokens or [query])
             item["doc_id"] = r.doc_id
+            item["citation"] = format_citation(
+                title=r.title or "",
+                source=r.source or "",
+                source_uri=getattr(r, "source_uri", "") or "",
+                doc_id=r.doc_id,
+            )
             out.append(item)
         return out
+
+    async def stats(self, workspace_id: str = "") -> Dict[str, Any]:
+        async with self.session_factory() as session:
+            doc_stmt = select(func.count()).select_from(KnowledgeDoc)
+            chunk_stmt = select(func.count()).select_from(KnowledgeChunk)
+            emb_stmt = (
+                select(func.count())
+                .select_from(KnowledgeChunk)
+                .where(KnowledgeChunk.embedding != "")
+            )
+            if workspace_id:
+                ws_docs = or_(
+                    KnowledgeDoc.workspace_id == workspace_id,
+                    KnowledgeDoc.workspace_id == "",
+                )
+                ws_chunks = or_(
+                    KnowledgeChunk.workspace_id == workspace_id,
+                    KnowledgeChunk.workspace_id == "",
+                )
+                doc_stmt = doc_stmt.where(ws_docs)
+                chunk_stmt = chunk_stmt.where(ws_chunks)
+                emb_stmt = emb_stmt.where(ws_chunks)
+            docs = int((await session.execute(doc_stmt)).scalar() or 0)
+            chunks = int((await session.execute(chunk_stmt)).scalar() or 0)
+            embedded = int((await session.execute(emb_stmt)).scalar() or 0)
+        from src.core_kernel.plugin_runtime.knowledge_embeddings import embedding_model
+
+        return {
+            "docs": docs,
+            "chunks": chunks,
+            "chunks_with_embedding": embedded,
+            "embeddings_configured": embeddings_configured(),
+            "embedding_model": embedding_model() if embeddings_configured() else "",
+            "hybrid_ready": embeddings_configured() and embedded > 0,
+        }
+
+    async def patch(
+        self,
+        doc_id: str,
+        *,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+        tags: Optional[str] = None,
+        source: Optional[str] = None,
+        source_uri: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Partial update; re-chunks when content changes."""
+        existing = await self.get(doc_id)
+        if not existing:
+            return None
+        new_title = title if title is not None else existing.get("title") or doc_id
+        new_content = content if content is not None else existing.get("content") or ""
+        new_tags = tags if tags is not None else existing.get("tags") or ""
+        new_source = source if source is not None else existing.get("source") or ""
+        new_uri = source_uri if source_uri is not None else existing.get("source_uri") or ""
+        # Metadata-only updates must not hit skip_if_unchanged (that would ignore title).
+        if content is None and (
+            title is not None or tags is not None or source is not None or source_uri is not None
+        ):
+            async with self.session_factory() as session:
+                row = (
+                    await session.execute(
+                        select(KnowledgeDoc).where(KnowledgeDoc.doc_id == doc_id)
+                    )
+                ).scalar_one_or_none()
+                if not row:
+                    return None
+                if title is not None:
+                    row.title = str(title)
+                if tags is not None:
+                    row.tags = str(tags)
+                if source is not None:
+                    row.source = str(source)
+                if source_uri is not None:
+                    row.source_uri = str(source_uri)
+                row.updated_at = datetime.now(timezone.utc)
+                await session.commit()
+                return self._public(row)
+        return await self.upsert(
+            doc_id=doc_id,
+            title=str(new_title),
+            content=str(new_content),
+            tags=str(new_tags),
+            source=str(new_source),
+            source_uri=str(new_uri),
+            workspace_id=str(existing.get("workspace_id") or ""),
+            content_hash_value=content_hash(str(new_content)),
+            skip_if_unchanged=False,
+        )
+
+    async def reindex_embeddings(
+        self, *, workspace_id: str = "", limit: int = 200
+    ) -> Dict[str, Any]:
+        """Embed chunks missing vectors when KB_EMBEDDING_* is configured."""
+        if not embeddings_configured():
+            return {
+                "ok": False,
+                "error": "embeddings not configured (set KB_EMBEDDING_BASE_URL)",
+                "updated": 0,
+            }
+        async with self.session_factory() as session:
+            stmt = (
+                select(KnowledgeChunk)
+                .where(
+                    or_(KnowledgeChunk.embedding == "", KnowledgeChunk.embedding.is_(None))
+                )
+                .order_by(KnowledgeChunk.updated_at.desc())
+                .limit(max(1, min(limit, 500)))
+            )
+            if workspace_id:
+                stmt = stmt.where(
+                    or_(
+                        KnowledgeChunk.workspace_id == workspace_id,
+                        KnowledgeChunk.workspace_id == "",
+                    )
+                )
+            rows = list((await session.execute(stmt)).scalars().all())
+            if not rows:
+                return {"ok": True, "updated": 0, "scanned": 0}
+
+            texts = [r.content or "" for r in rows]
+            # Batch in groups of 32
+            updated = 0
+            errors: List[str] = []
+            for i in range(0, len(texts), 32):
+                batch_rows = rows[i : i + 32]
+                batch_texts = texts[i : i + 32]
+                vectors = await embed_texts(batch_texts)
+                if not vectors:
+                    errors.append(f"embed batch@{i} failed")
+                    continue
+                for row, vec in zip(batch_rows, vectors):
+                    if not vec:
+                        continue
+                    row.embedding = serialize_embedding(vec)
+                    row.updated_at = datetime.now(timezone.utc)
+                    updated += 1
+            await session.commit()
+        return {
+            "ok": True,
+            "scanned": len(rows),
+            "updated": updated,
+            "errors": errors[:10],
+        }
 
     async def log_sync(
         self,

@@ -7,14 +7,16 @@ NLM keeps a **local SQLite knowledge base** for the coding-agent workbench (Feis
 ```
 Agent tools (kb_*) ──► KnowledgeStore (kernel SQLite)
 Web Dock / REST    ──► Adapters /api/knowledge/* ──► Kernel /rpc/knowledge/*
-Optional           ──► WeKnora HTTP/MCP stub (read-only) when env set
+Optional           ──► WeKnora HTTP (weknora_search CLI / weknora_client) when env set
 ```
 
 | Layer | Path |
 |-------|------|
 | Store + chunks | `src/core_kernel/plugin_runtime/knowledge_store.py` |
+| Ingest helpers | `src/core_kernel/plugin_runtime/knowledge_ingest.py` |
 | Embeddings (optional) | `src/core_kernel/plugin_runtime/knowledge_embeddings.py` |
-| Workspace / Feishu sync | `src/core_kernel/plugin_runtime/knowledge_sync.py` |
+| Workspace sync | `src/core_kernel/plugin_runtime/knowledge_sync.py` |
+| WeKnora HTTP client | `src/core_kernel/plugin_runtime/weknora_client.py` |
 | Agent tools | `src/core_kernel/plugin_runtime/knowledge_tools.py` |
 | Kernel RPC | `src/core_kernel/rpc_server.py` (`/rpc/knowledge/*`) |
 | Adapters REST | `src/adapters/app.py` (`/api/knowledge/*`) |
@@ -22,46 +24,59 @@ Optional           ──► WeKnora HTTP/MCP stub (read-only) when env set
 
 **Tables:** `knowledge_docs`, `knowledge_chunks`, `knowledge_sync_log`.
 
-Documents are split on headings / blank lines into ~512-character chunks with ~15% overlap. Search ranks **chunks** (keyword; optionally hybrid with embeddings). `kb_read` / GET read can return a char window or a chunk plus neighbors.
+Documents are split on headings / blank lines into ~512-character chunks with ~15% overlap. Search ranks **chunks** with keyword scoring (CJK bigrams + Latin tokens). When `KB_EMBEDDING_*` is set, hybrid merge also scores chunks that have stored vectors — **even if keyword ILIKE misses** (semantic recall). `kb_read` / GET read return a char window or a chunk plus neighbors, with a `citation` provenance line.
 
 ## Agent tools
 
 | Tool | Role |
 |------|------|
-| `kb_search` | Keyword (+ optional vector) search → stable `doc_id`, `chunk_id`, longer snippets |
-| `kb_read` | Read by `doc_id` (`offset`/`limit` or `chunk_index`/`neighbors`) |
+| `kb_search` | Keyword (+ optional vector) search → `doc_id`, `chunk_id`, `citation`, `citations_md` |
+| `kb_read` | Read by `doc_id` (`offset`/`limit` or `chunk_index`/`neighbors`) + citation |
 | `kb_get` / `kb_list` / `kb_delete` | Full doc / list / delete |
-| `kb_add` | Paste content **or** `path` (workspace-relative → `source=file:...`) |
-| `kb_sync_docs` | Scan `docs/**/*.md` (+ shallow `*.md`) with `content_hash` upsert |
+| `kb_add` | Paste content **or** `path` (`.md/.txt/.rst/.pdf`) → `source=file:...` |
+| `kb_sync_docs` | Scan workspace docs with `content_hash` upsert |
+| `kb_stats` / `kb_reindex` | Counts + hybrid readiness; backfill missing embeddings |
+| `weknora_search` | Optional remote (CLI) when `WEKNORA_BASE_URL` is set |
 
-System prompt: **always search → read** before answering from KB content.
+System prompt: search → read before answering; cite `source_uri` / citation like web_search.
 
 ## Web UI
 
 Right dock tab **知识库** (Command Palette → 右坞 → 知识库):
 
-- List / search
-- Paste Markdown → add
-- Delete
-- **同步文档** — workspace markdown ingest
+- List / search with heading + path
+- Stats line (docs / chunks / hybrid)
+- Paste Markdown **or** workspace-relative path import
+- Edit title inline; delete with confirm
+- **同步文档** — workspace ingest + sync log strip
+- **回填向量** — when embeddings env is configured
 
 ## REST (workspace-scoped)
 
 Query/body may include `workspace_id` and `cwd` where relevant.
 
 - `GET /api/knowledge/docs`
-- `GET /api/knowledge/search?query=`
+- `GET /api/knowledge/search?query=` → `{ results, citations_md }`
+- `GET /api/knowledge/stats`
 - `GET /api/knowledge/docs/{doc_id}`
 - `GET /api/knowledge/docs/{doc_id}/read`
 - `POST /api/knowledge/docs` — `{ title, content }` or `{ path, cwd }`
+- `PATCH /api/knowledge/docs/{doc_id}` — partial title/content/tags
 - `DELETE /api/knowledge/docs/{doc_id}`
+- `POST /api/knowledge/reindex` — embed chunks missing vectors
 - `POST /api/knowledge/sync/docs` — `{ cwd, workspace_id? }`
 - `POST /api/knowledge/sync/feishu` — skeleton (logs TODO; prefer paste/file first)
 - `GET /api/knowledge/sync/log`
 
 ## Workspace docs sync
 
-Ignores `.git`, `node_modules`, `.venv`, `.nlm`, etc. Prefer `docs/**/*.md`; also indexes shallow `*.md` under cwd. Upsert key is a stable `file_<sha1(rel)>` id plus `content_hash` skip-if-unchanged.
+Ignores `.git`, `node_modules`, `.venv`, `.nlm`, etc. Indexes `docs/**` and shallow trees for:
+
+- `.md` / `.markdown` / `.mdx`
+- `.txt` / `.rst` / `.org`
+- `.pdf` (optional `pypdf` if installed; else crude lossy text extract)
+
+Upsert key is a stable `file_<sha1(rel)>` id plus `content_hash` skip-if-unchanged.
 
 ## Optional embeddings (hybrid)
 
@@ -74,22 +89,31 @@ KB_EMBEDDING_API_KEY=sk-...
 # KB_EMBEDDING_ENABLED=0   # force off
 ```
 
-Vectors are stored as JSON on chunks. Hybrid score ≈ keyword + cosine. **WeMM is not a default dependency** — point `KB_EMBEDDING_BASE_URL` at any OpenAI-style `/embeddings` endpoint later.
+Vectors are stored as JSON on chunks. After configuring embeddings on an existing DB, use Dock **回填向量** or `kb_reindex` / `POST /api/knowledge/reindex`. Hybrid score ≈ keyword + cosine. **WeMM is not a default dependency.**
 
 ## Optional WeKnora bridge
 
-Local SQLite stays default. Optional stubs:
+Local SQLite stays default.
 
-- MCP config: `plugins_volume/mcp/weknora_http.json` (disabled; set URL when ready)
-- CLI: `plugins_volume/cli/weknora_search.py` — no-op unless `WEKNORA_BASE_URL` (+ optional `WEKNORA_API_KEY`)
+```bash
+WEKNORA_BASE_URL=http://127.0.0.1:8080
+WEKNORA_API_KEY=...          # optional
+WEKNORA_SEARCH_PATH=/api/v1/search
+WEKNORA_KB_ID=...            # optional
+```
+
+- CLI: `plugins_volume/cli/weknora_search.py` — GET then POST fallback; normalizes hits + `citations_md`
+- Kernel helper: `weknora_client.weknora_search` (httpx)
+- MCP config: `plugins_volume/mcp/weknora_http.json` (disabled until a real MCP URL exists)
 
 ## Feishu knowledge sync
 
-`FeishuWikiConnector` in `knowledge_sync.py` is an incremental-design **stub** (`source` / `source_uri` / `content_hash` + `knowledge_sync_log`). Feishu OpenAPI client today covers IM cards, not wiki export — **manual paste / file sync first**; wiki fetch is TODO.
+`FeishuWikiConnector` remains an incremental-design **stub**. Prefer paste / file sync; wiki OpenAPI fetch is TODO.
 
 ## Try it
 
 1. Start the stack (`nlm start` / `scripts/dev.bat`), open the workbench, bind a workspace.
-2. Dock → **知识库** → paste a note, or **同步文档**.
-3. In chat (tools on): ask something that should hit the KB; agent should `kb_search` then `kb_read`.
-4. Or: `curl "http://127.0.0.1:8000/api/knowledge/search?query=architecture"`.
+2. Dock → **知识库** → paste a note, path-import, or **同步文档**.
+3. In chat (tools on): ask something that should hit the KB; agent should `kb_search` then `kb_read` and cite paths.
+4. Or: `curl "http://127.0.0.1:8000/api/knowledge/search?query=architecture"`
+5. Optional: set `KB_EMBEDDING_*`, sync/add docs, then **回填向量** / `kb_reindex`.

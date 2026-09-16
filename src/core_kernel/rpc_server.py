@@ -538,13 +538,29 @@ def create_kernel_app() -> FastAPI:
 
     @app.get("/rpc/knowledge/search")
     async def kb_search(query: str = "", workspace_id: str = "", limit: int = 8):
+        from src.core_kernel.plugin_runtime.knowledge_store import citations_markdown
+
         store = _kb_store()
         await store.ensure_schema()
         q = (query or "").strip()
         if not q:
             return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "query required"})
         hits = await store.search(q, workspace_id=workspace_id or "", limit=min(max(limit, 1), 40))
-        return RpcEnvelope(ok=True, data={"query": q, "results": hits})
+        return RpcEnvelope(
+            ok=True,
+            data={
+                "query": q,
+                "results": hits,
+                "citations_md": citations_markdown(hits),
+            },
+        )
+
+    @app.get("/rpc/knowledge/stats")
+    async def kb_stats(workspace_id: str = ""):
+        store = _kb_store()
+        await store.ensure_schema()
+        data = await store.stats(workspace_id=workspace_id or "")
+        return RpcEnvelope(ok=True, data=data)
 
     @app.get("/rpc/knowledge/docs/{doc_id}")
     async def kb_get_doc(doc_id: str, include_chunks: bool = False):
@@ -563,6 +579,8 @@ def create_kernel_app() -> FastAPI:
         chunk_index: Optional[int] = None,
         neighbors: int = 1,
     ):
+        from src.core_kernel.plugin_runtime.knowledge_store import format_citation
+
         store = _kb_store()
         await store.ensure_schema()
         row = await store.read(
@@ -574,12 +592,23 @@ def create_kernel_app() -> FastAPI:
         )
         if not row:
             return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"doc not found: {doc_id}"})
+        row["citation"] = format_citation(
+            title=str(row.get("title") or ""),
+            source=str(row.get("source") or ""),
+            source_uri=str(row.get("source_uri") or ""),
+            doc_id=doc_id,
+            chunk_index=row.get("chunk_index") if chunk_index is not None else None,
+        )
         return RpcEnvelope(ok=True, data=row)
 
     @app.post("/rpc/knowledge/docs")
     async def kb_add_doc(request: Request):
         from uuid import uuid4
 
+        from src.core_kernel.plugin_runtime.knowledge_ingest import (
+            default_tags_for_path,
+            read_file_as_text,
+        )
         from src.core_kernel.plugin_runtime.knowledge_store import content_hash
         from src.core_kernel.plugin_runtime.knowledge_sync import stable_doc_id_for_path
 
@@ -597,6 +626,7 @@ def create_kernel_app() -> FastAPI:
         workspace_id = str(body.get("workspace_id") or "")
         doc_id = str(body.get("doc_id") or "").strip()
         cwd = str(body.get("cwd") or "").strip()
+        ingest_note = ""
 
         if path_arg:
             from pathlib import Path
@@ -620,7 +650,13 @@ def create_kernel_app() -> FastAPI:
                     ok=False,
                     error={"code": "NOT_FOUND", "message": f"file not found: {path_arg}"},
                 )
-            content = target.read_text(encoding="utf-8", errors="replace")
+            try:
+                content, ingest_note = read_file_as_text(target)
+            except ValueError as exc:
+                return RpcEnvelope(
+                    ok=False,
+                    error={"code": "INGEST", "message": str(exc)},
+                )
             rel = target.relative_to(root).as_posix()
             if not title:
                 title = target.stem
@@ -628,6 +664,8 @@ def create_kernel_app() -> FastAPI:
             source_uri = rel
             if not doc_id:
                 doc_id = stable_doc_id_for_path(rel)
+            if not tags:
+                tags = default_tags_for_path(target)
 
         if not content and not path_arg:
             return RpcEnvelope(
@@ -649,6 +687,30 @@ def create_kernel_app() -> FastAPI:
             workspace_id=workspace_id,
             content_hash_value=content_hash(content),
         )
+        if ingest_note:
+            row = {**row, "ingest_note": ingest_note}
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.patch("/rpc/knowledge/docs/{doc_id}")
+    async def kb_patch_doc(doc_id: str, request: Request):
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        row = await store.patch(
+            doc_id,
+            title=body.get("title") if "title" in body else None,
+            content=body.get("content") if "content" in body else None,
+            tags=body.get("tags") if "tags" in body else None,
+            source=body.get("source") if "source" in body else None,
+            source_uri=body.get("source_uri") if "source_uri" in body else None,
+        )
+        if not row:
+            return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"doc not found: {doc_id}"})
         return RpcEnvelope(ok=True, data=row)
 
     @app.delete("/rpc/knowledge/docs/{doc_id}")
@@ -657,6 +719,22 @@ def create_kernel_app() -> FastAPI:
         await store.ensure_schema()
         ok = await store.delete(doc_id)
         return RpcEnvelope(ok=True, data={"ok": ok, "doc_id": doc_id})
+
+    @app.post("/rpc/knowledge/reindex")
+    async def kb_reindex(request: Request):
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        data = await store.reindex_embeddings(
+            workspace_id=str(body.get("workspace_id") or ""),
+            limit=int(body.get("limit") or 200),
+        )
+        return RpcEnvelope(ok=True, data=data)
 
     @app.post("/rpc/knowledge/sync/docs")
     async def kb_sync_workspace_docs(request: Request):

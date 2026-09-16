@@ -8,7 +8,15 @@ from uuid import uuid4
 
 from src.common.errors import PluginError
 from src.core_kernel.plugin_runtime.invoke_context import get_workspace_cwd, get_workspace_meta
-from src.core_kernel.plugin_runtime.knowledge_store import KnowledgeStore, content_hash
+from src.core_kernel.plugin_runtime.knowledge_ingest import (
+    default_tags_for_path,
+    read_file_as_text,
+)
+from src.core_kernel.plugin_runtime.knowledge_store import (
+    KnowledgeStore,
+    citations_markdown,
+    content_hash,
+)
 from src.core_kernel.plugin_runtime.knowledge_sync import (
     FeishuWikiConnector,
     stable_doc_id_for_path,
@@ -23,7 +31,7 @@ TOOLS: List[Dict[str, Any]] = [
         "description": (
             "Add or update a document in the local knowledge base (SQLite). "
             "Pass title+content, or path (workspace-relative) to ingest a file "
-            "(sets source=file:...). Use for notes, specs, decisions, or reference text."
+            "(.md/.txt/.rst/.pdf → source=file:...). Use for notes, specs, decisions."
         ),
         "inputSchema": {
             "type": "object",
@@ -45,8 +53,9 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "kb_search",
         "description": (
             "Search the local knowledge base (keyword + optional embeddings hybrid). "
-            "Returns ranked hits with stable doc_id, chunk_id, and longer snippets. "
-            "Always follow with kb_read / kb_get before answering from KB content."
+            "Returns ranked hits with stable doc_id, chunk_id, citation, and snippets, "
+            "plus citations_md for the reply. Always follow with kb_read before answering "
+            "from KB content; cite source paths from citation / citations_md."
         ),
         "inputSchema": {
             "type": "object",
@@ -61,7 +70,8 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "kb_read",
         "description": (
             "Read a knowledge-base document window by doc_id (offset/limit chars), "
-            "or a chunk plus neighbors (chunk_index + neighbors). Prefer after kb_search."
+            "or a chunk plus neighbors (chunk_index + neighbors). Prefer after kb_search. "
+            "Response includes citation provenance."
         ),
         "inputSchema": {
             "type": "object",
@@ -107,14 +117,32 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "kb_sync_docs",
         "description": (
-            "Scan workspace docs/**/*.md (and shallow *.md) into the knowledge base "
-            "with content_hash upsert. Use when the user asks to index project docs."
+            "Scan workspace docs (docs/** and shallow *.md/*.txt/*.rst/*.pdf) into the "
+            "knowledge base with content_hash upsert. Use when the user asks to index project docs."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "max_files": {"type": "integer", "default": 400},
             },
+        },
+    },
+    {
+        "name": "kb_stats",
+        "description": (
+            "Knowledge-base stats: doc/chunk counts and whether hybrid embeddings are ready."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "kb_reindex",
+        "description": (
+            "Re-embed chunks missing vectors when KB_EMBEDDING_BASE_URL is configured. "
+            "No-op / error if embeddings are not configured."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 200}},
         },
     },
 ]
@@ -155,7 +183,12 @@ class KnowledgeToolsPlugin(BasePlugin):
                 raise PluginError("query required")
             limit = int(arguments.get("limit") or 6)
             hits = await store.search(q, workspace_id=ws, limit=max(1, min(limit, 20)))
-            return {"ok": True, "query": q, "results": hits}
+            return {
+                "ok": True,
+                "query": q,
+                "results": hits,
+                "citations_md": citations_markdown(hits),
+            }
         if tool_name == "kb_read":
             doc_id = str(arguments.get("doc_id") or "").strip()
             if not doc_id:
@@ -170,6 +203,15 @@ class KnowledgeToolsPlugin(BasePlugin):
             )
             if not row:
                 raise PluginError(f"doc not found: {doc_id}")
+            from src.core_kernel.plugin_runtime.knowledge_store import format_citation
+
+            row["citation"] = format_citation(
+                title=str(row.get("title") or ""),
+                source=str(row.get("source") or ""),
+                source_uri=str(row.get("source_uri") or ""),
+                doc_id=doc_id,
+                chunk_index=row.get("chunk_index") if chunk_index is not None else None,
+            )
             return row
         if tool_name == "kb_get":
             doc_id = str(arguments.get("doc_id") or "").strip()
@@ -194,8 +236,14 @@ class KnowledgeToolsPlugin(BasePlugin):
             return await sync_workspace_docs(
                 store, cwd, workspace_id=ws, max_files=max(1, min(max_files, 2000))
             )
+        if tool_name == "kb_stats":
+            return {"ok": True, **(await store.stats(workspace_id=ws))}
+        if tool_name == "kb_reindex":
+            limit = int(arguments.get("limit") or 200)
+            return await store.reindex_embeddings(
+                workspace_id=ws, limit=max(1, min(limit, 500))
+            )
         if tool_name == "kb_sync_feishu":
-            # Hidden/advanced — also available via REST; keep tool optional
             connector = FeishuWikiConnector(
                 space_id=str(arguments.get("space_id") or ""),
                 enabled=bool(arguments.get("enabled")),
@@ -226,7 +274,10 @@ class KnowledgeToolsPlugin(BasePlugin):
                 raise PluginError("path escapes workspace") from exc
             if not target.is_file():
                 raise PluginError(f"file not found: {path_arg}")
-            raw = target.read_text(encoding="utf-8", errors="replace")
+            try:
+                raw, note = read_file_as_text(target)
+            except ValueError as exc:
+                raise PluginError(str(exc)) from exc
             rel = target.relative_to(root).as_posix()
             content = raw
             if not title:
@@ -236,7 +287,20 @@ class KnowledgeToolsPlugin(BasePlugin):
             if not doc_id:
                 doc_id = stable_doc_id_for_path(rel)
             if not tags:
-                tags = "file,markdown" if target.suffix.lower() == ".md" else "file"
+                tags = default_tags_for_path(target)
+            row = await store.upsert(
+                doc_id=doc_id,
+                title=title,
+                content=content,
+                tags=tags,
+                source=source,
+                source_uri=source_uri,
+                workspace_id=workspace_id,
+                content_hash_value=content_hash(content),
+            )
+            if note:
+                row = {**row, "ingest_note": note}
+            return row
 
         if not content and not path_arg:
             raise PluginError("content or path required")
@@ -262,10 +326,10 @@ def knowledge_tools_manifest() -> PluginManifest:
         plugin_id="builtin.knowledge",
         name="Knowledge Base",
         kind="inprocess",
-        version="0.2.0",
+        version="0.3.0",
         description=(
-            "Local SQLite knowledge base with chunked keyword search "
-            "and optional OpenAI-compatible embeddings hybrid."
+            "Local SQLite knowledge base with chunked keyword search, "
+            "citations, workspace ingest, and optional OpenAI-compatible embeddings hybrid."
         ),
         enabled=True,
         tools=list(TOOLS),

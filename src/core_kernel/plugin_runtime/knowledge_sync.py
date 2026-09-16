@@ -1,4 +1,4 @@
-"""Workspace markdown sync + Feishu knowledge connector skeleton."""
+"""Workspace docs sync (.md/.txt/.rst + optional PDF) + Feishu connector skeleton."""
 
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 
+from src.core_kernel.plugin_runtime.knowledge_ingest import (
+    default_tags_for_path,
+    is_ingestible,
+    read_file_as_text,
+)
 from src.core_kernel.plugin_runtime.knowledge_store import KnowledgeStore, content_hash
 
 logger = logging.getLogger(__name__)
@@ -30,6 +35,8 @@ _IGNORE_DIR_NAMES = {
     ".cursor",
 }
 
+_SYNC_GLOBS = ("*.md", "*.markdown", "*.mdx", "*.txt", "*.rst", "*.org", "*.pdf")
+
 
 def stable_doc_id_for_path(rel_path: str) -> str:
     digest = hashlib.sha1(rel_path.replace("\\", "/").encode("utf-8")).hexdigest()[:16]
@@ -41,30 +48,37 @@ def _should_skip_dir(name: str) -> bool:
 
 
 def iter_markdown_files(cwd: str, *, max_files: int = 400) -> List[Path]:
+    """Backward-compatible alias — returns ingestible workspace docs."""
+    return iter_workspace_docs(cwd, max_files=max_files)
+
+
+def iter_workspace_docs(cwd: str, *, max_files: int = 400) -> List[Path]:
     root = Path(cwd).resolve()
     if not root.is_dir():
         return []
     found: List[Path] = []
-    # Prefer docs/** first
     docs = root / "docs"
     candidates: List[Path] = []
     if docs.is_dir():
-        candidates.extend(docs.rglob("*.md"))
-    # Also top-level and shallow *.md under cwd (depth-limited via walk)
-    for path in root.rglob("*.md"):
-        try:
-            rel_parts = path.relative_to(root).parts
-        except ValueError:
-            continue
-        if any(_should_skip_dir(p) for p in rel_parts[:-1]):
-            continue
-        # Skip very deep trees outside docs/
-        if rel_parts and rel_parts[0] != "docs" and len(rel_parts) > 3:
-            continue
-        candidates.append(path)
+        for pattern in _SYNC_GLOBS:
+            candidates.extend(docs.rglob(pattern))
+    for pattern in _SYNC_GLOBS:
+        for path in root.rglob(pattern):
+            try:
+                rel_parts = path.relative_to(root).parts
+            except ValueError:
+                continue
+            if any(_should_skip_dir(p) for p in rel_parts[:-1]):
+                continue
+            # Skip very deep trees outside docs/
+            if rel_parts and rel_parts[0] != "docs" and len(rel_parts) > 3:
+                continue
+            candidates.append(path)
 
     seen: Set[str] = set()
     for p in candidates:
+        if not is_ingestible(p):
+            continue
         key = str(p.resolve())
         if key in seen:
             continue
@@ -84,40 +98,32 @@ async def sync_workspace_docs(
     max_files: int = 400,
     max_bytes: int = 512_000,
 ) -> Dict[str, Any]:
-    """Scan markdown under cwd into KB with content_hash upsert."""
+    """Scan docs under cwd into KB with content_hash upsert (.md/.txt/.rst/.pdf)."""
     root = Path(cwd).resolve()
     added = 0
     updated = 0
     skipped = 0
     errors: List[str] = []
-    files = iter_markdown_files(str(root), max_files=max_files)
+    files = iter_workspace_docs(str(root), max_files=max_files)
     for path in files:
         try:
             rel = path.relative_to(root).as_posix()
         except ValueError:
             rel = path.name
         try:
-            raw = path.read_bytes()
-            if len(raw) > max_bytes:
-                skipped += 1
-                await store.log_sync(
-                    source="workspace_docs",
-                    source_uri=rel,
-                    status="skip",
-                    message=f"file too large ({len(raw)} bytes)",
-                    workspace_id=workspace_id,
-                )
-                continue
-            text = raw.decode("utf-8", errors="replace")
+            text, note = read_file_as_text(path, max_bytes=max_bytes)
             digest = content_hash(text)
             doc_id = stable_doc_id_for_path(rel)
             title = _title_from_md(text, rel)
+            tags = default_tags_for_path(path)
+            if Path(rel).parts and Path(rel).parts[0] == "docs":
+                tags = f"docs,{tags}" if tags else "docs"
             existing = await store.get(doc_id)
             result = await store.upsert(
                 doc_id=doc_id,
                 title=title,
                 content=text,
-                tags="docs,markdown",
+                tags=tags,
                 source=f"file:{rel}",
                 source_uri=rel,
                 workspace_id=workspace_id,
@@ -127,15 +133,15 @@ async def sync_workspace_docs(
             if result.get("unchanged"):
                 skipped += 1
                 status = "skip"
-                msg = "unchanged"
+                msg = "unchanged" + (f" ({note})" if note else "")
             elif existing:
                 updated += 1
                 status = "ok"
-                msg = "updated"
+                msg = "updated" + (f" ({note})" if note else "")
             else:
                 added += 1
                 status = "ok"
-                msg = "added"
+                msg = "added" + (f" ({note})" if note else "")
             await store.log_sync(
                 source="workspace_docs",
                 source_uri=rel,

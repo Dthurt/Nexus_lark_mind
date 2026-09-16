@@ -2,15 +2,15 @@
   "plugin_id": "mcp.weknora_readonly",
   "name": "WeKnora Read-only Bridge",
   "kind": "mcp_http",
-  "version": "0.1.0",
-  "description": "Optional read-only bridge to a WeKnora HTTP/MCP endpoint. Disabled by default. Set WEKNORA_BASE_URL (+ API key in config) when you want remote KB search; local SQLite remains the default.",
+  "version": "0.2.0",
+  "description": "Optional read-only bridge to a WeKnora HTTP/MCP endpoint. Disabled by default. Prefer the CLI weknora_search tool (WEKNORA_BASE_URL) for remote search; local SQLite remains the default KB.",
   "enabled": false,
   "config": {
-    "url": "",
+    "url": "${WEKNORA_BASE_URL}",
     "rpc_path": "/mcp",
     "headers": {
       "Authorization": "Bearer ${WEKNORA_API_KEY}"
     },
-    "notes": "Leave url empty until WEKNORA_BASE_URL is available. Point url at the WeKnora OpenAI/MCP-compatible base (e.g. http://127.0.0.1:8080). NLM does not clone WeKnora Wiki/GraphRAG — this is a thin remote search stub only."
+    "notes": "Leave disabled until a real WeKnora MCP endpoint is available. For HTTP search without MCP, use plugins_volume/cli/weknora_search.py with WEKNORA_BASE_URL (+ optional WEKNORA_API_KEY, WEKNORA_SEARCH_PATH, WEKNORA_KB_ID). NLM does not clone WeKnora Wiki/GraphRAG."
   }
 }

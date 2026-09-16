@@ -144,13 +144,18 @@ DIAGRAMS_MATH = (
 
 KNOWLEDGE_HINTS = (
     "## Local knowledge base\n"
-    "- Always `kb_search` first, then `kb_read` (or `kb_get`) on the best `doc_id` "
+    "- When the user asks about project docs, decisions, specs, or anything that may live "
+    "in the KB / `docs/`, use the knowledge tools — do not guess from memory.\n"
+    "- Always `kb_search` first, then `kb_read` (or `kb_get`) on the best `doc_id`/`chunk_index` "
     "before answering from KB content. Do not invent from snippets alone.\n"
-    "- Search returns stable `doc_id` + `chunk_id` + longer snippets; use `kb_read` "
-    "with `chunk_index`/`neighbors` or `offset`/`limit` for the full window.\n"
-    "- `kb_add` accepts pasted Markdown or `path` (workspace-relative → `source=file:...`).\n"
-    "- `kb_sync_docs` indexes `docs/**/*.md` (and shallow `*.md`) with content_hash upsert.\n"
-    "- Tools: `kb_add` / `kb_search` / `kb_read` / `kb_get` / `kb_list` / `kb_delete` / `kb_sync_docs`.\n"
+    "- Search returns stable `doc_id` + `chunk_id` + `citation` + `citations_md`. "
+    "In your final reply, cite sources (title + path from `source_uri` / citation), similar to web_search.\n"
+    "- `kb_add` accepts pasted Markdown or `path` (workspace-relative `.md/.txt/.rst/.pdf`).\n"
+    "- `kb_sync_docs` indexes workspace docs with content_hash upsert; `kb_stats` / `kb_reindex` "
+    "for status and embedding backfill when configured.\n"
+    "- Optional remote: `weknora_search` only if WEKNORA_BASE_URL is set — local SQLite stays default.\n"
+    "- Tools: `kb_add` / `kb_search` / `kb_read` / `kb_get` / `kb_list` / `kb_delete` / "
+    "`kb_sync_docs` / `kb_stats` / `kb_reindex`.\n"
 )
 
 PLUGIN_HINTS = (
