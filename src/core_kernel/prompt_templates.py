@@ -160,7 +160,9 @@ def expand_slash_command(cwd: Optional[str], text: str) -> Optional[Dict[str, st
         return None
     tmpl = resolve_prompt_template(cwd, cmd)
     if not tmpl:
-        return None
+        from src.core_kernel.extension_runtime import apply_extension_slash_command
+
+        return apply_extension_slash_command(raw)
     positional = rest.split() if rest else []
     # Also support KEY=value pairs
     named: Dict[str, str] = {}

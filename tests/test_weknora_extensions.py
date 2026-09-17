@@ -393,3 +393,104 @@ def test_filter_openai_tools_active_subset():
     )
     names = [((t.get("function") or {}).get("name")) for t in out]
     assert names == ["read_file", "ask_user"]
+
+
+@pytest.mark.asyncio
+async def test_knowledge_search_tool_reads_session_kb(monkeypatch):
+    from src.core_kernel.plugin_runtime.invoke_context import workspace_cwd_scope
+    from src.core_kernel.plugin_runtime.knowledge_tools import KnowledgeToolsPlugin, knowledge_tools_manifest
+
+    seen: dict = {}
+
+    async def fake_search(q, **kwargs):
+        seen["query"] = q
+        seen.update(kwargs)
+        return {"ok": True, "results": []}
+
+    monkeypatch.setattr(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_search",
+        fake_search,
+    )
+    plugin = KnowledgeToolsPlugin(knowledge_tools_manifest())
+    plugin._store = MagicMock()
+    with workspace_cwd_scope(
+        "/tmp/ws",
+        {"weknora_kb_id": "kb-sess", "workspace_id": "ws-1"},
+    ):
+        out = await plugin._on_invoke("weknora_search", {"query": "hello"})
+    assert out.get("ok") is True
+    assert seen.get("session_kb_id") == "kb-sess"
+    assert seen.get("workspace_id") == "ws-1"
+
+
+def test_workspace_meta_forwards_weknora_kb_id():
+    """P0: Dock-bound session KB must reach tool invoke context (not drop in RPC)."""
+    from src.common.schemas import ChannelType, StandardTask
+    from src.core_kernel.rpc_server import workspace_meta_from_task
+
+    task = StandardTask(
+        session_id="s-kb",
+        channel=ChannelType.WEB,
+        user_id="u",
+        content="q",
+        metadata={"weknora_kb_id": "kb-from-session", "cwd": "/tmp/ws"},
+    )
+    meta = workspace_meta_from_task(task)
+    assert meta["weknora_kb_id"] == "kb-from-session"
+    assert meta["session_id"] == "s-kb"
+
+
+@pytest.mark.asyncio
+async def test_extension_registered_tool_invokes_handler():
+    """P0: api.register_tool must be callable, not only advertised to the model."""
+    from src.core_kernel.extension_runtime import (
+        get_extension_registry,
+        invoke_extension_tool,
+        lookup_extension_tool,
+    )
+
+    get_extension_registry().reset()
+    get_extension_registry().register_tool(
+        "demo",
+        {
+            "name": "ext_ping",
+            "description": "ping",
+            "handler": lambda args: {"ok": True, "pong": args.get("x", 1)},
+        },
+    )
+    assert lookup_extension_tool("ext_ping") is not None
+    out = await invoke_extension_tool("ext_ping", {"x": 7})
+    assert out.get("ok") is True
+    assert out.get("pong") == 7
+    missing = await invoke_extension_tool("nope", {})
+    assert missing.get("ok") is False
+    get_extension_registry().reset()
+
+
+def test_extension_slash_set_active_tools():
+    from src.core_kernel.extension_runtime import apply_extension_slash_command, get_extension_registry
+    from src.core_kernel.prompt_templates import expand_slash_command
+
+    get_extension_registry().reset()
+    get_extension_registry().register_command(
+        "demo",
+        "tools-readonly",
+        {"handler": "set_active_tools:read_file,grep", "description": "ro"},
+    )
+    expanded = expand_slash_command(None, "/tools-readonly")
+    assert expanded is not None
+    assert "read_file" in expanded["prompt"]
+    assert get_extension_registry().get_active_tools() == ["grep", "read_file"]
+    # apply helper is the same path
+    get_extension_registry().set_active_tools(None)
+    again = apply_extension_slash_command("/tools-readonly keep going")
+    assert again is not None
+    get_extension_registry().reset()
+
+
+def test_build_system_prompt_includes_session_kb():
+    from src.core_kernel.agent_prompts import build_system_prompt
+
+    text = build_system_prompt(metadata={"weknora_kb_id": "kb-sess-9"})
+    assert "kb-sess-9" in text
+    assert "weknora_search" in text

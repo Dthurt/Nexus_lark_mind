@@ -23,8 +23,10 @@ Dynamic tools:
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -300,6 +302,104 @@ def discover_and_load_extensions(
 
 def emit_extension_event(event: str, payload: Optional[Dict[str, Any]] = None) -> List[Any]:
     return get_extension_registry().bus.emit(event, payload)
+
+
+def lookup_extension_tool(name: str) -> Optional[ToolDef]:
+    """Resolve a tool registered via api.register_tool (short name or leaf)."""
+    key = (name or "").strip()
+    if not key:
+        return None
+    tools = get_extension_registry().tools
+    if key in tools:
+        return tools[key]
+    leaf = key.rsplit(".", 1)[-1]
+    return tools.get(leaf)
+
+
+async def invoke_extension_tool(name: str, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Run an extension-registered tool handler. Returns a plugin-like envelope."""
+    tool = lookup_extension_tool(name)
+    if not tool:
+        return {"ok": False, "error": f"unknown extension tool: {name}"}
+    handler = tool.get("handler")
+    if not callable(handler):
+        return {
+            "ok": False,
+            "error": f"extension tool `{name}` has no callable handler",
+        }
+    t0 = time.perf_counter()
+    try:
+        result = handler(dict(arguments or {}))
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "duration_ms": (time.perf_counter() - t0) * 1000,
+        }
+    duration_ms = (time.perf_counter() - t0) * 1000
+    if isinstance(result, dict):
+        out = dict(result)
+        out.setdefault("ok", True)
+        out["duration_ms"] = duration_ms
+        return out
+    return {"ok": True, "result": result, "duration_ms": duration_ms}
+
+
+def apply_extension_slash_command(text: str) -> Optional[Dict[str, str]]:
+    """Dispatch `/name` to an extension-registered command.
+
+    Built-in handler protocol: ``set_active_tools:a,b,c`` converges the
+    tool subset for the next agent turn. A ``prompt`` option (or callable
+    handler returning text) becomes the expanded user message.
+    """
+    raw = (text or "").strip()
+    if not raw.startswith("/"):
+        return None
+    parts = raw.split(None, 1)
+    cmd = parts[0][1:].strip()
+    rest = parts[1] if len(parts) > 1 else ""
+    if not cmd:
+        return None
+    spec = get_extension_registry().commands.get(cmd)
+    if not spec:
+        return None
+    handler = spec.get("handler")
+    prompt = str(spec.get("prompt") or "").strip()
+    if isinstance(handler, str) and handler.startswith("set_active_tools:"):
+        names = [x.strip() for x in handler.split(":", 1)[1].split(",") if x.strip()]
+        get_extension_registry().set_active_tools(names)
+        if not prompt:
+            prompt = (
+                f"Active tools are now limited to: {', '.join(names)}. "
+                + (rest.strip() or "Proceed with the user's next request using only these tools.")
+            )
+    elif callable(handler):
+        try:
+            extra = handler({"command": cmd, "rest": rest, "original": raw})
+            if inspect.isawaitable(extra):
+                extra = None  # slash expand is sync; ignore async handlers
+            if isinstance(extra, dict):
+                if extra.get("prompt"):
+                    prompt = str(extra["prompt"])
+                if extra.get("active_tools") is not None:
+                    get_extension_registry().set_active_tools(
+                        extra["active_tools"] if extra["active_tools"] else None
+                    )
+            elif extra:
+                prompt = str(extra)
+        except Exception as exc:
+            logger.warning("extension slash handler failed (%s): %s", cmd, exc)
+            return None
+    if not prompt:
+        return None
+    return {
+        "name": cmd,
+        "prompt": prompt,
+        "original": raw,
+        "description": str(spec.get("description") or cmd),
+    }
 
 
 def run_tool_call_hooks(ctx: Dict[str, Any]) -> Dict[str, Any]:

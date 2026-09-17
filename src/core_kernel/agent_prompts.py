@@ -317,6 +317,12 @@ def build_system_prompt(
         )
 
     parts.append(KNOWLEDGE_HINTS)
+    bound_kb = str(meta.get("weknora_kb_id") or "").strip()
+    if bound_kb:
+        parts.append(
+            f"- This session is bound to WeKnora KB `{bound_kb}`. "
+            "`weknora_search` / `weknora_push` / `weknora_sync` use it when `kb_id` is omitted."
+        )
     parts.append(PLUGIN_HINTS)
     parts.append(experience_tier_prompt_block(experience_tier))
     parts.append(reasoning_effort_hint(reasoning_effort))

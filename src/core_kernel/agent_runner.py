@@ -430,6 +430,8 @@ async def _run_agent_stream_inner(
         discover_and_load_extensions,
         emit_extension_event,
         get_extension_registry,
+        invoke_extension_tool,
+        lookup_extension_tool,
         run_tool_call_hooks,
     )
     from src.core_kernel.skills_loader import active_skill_allowed_tools
@@ -653,6 +655,16 @@ async def _run_agent_stream_inner(
             stream=True,
             reasoning_effort=reasoning_effort,
         )
+        emit_extension_event(
+            "model_request",
+            {
+                "session_id": parent_session_id,
+                "provider": provider,
+                "model": model,
+                "round": round_i,
+                "tool_count": len(openai_tools or []),
+            },
+        )
         collected = ""
         tool_acc: Dict[int, Dict[str, Any]] = {}
         round_usage: Dict[str, Any] = {}
@@ -760,6 +772,16 @@ async def _run_agent_stream_inner(
             usage_total = _add_usage(usage_total, round_usage)
         else:
             usage_total = _add_usage(usage_total, estimate_usage(working, collected))
+        emit_extension_event(
+            "model_response",
+            {
+                "session_id": parent_session_id,
+                "round": round_i,
+                "content_len": len(collected or ""),
+                "had_tool_calls": bool(tool_acc),
+                "usage": dict(round_usage) if round_usage else {},
+            },
+        )
 
         finalized = [tool_acc[i] for i in sorted(tool_acc.keys())] if tool_acc else []
         if not finalized:
@@ -893,6 +915,11 @@ async def _run_agent_stream_inner(
             if base in SUBAGENT_CONTROL_TOOLS:
                 args["_parent_session_id"] = parent_session_id
             if not plugin_id:
+                ext = lookup_extension_tool(name) or lookup_extension_tool(base)
+                if ext:
+                    plugin_id = f"extension.{ext.get('_extension') or 'anon'}"
+                    tool_name = name
+            if not plugin_id:
                 return {
                     "id": call_id,
                     "name": name,
@@ -970,15 +997,28 @@ async def _run_agent_stream_inner(
                     timeout = float(args.get("timeout_seconds") or 60)
                 except (TypeError, ValueError):
                     timeout = 60.0
-            result = await plugins.invoke(
-                PluginInvokeRequest(
+            if str(plugin_id).startswith("extension."):
+                ext_out = await invoke_extension_tool(tool_name, args)
+                from src.common.schemas import PluginInvokeResult
+
+                result = PluginInvokeResult(
                     plugin_id=plugin_id,
                     tool_name=tool_name,
-                    arguments=args,
-                    timeout_seconds=timeout,
-                ),
-                task_id=task_id,
-            )
+                    success=bool(ext_out.get("ok", True)) and not ext_out.get("error"),
+                    result=ext_out.get("result", ext_out),
+                    error=ext_out.get("error"),
+                    duration_ms=float(ext_out.get("duration_ms") or (time.perf_counter() - t0) * 1000),
+                )
+            else:
+                result = await plugins.invoke(
+                    PluginInvokeRequest(
+                        plugin_id=plugin_id,
+                        tool_name=tool_name,
+                        arguments=args,
+                        timeout_seconds=timeout,
+                    ),
+                    task_id=task_id,
+                )
             emit_extension_event(
                 "tool_result",
                 {
@@ -1341,6 +1381,16 @@ async def _run_agent_stream_inner(
         stream=True,
         reasoning_effort=reasoning_effort,
     )
+    emit_extension_event(
+        "model_request",
+        {
+            "session_id": parent_session_id,
+            "provider": provider,
+            "model": model,
+            "round": "budget",
+            "tool_count": len(openai_tools or []),
+        },
+    )
     collected = ""
     async for chunk in gateway.stream(req, task_id=task_id):
         if getattr(chunk, "reasoning", None):
@@ -1350,6 +1400,15 @@ async def _run_agent_stream_inner(
             yield {"delta": chunk.content, "done": False}
         if chunk.usage:
             usage_total = _add_usage(usage_total, _extract_usage(chunk.usage))
+    emit_extension_event(
+        "model_response",
+        {
+            "session_id": parent_session_id,
+            "round": "budget",
+            "content_len": len(collected or ""),
+            "had_tool_calls": False,
+        },
+    )
     yield _finish_turn(
         {
             "delta": "",

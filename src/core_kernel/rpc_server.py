@@ -49,6 +49,35 @@ class LoadPluginRequest(BaseModel):
     manifest: Dict[str, Any]
 
 
+def workspace_meta_from_task(task: StandardTask) -> Dict[str, Any]:
+    """Session/task fields the agent runner + tools actually read.
+
+    Must include routing keys (e.g. weknora_kb_id). A whitelist that drops
+    them silently breaks Dock KB binding → weknora_search/push/sync.
+    """
+    md = task.metadata or {}
+    return {
+        "workspace_kind": md.get("workspace_kind") or "local",
+        "ssh_host_id": md.get("ssh_host_id") or "",
+        "workspace_id": md.get("workspace_id") or "",
+        "workspace_title": md.get("workspace_title") or "",
+        "session_id": task.session_id,
+        "agent_mode": md.get("agent_mode") or "agent",
+        "auto_accept": bool(md.get("auto_accept")),
+        "plan_status": md.get("plan_status") or "idle",
+        "multitask": bool(md.get("multitask", True)),
+        "permission_preset": md.get("permission_preset") or "workspace-write",
+        "plan_enforcement": md.get("plan_enforcement") or "hard",
+        "experience_tier": md.get("experience_tier") or "balanced",
+        "reasoning_effort": md.get("reasoning_effort") or "medium",
+        "cwd": md.get("cwd") or "",
+        "active_tools": md.get("active_tools"),
+        "system_prompt_append": md.get("system_prompt_append") or "",
+        "preset_name": md.get("preset_name") or "",
+        "weknora_kb_id": str(md.get("weknora_kb_id") or "").strip(),
+    }
+
+
 def create_kernel_app() -> FastAPI:
     settings = get_settings()
     state: Dict[str, Any] = {}
@@ -384,26 +413,7 @@ def create_kernel_app() -> FastAPI:
                     tools_enabled=bool(task.tools_enabled),
                     task_id=task.task_id,
                     workspace_cwd=(task.metadata or {}).get("cwd") or None,
-                    workspace_meta={
-                        "workspace_kind": (task.metadata or {}).get("workspace_kind") or "local",
-                        "ssh_host_id": (task.metadata or {}).get("ssh_host_id") or "",
-                        "workspace_id": (task.metadata or {}).get("workspace_id") or "",
-                        "workspace_title": (task.metadata or {}).get("workspace_title") or "",
-                        "session_id": task.session_id,
-                        "agent_mode": (task.metadata or {}).get("agent_mode") or "agent",
-                        "auto_accept": bool((task.metadata or {}).get("auto_accept")),
-                        "plan_status": (task.metadata or {}).get("plan_status") or "idle",
-                        "multitask": bool((task.metadata or {}).get("multitask", True)),
-                        "permission_preset": (task.metadata or {}).get("permission_preset")
-                        or "workspace-write",
-                        "plan_enforcement": (task.metadata or {}).get("plan_enforcement") or "hard",
-                        "experience_tier": (task.metadata or {}).get("experience_tier") or "balanced",
-                        "reasoning_effort": (task.metadata or {}).get("reasoning_effort") or "medium",
-                        "cwd": (task.metadata or {}).get("cwd") or "",
-                        "active_tools": (task.metadata or {}).get("active_tools"),
-                        "system_prompt_append": (task.metadata or {}).get("system_prompt_append") or "",
-                        "preset_name": (task.metadata or {}).get("preset_name") or "",
-                    },
+                    workspace_meta=workspace_meta_from_task(task),
                     allow_subagents=bool((task.metadata or {}).get("multitask", True)),
                     parent_session_id=task.session_id,
                 ):
