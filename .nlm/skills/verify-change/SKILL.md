@@ -1,6 +1,7 @@
 ---
 name: verify-change
 description: After code edits, run a focused shell check (tests/build/lint) before claiming success
+allowed-tools: read_file, grep, glob, list_dir, run_shell
 ---
 
 # Verify change

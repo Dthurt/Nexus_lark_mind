@@ -134,24 +134,60 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": "query required", "results": [], "citations_md": ""}))
         return 1
 
-    path = (os.getenv("WEKNORA_SEARCH_PATH") or "/api/v1/search").strip()
-    if not path.startswith("/"):
-        path = "/" + path
-    params = {"q": query, "query": query, "limit": limit}
-    if kb:
-        params["kb_id"] = kb
-        params["knowledge_base_id"] = kb
-    url = f"{base}{path}?{urllib.parse.urlencode(params)}"
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+        headers["X-API-Key"] = api_key
     try:
+        # Prefer WeKnora native knowledge-search when no custom path override
+        custom = (os.getenv("WEKNORA_SEARCH_PATH") or "").strip()
+        native_url = f"{base}/api/v1/knowledge-search"
+        if not custom:
+            body_obj: Dict[str, Any] = {"query": query, "q": query}
+            if kb:
+                body_obj["knowledge_base_id"] = kb
+                body_obj["kb_id"] = kb
+            try:
+                data = _http_json(
+                    native_url,
+                    headers,
+                    method="POST",
+                    body=json.dumps(body_obj).encode("utf-8"),
+                )
+                results = _normalize_results(data, limit=limit)
+                print(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "source": "weknora",
+                            "endpoint": "/api/v1/knowledge-search",
+                            "query": query,
+                            "kb_id": kb,
+                            "results": results,
+                            "citations_md": _citations_md(results),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                return 0
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (404, 405, 501):
+                    raise
+
+        path = custom or "/api/v1/search"
+        if not path.startswith("/"):
+            path = "/" + path
+        params = {"q": query, "query": query, "limit": limit}
+        if kb:
+            params["kb_id"] = kb
+            params["knowledge_base_id"] = kb
+        url = f"{base}{path}?{urllib.parse.urlencode(params)}"
         try:
             data = _http_json(url, headers, method="GET")
         except urllib.error.HTTPError as exc:
             if exc.code not in (404, 405, 501):
                 raise
-            body_obj: Dict[str, Any] = {"query": query, "q": query, "limit": limit}
+            body_obj = {"query": query, "q": query, "limit": limit}
             if kb:
                 body_obj["kb_id"] = kb
                 body_obj["knowledge_base_id"] = kb
@@ -169,6 +205,7 @@ def main() -> int:
                     "ok": True,
                     "source": "weknora",
                     "query": query,
+                    "kb_id": kb,
                     "results": results,
                     "citations_md": _citations_md(results),
                 },

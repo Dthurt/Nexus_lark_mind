@@ -464,6 +464,36 @@ class PluginManager:
                                 },
                             }
                         ]
+                    elif path.stem == "weknora_search":
+                        description = (
+                            "Search a remote WeKnora knowledge base when WEKNORA_BASE_URL is set. "
+                            "Prefer local kb_search first. Pass kb_id to target a specific remote KB "
+                            "(use weknora_list_kbs to discover ids). Returns citations_md."
+                        )
+                        tools = [
+                            {
+                                "name": "weknora_search",
+                                "description": description,
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "query": {
+                                            "type": "string",
+                                            "description": "Search query",
+                                        },
+                                        "limit": {
+                                            "type": "integer",
+                                            "description": "1-20, default 5",
+                                        },
+                                        "kb_id": {
+                                            "type": "string",
+                                            "description": "WeKnora knowledge-base id (optional)",
+                                        },
+                                    },
+                                    "required": ["query"],
+                                },
+                            }
+                        ]
                     elif path.stem == "web_crawl":
                         description = (
                             "Crawl a specific URL with Crawl4AI (headless browser) and return clean Markdown "

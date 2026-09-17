@@ -175,6 +175,13 @@ class TaskDispatcher:
             "experience_tier": str(experience_tier).strip().lower(),
             "reasoning_effort": str(reasoning_effort).strip().lower(),
         }
+        # Dynamic tools / preset overlays from session
+        if session.get("active_tools") is not None and "active_tools" not in (task.metadata or {}):
+            task.metadata["active_tools"] = session.get("active_tools")
+        if session.get("system_prompt_append") and not task.metadata.get("system_prompt_append"):
+            task.metadata["system_prompt_append"] = session.get("system_prompt_append")
+        if session.get("preset_name") and not task.metadata.get("preset_name"):
+            task.metadata["preset_name"] = session.get("preset_name")
         if cwd:
             task.metadata = {
                 **task.metadata,

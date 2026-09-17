@@ -308,6 +308,15 @@ def create_orchestrator_app() -> FastAPI:
         def _seed(sess: dict) -> None:
             sess["messages"] = seeded
             sess["forked_from"] = session_id
+            sess["parent_id"] = session_id
+            # until_index is inclusive message index used as fork point
+            if until is not None:
+                try:
+                    sess["fork_point_index"] = int(until)
+                except (TypeError, ValueError):
+                    sess["fork_point_index"] = max(0, len(seeded) - 1)
+            else:
+                sess["fork_point_index"] = max(0, len(seeded) - 1) if seeded else 0
             sess["title"] = str(body.get("title") or f"Fork of {parent.get('title') or session_id}")[:80]
             # Copy interaction prefs
             for key in (
@@ -317,6 +326,8 @@ def create_orchestrator_app() -> FastAPI:
                 "plan_enforcement",
                 "experience_tier",
                 "reasoning_effort",
+                "active_tools",
+                "preset_name",
             ):
                 if key in parent and parent[key] is not None:
                     sess[key] = parent[key]
@@ -382,6 +393,11 @@ def create_orchestrator_app() -> FastAPI:
                 model_name=body.get("model_name"),
                 pending_user_text=body.get("pending_user_text"),
                 clear_pending_user_text=bool(body.get("clear_pending_user_text")),
+                active_tools=body.get("active_tools") if "active_tools" in body else None,
+                clear_active_tools=bool(body.get("clear_active_tools")),
+                preset_name=body.get("preset_name"),
+                system_prompt_append=body.get("system_prompt_append"),
+                cwd_for_preset=str(body.get("cwd") or "").strip() or None,
             )
         except ValueError as exc:
             from src.common.errors import ValidationAppError
@@ -398,6 +414,67 @@ def create_orchestrator_app() -> FastAPI:
         sessions: SessionContext = state["sessions"]
         data = await sessions.list_summaries()
         return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/rpc/sessions/tree")
+    async def sessions_tree(workspace_id: str = ""):
+        from src.core_kernel.session_tree import build_session_tree
+
+        sessions: SessionContext = state["sessions"]
+        rows = await sessions.list_summaries()
+        if not isinstance(rows, list):
+            rows = []
+        ws = (workspace_id or "").strip()
+        if ws:
+            rows = [r for r in rows if str(r.get("workspace_id") or "") == ws]
+        return RpcEnvelope(ok=True, data=build_session_tree(rows))
+
+    @app.post("/rpc/sessions/{session_id}/bookmarks")
+    async def add_session_bookmark(session_id: str, request: Request):
+        from src.core_kernel.session_tree import add_bookmark
+
+        body = await request.json() if request.headers.get("content-length") not in (None, "0") else {}
+        if not isinstance(body, dict):
+            body = {}
+        sessions: SessionContext = state["sessions"]
+        parent = await sessions.redis.get_session(session_id)
+        if not parent:
+            from src.common.errors import NotFoundError
+
+            raise NotFoundError(session_id)
+        try:
+            idx = int(body.get("message_index"))
+        except (TypeError, ValueError) as exc:
+            from src.common.errors import ValidationAppError
+
+            raise ValidationAppError("message_index required") from exc
+        label = str(body.get("label") or "")
+
+        def _mutate(sess: dict) -> None:
+            sess["bookmarks"] = add_bookmark(
+                sess.get("bookmarks"), message_index=idx, label=label
+            )
+
+        data = await sessions.redis.update_session(session_id, _mutate, preserve_messages=True)
+        return RpcEnvelope(ok=True, data={"bookmarks": data.get("bookmarks") or []})
+
+    @app.delete("/rpc/sessions/{session_id}/bookmarks/{message_index}")
+    async def remove_session_bookmark(session_id: str, message_index: int):
+        from src.core_kernel.session_tree import remove_bookmark
+
+        sessions: SessionContext = state["sessions"]
+        parent = await sessions.redis.get_session(session_id)
+        if not parent:
+            from src.common.errors import NotFoundError
+
+            raise NotFoundError(session_id)
+
+        def _mutate(sess: dict) -> None:
+            sess["bookmarks"] = remove_bookmark(
+                sess.get("bookmarks"), message_index=int(message_index)
+            )
+
+        data = await sessions.redis.update_session(session_id, _mutate, preserve_messages=True)
+        return RpcEnvelope(ok=True, data={"bookmarks": data.get("bookmarks") or []})
 
     @app.delete("/rpc/sessions/{session_id}")
     async def delete_session(session_id: str):

@@ -399,6 +399,10 @@ def create_kernel_app() -> FastAPI:
                         "plan_enforcement": (task.metadata or {}).get("plan_enforcement") or "hard",
                         "experience_tier": (task.metadata or {}).get("experience_tier") or "balanced",
                         "reasoning_effort": (task.metadata or {}).get("reasoning_effort") or "medium",
+                        "cwd": (task.metadata or {}).get("cwd") or "",
+                        "active_tools": (task.metadata or {}).get("active_tools"),
+                        "system_prompt_append": (task.metadata or {}).get("system_prompt_append") or "",
+                        "preset_name": (task.metadata or {}).get("preset_name") or "",
                     },
                     allow_subagents=bool((task.metadata or {}).get("multitask", True)),
                     parent_session_id=task.session_id,
@@ -790,6 +794,111 @@ def create_kernel_app() -> FastAPI:
             workspace_id=workspace_id or "", limit=min(max(limit, 1), 100)
         )
         return RpcEnvelope(ok=True, data={"entries": rows})
+
+    # ----- WeKnora bridge -----
+
+    @app.get("/rpc/knowledge/weknora/health")
+    async def weknora_health_rpc():
+        from src.core_kernel.plugin_runtime.weknora_client import weknora_health
+
+        return RpcEnvelope(ok=True, data=await weknora_health())
+
+    @app.get("/rpc/knowledge/weknora/kbs")
+    async def weknora_list_kbs_rpc(limit: int = 50):
+        from src.core_kernel.plugin_runtime.weknora_client import weknora_list_knowledge_bases
+
+        return RpcEnvelope(ok=True, data=await weknora_list_knowledge_bases(limit=limit))
+
+    @app.post("/rpc/knowledge/weknora/search")
+    async def weknora_search_rpc(request: Request):
+        from src.core_kernel.plugin_runtime.weknora_client import weknora_search
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        q = str(body.get("query") or "").strip()
+        if not q:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "query required"})
+        data = await weknora_search(
+            q,
+            limit=int(body.get("limit") or 5),
+            kb_id=str(body.get("kb_id") or ""),
+            kb_ids=body.get("kb_ids") if isinstance(body.get("kb_ids"), list) else None,
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/rpc/knowledge/weknora/push")
+    async def weknora_push_rpc(request: Request):
+        from src.core_kernel.plugin_runtime.weknora_client import weknora_push_document
+        from src.core_kernel.plugin_runtime.knowledge_store import content_hash
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        store = _kb_store()
+        await store.ensure_schema()
+        doc_id = str(body.get("doc_id") or "").strip()
+        title = str(body.get("title") or "").strip()
+        content = str(body.get("content") or "")
+        kb_id = str(body.get("kb_id") or "").strip()
+        workspace_id = str(body.get("workspace_id") or "")
+        if doc_id:
+            row = await store.get(doc_id)
+            if not row:
+                return RpcEnvelope(
+                    ok=False, error={"code": "NOT_FOUND", "message": f"doc not found: {doc_id}"}
+                )
+            title = title or str(row.get("title") or doc_id)
+            content = content or str(row.get("content") or "")
+        if not content.strip():
+            return RpcEnvelope(
+                ok=False, error={"code": "EMPTY", "message": "content or doc_id required"}
+            )
+        data = await weknora_push_document(
+            title=title or "untitled",
+            content=content,
+            kb_id=kb_id,
+            metadata={"nlm_doc_id": doc_id} if doc_id else None,
+        )
+        if data.get("ok") and data.get("pushed") and doc_id:
+            await store.log_sync(
+                source="weknora_push",
+                source_uri=f"{data.get('kb_id')}:{doc_id}",
+                content_hash_value=content_hash(content),
+                status="ok",
+                message=f"pushed knowledge_id={data.get('knowledge_id') or ''}",
+                workspace_id=workspace_id,
+            )
+        return RpcEnvelope(ok=bool(data.get("ok")), data=data)
+
+    @app.post("/rpc/knowledge/weknora/sync")
+    async def weknora_sync_rpc(request: Request):
+        from src.core_kernel.plugin_runtime.knowledge_sync import sync_weknora_bidirectional
+
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        doc_ids = body.get("doc_ids")
+        data = await sync_weknora_bidirectional(
+            store,
+            workspace_id=str(body.get("workspace_id") or ""),
+            kb_id=str(body.get("kb_id") or ""),
+            direction=str(body.get("direction") or "both"),
+            limit=int(body.get("limit") or 40),
+            doc_ids=[str(x) for x in doc_ids] if isinstance(doc_ids, list) else None,
+        )
+        return RpcEnvelope(ok=bool(data.get("ok")), data=data)
 
     return app
 

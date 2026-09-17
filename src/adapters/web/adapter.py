@@ -94,6 +94,18 @@ class WebAdapter(BaseAdapter):
             except Exception:
                 logger.exception("Failed expanding context_refs")
 
+        # Slash prompt templates: /review path → expanded prompt body
+        if content.strip().startswith("/") and not content.strip().lower().startswith("/skill:"):
+            try:
+                from src.core_kernel.prompt_templates import expand_slash_command
+
+                expanded = expand_slash_command(cwd or None, content.strip())
+                if expanded and expanded.get("prompt"):
+                    meta["prompt_template"] = expanded.get("name")
+                    content = str(expanded["prompt"])
+            except Exception:
+                logger.exception("Failed expanding prompt template")
+
         if not content.strip():
             return None
 

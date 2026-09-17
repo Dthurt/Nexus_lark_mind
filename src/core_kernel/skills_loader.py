@@ -29,9 +29,21 @@ class SkillInfo:
     description: str
     path: str
     body: str = ""
+    allowed_tools: tuple[str, ...] = ()
 
 
 _FRONT_MATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
+
+
+def _parse_allowed_tools(raw: str) -> tuple[str, ...]:
+    """Parse allowed-tools from front matter (comma/space/pipe separated)."""
+    text = (raw or "").strip()
+    if not text:
+        return ()
+    # Support JSON-ish list: [a, b] or a, b
+    text = text.strip("[]")
+    parts = re.split(r"[,|\s]+", text)
+    return tuple(p.strip().strip('"').strip("'") for p in parts if p.strip())
 
 
 def _parse_front_matter(text: str) -> tuple[dict[str, str], str]:
@@ -93,11 +105,20 @@ def discover_skills(cwd: str, *, max_skills: int = 40) -> List[SkillInfo]:
             desc = (meta.get("description") or _first_heading(body) or name).strip()
             if len(desc) > 240:
                 desc = desc[:237] + "…"
+            allowed = _parse_allowed_tools(
+                meta.get("allowed-tools") or meta.get("allowed_tools") or ""
+            )
             try:
                 rel = str(skill_md.relative_to(root)).replace("\\", "/")
             except ValueError:
                 rel = str(skill_md)
-            found[name] = SkillInfo(name=name, description=desc, path=rel, body=body)
+            found[name] = SkillInfo(
+                name=name,
+                description=desc,
+                path=rel,
+                body=body,
+                allowed_tools=allowed,
+            )
     return list(found.values())
 
 
@@ -125,7 +146,12 @@ def skills_prompt_block(cwd: str, *, max_skills: int = 40) -> str:
 
 def list_skills_public(cwd: str) -> List[dict]:
     return [
-        {"name": s.name, "description": s.description, "path": s.path}
+        {
+            "name": s.name,
+            "description": s.description,
+            "path": s.path,
+            "allowed_tools": list(s.allowed_tools),
+        }
         for s in discover_skills(cwd)
     ]
 
@@ -138,3 +164,18 @@ def resolve_skill(cwd: str, name: str) -> Optional[SkillInfo]:
         if s.name == key or s.name.lower() == key.lower():
             return s
     return None
+
+
+def active_skill_allowed_tools(cwd: Optional[str], user_text: str) -> Optional[List[str]]:
+    """If user invoked /skill:name and that skill declares allowed-tools, return them."""
+    if not cwd or not user_text:
+        return None
+    import re
+
+    m = re.search(r"/skill:([A-Za-z0-9_-]+)", user_text)
+    if not m:
+        return None
+    skill = resolve_skill(cwd, m.group(1))
+    if not skill or not skill.allowed_tools:
+        return None
+    return list(skill.allowed_tools)

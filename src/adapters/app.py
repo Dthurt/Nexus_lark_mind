@@ -7,7 +7,7 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,6 +85,11 @@ class InteractionPatchRequest(BaseModel):
     model_name: Optional[str] = None
     pending_user_text: Optional[str] = None
     clear_pending_user_text: Optional[bool] = None
+    active_tools: Optional[List[str]] = None
+    clear_active_tools: Optional[bool] = None
+    preset_name: Optional[str] = None
+    system_prompt_append: Optional[str] = None
+    cwd: Optional[str] = None
 
 
 class AcceptPlanRequest(BaseModel):
@@ -830,6 +835,76 @@ def create_adapters_app() -> FastAPI:
             return RpcEnvelope(ok=True, data={"skills": []})
         return RpcEnvelope(ok=True, data={"skills": list_skills_public(path), "cwd": path})
 
+    @app.get("/api/prompts")
+    async def list_prompts(cwd: str = ""):
+        from src.core_kernel.prompt_templates import list_prompt_templates_public
+
+        return RpcEnvelope(
+            ok=True,
+            data={"prompts": list_prompt_templates_public((cwd or "").strip() or None)},
+        )
+
+    @app.post("/api/prompts/expand")
+    async def expand_prompt(request: Request):
+        from src.core_kernel.prompt_templates import expand_slash_command, resolve_prompt_template, expand_prompt_template
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            body = {}
+        cwd = str(body.get("cwd") or "").strip() or None
+        text = str(body.get("text") or body.get("slash") or "").strip()
+        if text.startswith("/"):
+            expanded = expand_slash_command(cwd, text)
+            if not expanded:
+                raise ValidationAppError(f"unknown prompt template: {text.split()[0]}")
+            return RpcEnvelope(ok=True, data=expanded)
+        name = str(body.get("name") or "").strip()
+        tmpl = resolve_prompt_template(cwd, name)
+        if not tmpl:
+            raise ValidationAppError(f"unknown prompt template: {name}")
+        variables = body.get("variables") if isinstance(body.get("variables"), dict) else {}
+        positional = body.get("args") if isinstance(body.get("args"), list) else []
+        prompt = expand_prompt_template(tmpl, {str(k).upper(): str(v) for k, v in variables.items()}, positional=[str(x) for x in positional])
+        return RpcEnvelope(ok=True, data={"name": tmpl.name, "prompt": prompt, "description": tmpl.description})
+
+    @app.get("/api/presets")
+    async def list_presets(cwd: str = ""):
+        from src.core_kernel.presets_loader import list_presets_public
+
+        return RpcEnvelope(
+            ok=True,
+            data={"presets": list_presets_public((cwd or "").strip() or None)},
+        )
+
+    @app.get("/api/sessions/tree")
+    async def sessions_tree(workspace_id: str = ""):
+        orch: RpcClient = state["orchestrator"]
+        params = {}
+        if workspace_id:
+            params["workspace_id"] = workspace_id
+        data = await orch.call("GET", "/rpc/sessions/tree", params=params)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/sessions/{session_id}/bookmarks")
+    async def add_bookmark(session_id: str, request: Request):
+        orch: RpcClient = state["orchestrator"]
+        body = await request.json()
+        data = await orch.call(
+            "POST",
+            f"/rpc/sessions/{session_id}/bookmarks",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.delete("/api/sessions/{session_id}/bookmarks/{message_index}")
+    async def remove_bookmark(session_id: str, message_index: int):
+        orch: RpcClient = state["orchestrator"]
+        data = await orch.call(
+            "DELETE",
+            f"/rpc/sessions/{session_id}/bookmarks/{message_index}",
+        )
+        return RpcEnvelope(ok=True, data=data)
+
     @app.patch("/api/sessions/{session_id}/workspace")
     async def bind_session_workspace(session_id: str, request: Request):
         orch: RpcClient = state["orchestrator"]
@@ -1342,6 +1417,53 @@ def create_adapters_app() -> FastAPI:
             "GET",
             "/rpc/knowledge/sync/log",
             params={"workspace_id": workspace_id or "", "limit": limit},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/weknora/health")
+    async def knowledge_weknora_health():
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call("GET", "/rpc/knowledge/weknora/health")
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/weknora/kbs")
+    async def knowledge_weknora_kbs(limit: int = 50):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET", "/rpc/knowledge/weknora/kbs", params={"limit": limit}
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/weknora/search")
+    async def knowledge_weknora_search(request: Request):
+        kernel: RpcClient = state["kernel"]
+        body = await request.json()
+        data = await kernel.call(
+            "POST",
+            "/rpc/knowledge/weknora/search",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/weknora/push")
+    async def knowledge_weknora_push(request: Request):
+        kernel: RpcClient = state["kernel"]
+        body = await request.json()
+        data = await kernel.call(
+            "POST",
+            "/rpc/knowledge/weknora/push",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/weknora/sync")
+    async def knowledge_weknora_sync(request: Request):
+        kernel: RpcClient = state["kernel"]
+        body = await request.json()
+        data = await kernel.call(
+            "POST",
+            "/rpc/knowledge/weknora/sync",
+            json=body if isinstance(body, dict) else {},
         )
         return RpcEnvelope(ok=True, data=data)
 

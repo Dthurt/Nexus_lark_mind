@@ -264,6 +264,7 @@ class FeishuWikiConnector(KnowledgeConnector):
 
     Prefer manual paste / file sync first. When Feishu Doc/Wiki OpenAPI access
     is configured, implement fetch_candidates() using FeishuClient.
+    Prefer WeKnora multi-source ingestion (Feishu → WeKnora → NLM) when available.
     """
 
     name = "feishu_wiki"
@@ -293,8 +294,9 @@ class FeishuWikiConnector(KnowledgeConnector):
             source_uri=self.space_id or "",
             status="skip",
             message=(
-                "Feishu wiki sync not implemented yet — use workspace docs sync "
-                "or paste Markdown into the KB UI. TODO: wiki OpenAPI."
+                "Feishu wiki sync not implemented yet — use workspace docs sync, "
+                "paste Markdown, or sync via WeKnora (weknora_sync pull) when Feishu "
+                "is connected there. TODO: direct wiki OpenAPI."
             ),
             workspace_id=workspace_id,
         )
@@ -307,3 +309,280 @@ class FeishuWikiConnector(KnowledgeConnector):
             "errors": [],
             "todo": "Implement Feishu wiki/doc OpenAPI fetch; prefer incremental content_hash.",
         }
+
+
+async def sync_local_to_weknora(
+    store: KnowledgeStore,
+    *,
+    workspace_id: str = "",
+    kb_id: str = "",
+    limit: int = 40,
+    doc_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Push local SQLite docs to WeKnora with content_hash skip-if-unchanged."""
+    from src.core_kernel.plugin_runtime.weknora_client import (
+        weknora_configured,
+        weknora_default_kb_id,
+        weknora_ingest_enabled,
+        weknora_push_document,
+    )
+
+    if not weknora_configured():
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "WEKNORA_BASE_URL not set",
+            "pushed": 0,
+            "skipped_unchanged": 0,
+            "errors": [],
+        }
+    if not weknora_ingest_enabled():
+        return {
+            "ok": False,
+            "error": "WeKnora ingest disabled",
+            "pushed": 0,
+            "skipped_unchanged": 0,
+            "errors": [],
+        }
+    kid = (kb_id or weknora_default_kb_id()).strip()
+    if not kid:
+        return {
+            "ok": False,
+            "error": "kb_id required (pass kb_id or set WEKNORA_KB_ID)",
+            "pushed": 0,
+            "skipped_unchanged": 0,
+            "errors": [],
+        }
+
+    pushed = skipped = 0
+    errors: List[str] = []
+    docs: List[Dict[str, Any]] = []
+    if doc_ids:
+        for did in doc_ids[:limit]:
+            row = await store.get(str(did).strip())
+            if row:
+                docs.append(row)
+    else:
+        docs = await store.list_docs(workspace_id=workspace_id, limit=max(1, min(limit, 200)))
+
+    for summary in docs:
+        doc_id = str(summary.get("doc_id") or "")
+        full = await store.get(doc_id) if doc_id else None
+        if not full:
+            continue
+        title = str(full.get("title") or doc_id)
+        body = str(full.get("content") or "")
+        if not body.strip():
+            skipped += 1
+            continue
+        digest = str(full.get("content_hash") or content_hash(body))
+        # Skip if last successful push logged same hash for this doc
+        recent = await store.list_sync_log(workspace_id=workspace_id, limit=80)
+        already = any(
+            e.get("source") == "weknora_push"
+            and e.get("source_uri") == f"{kid}:{doc_id}"
+            and e.get("content_hash") == digest
+            and e.get("status") == "ok"
+            for e in recent
+        )
+        if already:
+            skipped += 1
+            continue
+        result = await weknora_push_document(
+            title=title,
+            content=body,
+            kb_id=kid,
+            metadata={
+                "nlm_doc_id": doc_id,
+                "nlm_source": str(full.get("source") or ""),
+                "nlm_source_uri": str(full.get("source_uri") or ""),
+                "content_hash": digest,
+            },
+        )
+        if result.get("ok") and result.get("pushed"):
+            pushed += 1
+            await store.log_sync(
+                source="weknora_push",
+                source_uri=f"{kid}:{doc_id}",
+                content_hash_value=digest,
+                status="ok",
+                message=f"pushed knowledge_id={result.get('knowledge_id') or ''}",
+                workspace_id=workspace_id,
+            )
+        else:
+            err = str(result.get("error") or "push failed")
+            errors.append(f"{doc_id}: {err}")
+            await store.log_sync(
+                source="weknora_push",
+                source_uri=f"{kid}:{doc_id}",
+                content_hash_value=digest,
+                status="error",
+                message=err,
+                workspace_id=workspace_id,
+            )
+    return {
+        "ok": True,
+        "direction": "local_to_weknora",
+        "kb_id": kid,
+        "scanned": len(docs),
+        "pushed": pushed,
+        "skipped_unchanged": skipped,
+        "errors": errors[:20],
+    }
+
+
+async def sync_weknora_to_local(
+    store: KnowledgeStore,
+    *,
+    workspace_id: str = "",
+    kb_id: str = "",
+    limit: int = 40,
+) -> Dict[str, Any]:
+    """Pull WeKnora knowledge entries into local SQLite with content_hash upsert."""
+    from src.core_kernel.plugin_runtime.weknora_client import (
+        weknora_configured,
+        weknora_default_kb_id,
+        weknora_get_knowledge,
+        weknora_list_knowledge,
+    )
+
+    if not weknora_configured():
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "WEKNORA_BASE_URL not set",
+            "added": 0,
+            "updated": 0,
+            "skipped_unchanged": 0,
+            "errors": [],
+        }
+    kid = (kb_id or weknora_default_kb_id()).strip()
+    if not kid:
+        return {
+            "ok": False,
+            "error": "kb_id required",
+            "added": 0,
+            "updated": 0,
+            "skipped_unchanged": 0,
+            "errors": [],
+        }
+
+    listed = await weknora_list_knowledge(kid, page=1, page_size=max(1, min(limit, 100)))
+    if not listed.get("ok"):
+        return {
+            "ok": False,
+            "error": listed.get("error") or "list failed",
+            "added": 0,
+            "updated": 0,
+            "skipped_unchanged": 0,
+            "errors": [],
+            "kb_id": kid,
+        }
+
+    added = updated = skipped = 0
+    errors: List[str] = []
+    for item in listed.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        remote_id = str(item.get("id") or "").strip()
+        if not remote_id:
+            continue
+        title = str(item.get("title") or remote_id)
+        body = str(item.get("content") or "")
+        if not body.strip():
+            detail = await weknora_get_knowledge(remote_id)
+            if detail.get("ok"):
+                body = str(detail.get("content") or "")
+                if detail.get("title"):
+                    title = str(detail["title"])
+        if not body.strip():
+            skipped += 1
+            continue
+        digest = content_hash(body)
+        doc_id = f"weknora_{hashlib.sha1(f'{kid}:{remote_id}'.encode()).hexdigest()[:16]}"
+        try:
+            existing = await store.get(doc_id)
+            result = await store.upsert(
+                doc_id=doc_id,
+                title=title,
+                content=body,
+                tags=f"weknora,{kid}",
+                source=f"weknora:{kid}",
+                source_uri=remote_id,
+                workspace_id=workspace_id,
+                content_hash_value=digest,
+                skip_if_unchanged=True,
+            )
+            if result.get("unchanged"):
+                skipped += 1
+                status, msg = "skip", "unchanged"
+            elif existing:
+                updated += 1
+                status, msg = "ok", "updated"
+            else:
+                added += 1
+                status, msg = "ok", "added"
+            await store.log_sync(
+                source="weknora_pull",
+                source_uri=f"{kid}:{remote_id}",
+                content_hash_value=digest,
+                status=status,
+                message=msg,
+                workspace_id=workspace_id,
+            )
+        except Exception as exc:
+            errors.append(f"{remote_id}: {exc}")
+            await store.log_sync(
+                source="weknora_pull",
+                source_uri=f"{kid}:{remote_id}",
+                status="error",
+                message=str(exc),
+                workspace_id=workspace_id,
+            )
+    return {
+        "ok": True,
+        "direction": "weknora_to_local",
+        "kb_id": kid,
+        "scanned": len(listed.get("items") or []),
+        "added": added,
+        "updated": updated,
+        "skipped_unchanged": skipped,
+        "errors": errors[:20],
+    }
+
+
+async def sync_weknora_bidirectional(
+    store: KnowledgeStore,
+    *,
+    workspace_id: str = "",
+    kb_id: str = "",
+    direction: str = "both",
+    limit: int = 40,
+    doc_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Bidirectional sync: local ↔ WeKnora.
+
+    direction: push | pull | both
+    """
+    d = (direction or "both").strip().lower()
+    out: Dict[str, Any] = {"ok": True, "direction": d, "kb_id": kb_id or ""}
+    if d in {"push", "both", "local_to_weknora"}:
+        out["push"] = await sync_local_to_weknora(
+            store,
+            workspace_id=workspace_id,
+            kb_id=kb_id,
+            limit=limit,
+            doc_ids=doc_ids,
+        )
+        if not out["push"].get("ok") and not out["push"].get("skipped"):
+            out["ok"] = False
+    if d in {"pull", "both", "weknora_to_local"}:
+        out["pull"] = await sync_weknora_to_local(
+            store,
+            workspace_id=workspace_id,
+            kb_id=kb_id,
+            limit=limit,
+        )
+        if not out["pull"].get("ok") and not out["pull"].get("skipped"):
+            out["ok"] = False
+    return out

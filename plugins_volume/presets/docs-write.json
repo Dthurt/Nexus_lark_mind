@@ -1,0 +1,20 @@
+{
+  "name": "docs-write",
+  "description": "Documentation writing with KB ingest",
+  "permission_preset": "workspace-write",
+  "reasoning_effort": "medium",
+  "active_tools": [
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_dir",
+    "grep",
+    "kb_add",
+    "kb_search",
+    "kb_read",
+    "kb_sync_docs",
+    "weknora_push",
+    "weknora_list_kbs"
+  ],
+  "system_prompt_append": "You are in docs-write mode. Prefer clear Markdown. Offer kb_add / weknora_push when the user wants knowledge persisted."
+}

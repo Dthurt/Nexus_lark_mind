@@ -1,0 +1,8 @@
+{
+  "name": "code-review",
+  "description": "Read-only code review with higher reasoning",
+  "permission_preset": "read-only",
+  "reasoning_effort": "high",
+  "active_tools": ["read_file", "grep", "glob", "list_dir", "kb_search", "kb_read", "kb_list"],
+  "system_prompt_append": "You are in code-review mode. Prefer findings with severity and concrete fixes. Do not modify files."
+}

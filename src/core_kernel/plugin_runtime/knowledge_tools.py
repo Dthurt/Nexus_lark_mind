@@ -20,10 +20,74 @@ from src.core_kernel.plugin_runtime.knowledge_store import (
 from src.core_kernel.plugin_runtime.knowledge_sync import (
     FeishuWikiConnector,
     stable_doc_id_for_path,
+    sync_weknora_bidirectional,
     sync_workspace_docs,
 )
 from src.core_kernel.plugin_runtime.lifecycle import BasePlugin, PluginManifest
 from src.infrastructure.storage.database import get_session_factory
+
+WEKNORA_TOOLS: List[Dict[str, Any]] = [
+    {
+        "name": "weknora_list_kbs",
+        "description": (
+            "List available WeKnora knowledge bases (id, name, doc counts). "
+            "Use before weknora_search / weknora_push when multiple KBs exist."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 50}},
+        },
+    },
+    {
+        "name": "weknora_push",
+        "description": (
+            "Push a document (title+content) or a local kb doc_id into a WeKnora KB "
+            "for long-term team sharing. Requires WEKNORA_BASE_URL and a kb_id."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "content": {"type": "string"},
+                "doc_id": {
+                    "type": "string",
+                    "description": "Local KB doc_id to push (alternative to title+content)",
+                },
+                "kb_id": {"type": "string"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "weknora_sync",
+        "description": (
+            "Bidirectional sync between local SQLite KB and WeKnora. "
+            "direction=push|pull|both (default both). Uses content_hash to skip unchanged docs."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "description": "push | pull | both",
+                    "default": "both",
+                },
+                "kb_id": {"type": "string"},
+                "limit": {"type": "integer", "default": 40},
+                "doc_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional local doc_ids for push-only subset",
+                },
+            },
+        },
+    },
+    {
+        "name": "weknora_health",
+        "description": "Check WeKnora connectivity, latency, and default KB configuration.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+]
 
 TOOLS: List[Dict[str, Any]] = [
     {
@@ -147,6 +211,8 @@ TOOLS: List[Dict[str, Any]] = [
     },
 ]
 
+TOOLS = TOOLS + WEKNORA_TOOLS
+
 
 class KnowledgeToolsPlugin(BasePlugin):
     def __init__(self, manifest: PluginManifest) -> None:
@@ -249,7 +315,71 @@ class KnowledgeToolsPlugin(BasePlugin):
                 enabled=bool(arguments.get("enabled")),
             )
             return await connector.sync_into(store, workspace_id=ws)
+        if tool_name == "weknora_list_kbs":
+            from src.core_kernel.plugin_runtime.weknora_client import weknora_list_knowledge_bases
+
+            return await weknora_list_knowledge_bases(
+                limit=int(arguments.get("limit") or 50)
+            )
+        if tool_name == "weknora_health":
+            from src.core_kernel.plugin_runtime.weknora_client import weknora_health
+
+            return await weknora_health()
+        if tool_name == "weknora_push":
+            return await self._weknora_push(store, arguments, ws)
+        if tool_name == "weknora_sync":
+            doc_ids = arguments.get("doc_ids")
+            ids = [str(x) for x in doc_ids] if isinstance(doc_ids, list) else None
+            return await sync_weknora_bidirectional(
+                store,
+                workspace_id=ws,
+                kb_id=str(arguments.get("kb_id") or ""),
+                direction=str(arguments.get("direction") or "both"),
+                limit=int(arguments.get("limit") or 40),
+                doc_ids=ids,
+            )
         raise PluginError(f"unknown knowledge tool: {tool_name}")
+
+    async def _weknora_push(
+        self, store: KnowledgeStore, arguments: Dict[str, Any], workspace_id: str
+    ) -> Any:
+        from src.core_kernel.plugin_runtime.weknora_client import weknora_push_document
+
+        doc_id = str(arguments.get("doc_id") or "").strip()
+        title = str(arguments.get("title") or "").strip()
+        content = str(arguments.get("content") or "")
+        kb_id = str(arguments.get("kb_id") or "").strip()
+        if doc_id:
+            row = await store.get(doc_id)
+            if not row:
+                raise PluginError(f"doc not found: {doc_id}")
+            title = title or str(row.get("title") or doc_id)
+            content = content or str(row.get("content") or "")
+            result = await weknora_push_document(
+                title=title,
+                content=content,
+                kb_id=kb_id,
+                metadata={
+                    "nlm_doc_id": doc_id,
+                    "nlm_source": str(row.get("source") or ""),
+                    "content_hash": str(row.get("content_hash") or content_hash(content)),
+                },
+            )
+            if result.get("ok") and result.get("pushed"):
+                await store.log_sync(
+                    source="weknora_push",
+                    source_uri=f"{result.get('kb_id')}:{doc_id}",
+                    content_hash_value=str(row.get("content_hash") or content_hash(content)),
+                    status="ok",
+                    message=f"pushed knowledge_id={result.get('knowledge_id') or ''}",
+                    workspace_id=workspace_id,
+                )
+            return result
+        if not content.strip():
+            raise PluginError("content or doc_id required")
+        if not title:
+            title = "untitled"
+        return await weknora_push_document(title=title, content=content, kb_id=kb_id)
 
     async def _kb_add(
         self, store: KnowledgeStore, arguments: Dict[str, Any], workspace_id: str
@@ -326,10 +456,10 @@ def knowledge_tools_manifest() -> PluginManifest:
         plugin_id="builtin.knowledge",
         name="Knowledge Base",
         kind="inprocess",
-        version="0.3.0",
+        version="0.4.0",
         description=(
-            "Local SQLite knowledge base with chunked keyword search, "
-            "citations, workspace ingest, and optional OpenAI-compatible embeddings hybrid."
+            "Local SQLite knowledge base with chunked keyword search, citations, "
+            "workspace ingest, optional embeddings hybrid, and WeKnora bidirectional bridge."
         ),
         enabled=True,
         tools=list(TOOLS),

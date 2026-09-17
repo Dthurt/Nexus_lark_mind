@@ -7,16 +7,21 @@ import {
   deleteKnowledgeDoc,
   getKnowledgeDoc,
   getKnowledgeStats,
+  getWeknoraHealth,
   listKnowledgeDocs,
   listKnowledgeSyncLog,
+  listWeknoraKbs,
   patchKnowledgeDoc,
   reindexKnowledge,
   searchKnowledge,
   syncKnowledgeDocs,
+  syncWeknora,
   type KnowledgeDoc,
   type KnowledgeHit,
   type KnowledgeStats,
   type KnowledgeSyncEntry,
+  type WeknoraHealth,
+  type WeknoraKb,
 } from "@/api/endpoints";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +53,10 @@ export function KnowledgePanel({
   const [syncing, setSyncing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [reindexing, setReindexing] = useState(false);
+  const [wkHealth, setWkHealth] = useState<WeknoraHealth | null>(null);
+  const [wkKbs, setWkKbs] = useState<WeknoraKb[]>([]);
+  const [wkKbId, setWkKbId] = useState("");
+  const [wkSyncing, setWkSyncing] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -61,12 +70,47 @@ export function KnowledgePanel({
       ]);
       setDocs(data.docs || []);
       setStats(st);
+      try {
+        const health = await getWeknoraHealth();
+        setWkHealth(health);
+        if (health?.configured && !health?.skipped) {
+          const kbs = await listWeknoraKbs(40);
+          setWkKbs(kbs.knowledge_bases || []);
+          setWkKbId((prev) => prev || kbs.default_kb_id || kbs.knowledge_bases?.[0]?.id || "");
+        } else {
+          setWkKbs([]);
+        }
+      } catch {
+        setWkHealth(null);
+      }
     } catch (err: any) {
       toast.error(String(err?.message || err || "加载失败"));
     } finally {
       setLoading(false);
     }
   }, [workspaceId]);
+
+  const onWeknoraSync = async () => {
+    setWkSyncing(true);
+    try {
+      const data = await syncWeknora({
+        workspace_id: workspaceId || undefined,
+        kb_id: wkKbId || undefined,
+        direction: "both",
+        limit: 40,
+      });
+      if (data.ok === false) {
+        toast.error(String(data.error || "WeKnora 同步失败"));
+      } else {
+        toast.success("已触发 WeKnora 双向同步");
+      }
+      await refresh();
+    } catch (err: any) {
+      toast.error(String(err?.message || err));
+    } finally {
+      setWkSyncing(false);
+    }
+  };
 
   useEffect(() => {
     void refresh();
@@ -269,6 +313,50 @@ export function KnowledgePanel({
           </Button>
         </div>
       </div>
+
+      {wkHealth && !wkHealth.skipped ? (
+        <div className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-medium text-foreground/80">WeKnora</span>
+            <span>
+              {wkHealth.online
+                ? `在线${wkHealth.latency_ms != null ? ` · ${wkHealth.latency_ms}ms` : ""}`
+                : wkHealth.error
+                  ? `离线 · ${wkHealth.error}`
+                  : "未连通"}
+            </span>
+            {wkHealth.kb_count != null ? <span>· {wkHealth.kb_count} 库</span> : null}
+            {wkKbs.length > 0 ? (
+              <select
+                className="h-6 max-w-[140px] rounded border border-border bg-background px-1 text-[11px]"
+                value={wkKbId}
+                onChange={(e) => setWkKbId(e.target.value)}
+                title="目标知识库"
+              >
+                {wkKbs.map((kb) => (
+                  <option key={kb.id} value={kb.id}>
+                    {kb.name || kb.id}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-6 px-1.5 text-[11px]"
+              disabled={wkSyncing || !wkKbId}
+              onClick={() => void onWeknoraSync()}
+            >
+              {wkSyncing ? "同步中…" : "双向同步"}
+            </Button>
+          </div>
+        </div>
+      ) : wkHealth?.skipped ? (
+        <p className="m-0 text-[10px] text-muted-foreground/80">
+          WeKnora 未配置（设置 WEKNORA_BASE_URL 后可双向同步）
+        </p>
+      ) : null}
 
       <div className="flex gap-1">
         <Input

@@ -224,6 +224,11 @@ class SessionContext:
         model_name: Optional[str] = None,
         pending_user_text: Optional[str] = None,
         clear_pending_user_text: bool = False,
+        active_tools: Optional[Any] = None,
+        clear_active_tools: bool = False,
+        preset_name: Optional[str] = None,
+        system_prompt_append: Optional[str] = None,
+        cwd_for_preset: Optional[str] = None,
     ) -> Dict[str, Any]:
         from src.common.experience_tiers import (
             normalize_experience_tier,
@@ -240,6 +245,19 @@ class SessionContext:
             raise KeyError(session_id)
         # Apply mutations on a working copy, then patch fields without touching messages.
         working = dict(session)
+
+        # Named agent preset (Pi-style) — may set tools / permission / model
+        if preset_name is not None:
+            from src.core_kernel.presets_loader import apply_preset_to_session_patch, resolve_preset
+
+            cwd = (cwd_for_preset or working.get("cwd") or "").strip() or None
+            named = resolve_preset(cwd, str(preset_name))
+            if named:
+                for k, v in apply_preset_to_session_patch(named).items():
+                    working[k] = v
+            else:
+                working["preset_name"] = str(preset_name).strip()
+
         if permission_preset is not None:
             fields = apply_preset_to_session_fields(permission_preset)
             working.update(fields)
@@ -279,6 +297,17 @@ class SessionContext:
             working["pending_user_text"] = ""
         elif pending_user_text is not None:
             working["pending_user_text"] = str(pending_user_text)
+        if clear_active_tools:
+            working["active_tools"] = None
+        elif active_tools is not None:
+            if isinstance(active_tools, list):
+                working["active_tools"] = [str(x).strip() for x in active_tools if str(x).strip()]
+            elif active_tools is False or active_tools == "":
+                working["active_tools"] = None
+            else:
+                raise ValueError("active_tools must be a list of tool names or null")
+        if system_prompt_append is not None:
+            working["system_prompt_append"] = str(system_prompt_append)
         if not working.get("permission_preset"):
             working["permission_preset"] = normalize_preset(None)
         if not working.get("plan_enforcement"):
@@ -303,6 +332,9 @@ class SessionContext:
             "model_provider",
             "model_name",
             "pending_user_text",
+            "active_tools",
+            "preset_name",
+            "system_prompt_append",
             "updated_at",
         )
         patch = {k: working.get(k) for k in keys}

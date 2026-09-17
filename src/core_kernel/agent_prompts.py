@@ -153,9 +153,11 @@ KNOWLEDGE_HINTS = (
     "- `kb_add` accepts pasted Markdown or `path` (workspace-relative `.md/.txt/.rst/.pdf`).\n"
     "- `kb_sync_docs` indexes workspace docs with content_hash upsert; `kb_stats` / `kb_reindex` "
     "for status and embedding backfill when configured.\n"
-    "- Optional remote: `weknora_search` only if WEKNORA_BASE_URL is set — local SQLite stays default.\n"
+    "- Optional WeKnora (when WEKNORA_BASE_URL is set): `weknora_search` / `weknora_list_kbs` / "
+    "`weknora_push` / `weknora_sync` / `weknora_health`. Prefer local `kb_*` first; use WeKnora "
+    "for team/remote KB. Pass `kb_id` when multiple remote KBs exist.\n"
     "- Tools: `kb_add` / `kb_search` / `kb_read` / `kb_get` / `kb_list` / `kb_delete` / "
-    "`kb_sync_docs` / `kb_stats` / `kb_reindex`.\n"
+    "`kb_sync_docs` / `kb_stats` / `kb_reindex` (+ WeKnora tools when configured).\n"
 )
 
 PLUGIN_HINTS = (
@@ -319,6 +321,10 @@ def build_system_prompt(
     parts.append(experience_tier_prompt_block(experience_tier))
     parts.append(reasoning_effort_hint(reasoning_effort))
     parts.append(DIAGRAMS_MATH)
+
+    append = str(meta.get("system_prompt_append") or "").strip()
+    if append:
+        parts.append("## Preset / session instructions\n" + append)
 
     # If caller supplied extra custom on top of builtin, append as operator note
     if use_builtin_identity and custom and not custom.startswith("You are Nexus Lark Mind"):

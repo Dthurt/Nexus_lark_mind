@@ -1,0 +1,8 @@
+{
+  "name": "quick-ask",
+  "description": "Minimal tools for fast Q&A",
+  "permission_preset": "read-only",
+  "reasoning_effort": "low",
+  "active_tools": ["read_file", "grep", "kb_search", "kb_read", "web_search", "ask_user"],
+  "system_prompt_append": "Answer briefly. Prefer tools only when needed for facts."
+}

@@ -203,6 +203,12 @@ class RedisClient:
                     "workspace_title": sess.get("workspace_title") or "",
                     "workspace_kind": sess.get("workspace_kind") or "local",
                     "ssh_host_id": sess.get("ssh_host_id") or "",
+                    "parent_id": sess.get("parent_id") or sess.get("forked_from") or "",
+                    "forked_from": sess.get("forked_from") or "",
+                    "fork_point_index": sess.get("fork_point_index"),
+                    "bookmarks": sess.get("bookmarks") or [],
+                    "preset_name": sess.get("preset_name") or "",
+                    "active_tools": sess.get("active_tools"),
                 }
             )
         return out

@@ -93,19 +93,28 @@ Vectors are stored as JSON on chunks. After configuring embeddings on an existin
 
 ## Optional WeKnora bridge
 
-Local SQLite stays default.
+Local SQLite stays default. When configured, NLM can **search, list KBs, push, and
+bidirectionally sync** with WeKnora.
 
 ```bash
 WEKNORA_BASE_URL=http://127.0.0.1:8080
-WEKNORA_API_KEY=...          # optional
-WEKNORA_SEARCH_PATH=/api/v1/search
-WEKNORA_KB_ID=...            # optional
+WEKNORA_API_KEY=...          # X-API-Key + Bearer
+WEKNORA_KB_ID=...            # default knowledge-base id
+# WEKNORA_SEARCH_PATH=       # optional legacy override
+# WEKNORA_INGEST_ENABLED=1   # set 0 to disable push/sync write
 ```
 
-- CLI: `plugins_volume/cli/weknora_search.py` — GET then POST fallback; normalizes hits + `citations_md`
-- Kernel helper: `weknora_client.weknora_search` (httpx)
-- MCP config: `plugins_volume/mcp/weknora_http.json` (disabled until a real MCP URL exists)
+| Capability | How |
+|------------|-----|
+| Search | Prefer `POST /api/v1/knowledge-search`; CLI `weknora_search` (+ `kb_id`) |
+| Multi-KB | `weknora_list_kbs` / `GET /api/knowledge/weknora/kbs` |
+| Push | `weknora_push` / `POST /api/knowledge/weknora/push` → manual knowledge |
+| Sync | `weknora_sync` direction=`push\|pull\|both` with content_hash skip |
+| Health | `weknora_health` / Dock WeKnora strip |
 
+Kernel helper: `weknora_client.py`. MCP stub: `plugins_volume/mcp/weknora_http.json`.
+
+Feishu / GitLab connectors: prefer ingesting into WeKnora first, then `weknora_sync` pull.
 ## Feishu knowledge sync
 
 `FeishuWikiConnector` remains an incremental-design **stub**. Prefer paste / file sync; wiki OpenAPI fetch is TODO.

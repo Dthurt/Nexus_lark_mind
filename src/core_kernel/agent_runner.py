@@ -35,6 +35,8 @@ SAFE_TOOLS = {
     "kb_stats",
     "kb_reindex",
     "weknora_search",
+    "weknora_list_kbs",
+    "weknora_health",
     "web_search",
     "literature_search",
     "image_search",
@@ -62,6 +64,8 @@ PLAN_ALLOWED_TOOLS = {
     "image_search",
     "web_crawl",
     "weknora_search",
+    "weknora_list_kbs",
+    "weknora_health",
 }
 
 
@@ -250,6 +254,7 @@ def _filter_openai_tools(
     agent_mode: str = "agent",
     plan_enforcement: str = "hard",
     permission_preset: str = "workspace-write",
+    active_tools: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     from src.common.permission_presets import (
         MUTATING_TOOLS,
@@ -260,15 +265,22 @@ def _filter_openai_tools(
     out = []
     plan = agent_mode == "plan" and plan_hard_enforcement(plan_enforcement)
     readonly = blocks_mutating_tools(permission_preset)
+    active_set = {str(t).strip() for t in (active_tools or []) if str(t).strip()} or None
     for t in tools:
         name = ((t.get("function") or {}).get("name") or "")
         base = _base_tool_name(name)
+        leaf = _tool_leaf_name(base)
         if not allow_subagents and base in SUBAGENT_ALL:
             continue
         if plan and base not in PLAN_ALLOWED_TOOLS:
             continue
-        if readonly and (base in MUTATING_TOOLS or _tool_leaf_name(base) in MUTATING_TOOLS):
+        if readonly and (base in MUTATING_TOOLS or leaf in MUTATING_TOOLS):
             continue
+        if active_set is not None:
+            if name not in active_set and base not in active_set and leaf not in active_set:
+                # Keep essential control tools even when subset is active
+                if leaf not in {"ask_user", "exit_plan_mode", "todo_write"}:
+                    continue
         out.append(t)
     return out
 
@@ -412,17 +424,68 @@ async def _run_agent_stream_inner(
         permission_preset=permission_preset,
         auto_accept=meta0.get("auto_accept"),
     )
-    openai_tools = (
-        _filter_openai_tools(
-            plugins.as_openai_tools(),
+
+    # Dynamic tool subset: session active_tools > skill allowed-tools > extension registry
+    from src.core_kernel.extension_runtime import (
+        discover_and_load_extensions,
+        emit_extension_event,
+        get_extension_registry,
+        run_tool_call_hooks,
+    )
+    from src.core_kernel.skills_loader import active_skill_allowed_tools
+
+    ext_reg = discover_and_load_extensions(workspace_cwd or meta0.get("cwd"), reload=False)
+    active_tools: Optional[List[str]] = None
+    raw_active = meta0.get("active_tools")
+    if isinstance(raw_active, list) and raw_active:
+        active_tools = [str(x) for x in raw_active if str(x).strip()]
+    else:
+        # Infer from latest user message /skill:…
+        last_user = ""
+        for m in reversed(working):
+            role = getattr(m, "role", None)
+            role_s = role.value if hasattr(role, "value") else str(role or "")
+            if role_s == "user":
+                last_user = str(getattr(m, "content", "") or "")
+                break
+        skill_tools = active_skill_allowed_tools(
+            workspace_cwd or meta0.get("cwd"), last_user
+        )
+        if skill_tools:
+            active_tools = skill_tools
+            emit_extension_event(
+                "before_agent_start",
+                {"active_tools": active_tools, "via": "skill", "session_id": parent_session_id},
+            )
+        else:
+            reg_active = ext_reg.get_active_tools()
+            if reg_active:
+                active_tools = reg_active
+
+    def _assemble_tools() -> List[Dict[str, Any]]:
+        base_tools = plugins.as_openai_tools()
+        # Merge extension-registered tools
+        ext_tools = get_extension_registry().as_openai_extension_tools()
+        if ext_tools:
+            names = {
+                ((t.get("function") or {}).get("name") or "")
+                for t in base_tools
+            }
+            for t in ext_tools:
+                n = ((t.get("function") or {}).get("name") or "")
+                if n and n not in names:
+                    base_tools.append(t)
+        filtered = _filter_openai_tools(
+            base_tools,
             allow_subagents,
             agent_mode=agent_mode,
             plan_enforcement=plan_enforcement,
             permission_preset=permission_preset,
+            active_tools=active_tools,
         )
-        if tools_enabled
-        else []
-    )
+        return get_extension_registry().filter_openai_tools(filtered)
+
+    openai_tools = _assemble_tools() if tools_enabled else []
     tool_map = plugins.tool_name_map() if tools_enabled else {}
     usage_total: Dict[str, Any] = {
         "prompt_tokens": 0,
@@ -435,24 +498,32 @@ async def _run_agent_stream_inner(
     depth = int((workspace_meta or {}).get("subagent_depth") or 0)
     turn_started = time.perf_counter()
 
+    emit_extension_event(
+        "before_agent_start",
+        {
+            "session_id": parent_session_id,
+            "agent_mode": agent_mode,
+            "active_tools": active_tools,
+            "tool_count": len(openai_tools),
+        },
+    )
+
     def _stamp_usage() -> Dict[str, Any]:
         out = dict(usage_total)
         out["duration_ms"] = (time.perf_counter() - turn_started) * 1000
         return out
 
     def _refresh_tools() -> None:
-        nonlocal openai_tools, tool_map
+        nonlocal openai_tools, tool_map, active_tools
         if not tools_enabled:
             openai_tools = []
             tool_map = {}
             return
-        openai_tools = _filter_openai_tools(
-            plugins.as_openai_tools(),
-            allow_subagents,
-            agent_mode=agent_mode,
-            plan_enforcement=plan_enforcement,
-            permission_preset=permission_preset,
-        )
+        # Refresh subset from registry (extensions may change mid-turn)
+        reg_active = get_extension_registry().get_active_tools()
+        if reg_active is not None:
+            active_tools = reg_active
+        openai_tools = _assemble_tools()
         tool_map = plugins.tool_name_map()
 
     for round_i in range(max_rounds):
@@ -816,6 +887,42 @@ async def _run_agent_stream_inner(
             if isinstance(hook.get("arguments"), dict):
                 args = dict(hook["arguments"])
 
+            # Extension event bus (tool_call) — may block or transform args / shell spawn
+            ext_hook = run_tool_call_hooks(
+                {
+                    "tool": name,
+                    "base": base,
+                    "arguments": dict(args),
+                    "plugin_id": plugin_id,
+                    "session_id": parent_session_id,
+                    "task_id": task_id,
+                    "cwd": workspace_cwd or meta0.get("cwd") or "",
+                }
+            )
+            if ext_hook.get("block"):
+                return {
+                    "id": call_id,
+                    "name": name,
+                    "plugin_id": plugin_id,
+                    "success": False,
+                    "result": None,
+                    "error": str(ext_hook.get("reason") or "blocked by extension"),
+                    "duration_ms": (time.perf_counter() - t0) * 1000,
+                    "kind": "blocked",
+                }
+            if isinstance(ext_hook.get("arguments"), dict):
+                args = dict(ext_hook["arguments"])
+            # Bash spawn-hook transforms
+            if base == "run_shell":
+                if ext_hook.get("command") is not None:
+                    args["command"] = ext_hook["command"]
+                if ext_hook.get("cwd") is not None:
+                    args["cwd"] = ext_hook["cwd"]
+                if isinstance(ext_hook.get("env"), dict):
+                    env = dict(args.get("env") or {})
+                    env.update(ext_hook["env"])
+                    args["env"] = env
+
             timeout = 60.0
             if base == "run_shell":
                 try:
@@ -830,6 +937,16 @@ async def _run_agent_stream_inner(
                     timeout_seconds=timeout,
                 ),
                 task_id=task_id,
+            )
+            emit_extension_event(
+                "tool_result",
+                {
+                    "tool": name,
+                    "base": base,
+                    "success": result.success,
+                    "session_id": parent_session_id,
+                    "task_id": task_id,
+                },
             )
             return {
                 "id": call_id,

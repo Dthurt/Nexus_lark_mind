@@ -758,3 +758,59 @@ export function listKnowledgeSyncLog(params?: {
   return apiGet(`/api/knowledge/sync/log${qs ? `?${qs}` : ""}`);
 }
 
+export type WeknoraHealth = {
+  ok?: boolean;
+  online?: boolean;
+  skipped?: boolean;
+  latency_ms?: number | null;
+  kb_count?: number | null;
+  configured?: boolean;
+  default_kb_id?: string;
+  ingest_enabled?: boolean;
+  error?: string;
+  reason?: string;
+};
+
+export type WeknoraKb = {
+  id: string;
+  name: string;
+  description?: string;
+  doc_count?: number | null;
+  updated_at?: string;
+};
+
+export function getWeknoraHealth(): Promise<WeknoraHealth> {
+  return apiGet("/api/knowledge/weknora/health");
+}
+
+export function listWeknoraKbs(limit = 50): Promise<{
+  knowledge_bases?: WeknoraKb[];
+  default_kb_id?: string;
+  count?: number;
+  skipped?: boolean;
+  reason?: string;
+  error?: string;
+}> {
+  return apiGet(`/api/knowledge/weknora/kbs?limit=${limit}`);
+}
+
+export function syncWeknora(body: {
+  workspace_id?: string;
+  kb_id?: string;
+  direction?: string;
+  limit?: number;
+  doc_ids?: string[];
+}): Promise<Record<string, unknown>> {
+  return apiPost("/api/knowledge/weknora/sync", body);
+}
+
+export function pushWeknora(body: {
+  title?: string;
+  content?: string;
+  doc_id?: string;
+  kb_id?: string;
+  workspace_id?: string;
+}): Promise<Record<string, unknown>> {
+  return apiPost("/api/knowledge/weknora/push", body);
+}
+

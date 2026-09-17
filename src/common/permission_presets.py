@@ -24,6 +24,10 @@ MUTATING_TOOLS: FrozenSet[str] = frozenset(
         "shell",
         "terminal",
         "exec",
+        "weknora_push",
+        "weknora_sync",
+        "kb_add",
+        "kb_delete",
     }
 )
 
