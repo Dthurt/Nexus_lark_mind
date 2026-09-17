@@ -12,8 +12,10 @@ SKILL.md front matter (optional YAML between ---):
   ---
   # body (full instructions; model reads via read_file when needed)
 
-System prompt only lists name + description so large playbooks stay out of
-the default context window.
+System prompt lists name + description so large playbooks stay out of the
+default context window. Invoking ``/skill:<name>`` injects that SKILL.md body
+into the system prompt (builtin skills must not rely on workspace-relative
+``read_file`` of ``plugins_volume/skills/...``).
 """
 
 from __future__ import annotations
@@ -145,8 +147,10 @@ def skills_prompt_block(cwd: str, *, max_skills: int = 40) -> str:
     lines = [
         "## Available skills (progressive disclosure)",
         "These are optional playbooks. The catalog below is only name + description —",
-        "do **not** assume full instructions are loaded. When a skill matches the task,",
-        "call `read_file` on its path, follow it, then continue.",
+        "do **not** assume full instructions are loaded.",
+        "When the user (or Command Palette) invokes `/skill:<name>`, the playbook body",
+        "is **injected into this system prompt**. Do not `read_file` the catalog path —",
+        "it may be a builtin file outside the workspace.",
         "",
     ]
     for s in skills:
@@ -155,9 +159,30 @@ def skills_prompt_block(cwd: str, *, max_skills: int = 40) -> str:
     lines.append("")
     lines.append(
         "User may invoke a skill with `/skill:<name>` in their message; treat that as "
-        "a request to load and follow that skill."
+        "a request to follow the injected playbook."
     )
     return "\n".join(lines)
+
+
+def parse_skill_invocation(user_text: str) -> Optional[str]:
+    m = re.search(r"/skill:([A-Za-z0-9_-]+)", user_text or "")
+    return m.group(1) if m else None
+
+
+def skill_playbook_block(cwd: Optional[str], user_text: str) -> str:
+    """Inject SKILL.md body when the user invoked /skill:name."""
+    name = parse_skill_invocation(user_text)
+    if not name:
+        return ""
+    skill = resolve_skill(cwd or "", name)
+    if not skill or not (skill.body or "").strip():
+        return ""
+    return (
+        f"## Active skill: {skill.name}\n"
+        f"The user invoked `/skill:{skill.name}`. Follow this playbook. "
+        "Do not try to `read_file` a repo-relative SKILL.md path.\n\n"
+        f"{skill.body.strip()}"
+    )
 
 
 def list_skills_public(cwd: str) -> List[dict]:
@@ -184,14 +209,12 @@ def resolve_skill(cwd: str, name: str) -> Optional[SkillInfo]:
 
 def active_skill_allowed_tools(cwd: Optional[str], user_text: str) -> Optional[List[str]]:
     """If user invoked /skill:name and that skill declares allowed-tools, return them."""
-    if not cwd or not user_text:
+    if not user_text:
         return None
-    import re
-
-    m = re.search(r"/skill:([A-Za-z0-9_-]+)", user_text)
-    if not m:
+    name = parse_skill_invocation(user_text)
+    if not name:
         return None
-    skill = resolve_skill(cwd, m.group(1))
+    skill = resolve_skill(cwd or "", name)
     if not skill or not skill.allowed_tools:
         return None
     return list(skill.allowed_tools)

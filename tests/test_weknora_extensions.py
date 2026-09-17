@@ -391,6 +391,7 @@ def test_presets_loader():
     assert kr is not None
     kr_patch = apply_preset_to_session_patch(kr)
     assert "weknora_search" in (kr_patch.get("active_tools") or [])
+    assert "weknora_read" in (kr_patch.get("active_tools") or [])
     assert "kb_search" in (kr_patch.get("active_tools") or [])
     assert "weknora" in (kr_patch.get("system_prompt_append") or "").lower()
 
@@ -401,6 +402,7 @@ def test_builtin_weknora_research_skill():
     assert "weknora-research" in names
     skill = next(s for s in skills if s.name == "weknora-research")
     assert "weknora_search" in skill.allowed_tools
+    assert "weknora_read" in skill.allowed_tools
     assert "kb_search" in skill.allowed_tools
 
 
@@ -638,3 +640,333 @@ def test_build_system_prompt_includes_session_kb():
     text = build_system_prompt(metadata={"weknora_kb_id": "kb-sess-9"})
     assert "kb-sess-9" in text
     assert "weknora_search" in text
+    assert "weknora_read" in text
+
+
+@pytest.mark.asyncio
+async def test_push_omitted_knowledge_id_dirty_pull_does_not_mint(store, monkeypatch):
+    """Empty knowledge_id + dirty local must keep identity, not mint weknora_*."""
+    from src.core_kernel.plugin_runtime import knowledge_sync as ks
+
+    monkeypatch.setenv("WEKNORA_BASE_URL", "http://weknora.test")
+    monkeypatch.setenv("WEKNORA_KB_ID", "kb-1")
+
+    original = "hello weknora sync"
+    await store.upsert(
+        doc_id="local1",
+        title="Note",
+        content=original,
+        tags="t",
+        source="manual",
+        workspace_id="ws1",
+        content_hash_value=content_hash(original),
+    )
+
+    async def fake_push(**kwargs):
+        return {"ok": True, "pushed": True, "kb_id": "kb-1", "knowledge_id": ""}
+
+    async def fake_list(kb_id="", **kwargs):
+        return {
+            "ok": True,
+            "kb_id": "kb-1",
+            "items": [
+                {
+                    "id": "",
+                    "title": "Note",
+                    "content": original,
+                }
+            ],
+        }
+
+    with patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_push_document",
+        new=fake_push,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_list_knowledge",
+        new=fake_list,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_get_knowledge",
+        new=AsyncMock(return_value={"ok": True, "content": ""}),
+    ):
+        push = await ks.sync_local_to_weknora(store, workspace_id="ws1", limit=10)
+        assert push.get("pushed") == 1
+        await store.upsert(
+            doc_id="local1",
+            title="Note",
+            content="locally edited after push",
+            tags="t",
+            source="manual",
+            workspace_id="ws1",
+            content_hash_value=content_hash("locally edited after push"),
+        )
+        pull = await ks.sync_weknora_to_local(store, workspace_id="ws1", limit=10)
+        assert pull.get("added") == 0
+        assert pull.get("conflicts") == 1
+
+    docs = await store.list_docs(workspace_id="ws1", limit=50)
+    ids = [d["doc_id"] for d in docs]
+    assert ids == ["local1"]
+    row = await store.get("local1")
+    assert row and row["content"] == "locally edited after push"
+
+
+@pytest.mark.asyncio
+async def test_push_updates_instead_of_append_when_remote_known(store, monkeypatch):
+    from src.core_kernel.plugin_runtime import knowledge_sync as ks
+
+    monkeypatch.setenv("WEKNORA_BASE_URL", "http://weknora.test")
+    monkeypatch.setenv("WEKNORA_KB_ID", "kb-1")
+
+    await store.upsert(
+        doc_id="local1",
+        title="Note",
+        content="v1",
+        workspace_id="ws1",
+        content_hash_value=content_hash("v1"),
+    )
+    posts = {"n": 0}
+    puts = {"n": 0}
+
+    async def fake_push(**kwargs):
+        posts["n"] += 1
+        return {"ok": True, "pushed": True, "kb_id": "kb-1", "knowledge_id": "remote-1"}
+
+    async def fake_update(**kwargs):
+        puts["n"] += 1
+        assert kwargs["knowledge_id"] == "remote-1"
+        return {"ok": True, "updated": True, "pushed": True, "kb_id": "kb-1", "knowledge_id": "remote-1"}
+
+    with patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_push_document",
+        new=fake_push,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_update_document",
+        new=fake_update,
+    ):
+        first = await ks.sync_local_to_weknora(store, workspace_id="ws1", limit=10)
+        assert first.get("pushed") == 1
+        assert posts["n"] == 1
+        await store.upsert(
+            doc_id="local1",
+            title="Note",
+            content="v2",
+            workspace_id="ws1",
+            content_hash_value=content_hash("v2"),
+        )
+        second = await ks.sync_local_to_weknora(store, workspace_id="ws1", limit=10)
+        assert second.get("pushed") == 1
+        assert posts["n"] == 1
+        assert puts["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pull_skips_dirty_local_and_updates_clean(store, monkeypatch):
+    from src.core_kernel.plugin_runtime import knowledge_sync as ks
+
+    monkeypatch.setenv("WEKNORA_BASE_URL", "http://weknora.test")
+    monkeypatch.setenv("WEKNORA_KB_ID", "kb-1")
+
+    original = "synced body"
+    await store.upsert(
+        doc_id="local1",
+        title="Note",
+        content=original,
+        workspace_id="ws1",
+        content_hash_value=content_hash(original),
+    )
+
+    async def fake_push(**kwargs):
+        return {"ok": True, "pushed": True, "kb_id": "kb-1", "knowledge_id": "remote-1"}
+
+    remote_body = {"text": original}
+
+    async def fake_list(kb_id="", **kwargs):
+        return {
+            "ok": True,
+            "kb_id": "kb-1",
+            "items": [{"id": "remote-1", "title": "Note", "content": remote_body["text"]}],
+        }
+
+    with patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_push_document",
+        new=fake_push,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_list_knowledge",
+        new=fake_list,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_get_knowledge",
+        new=AsyncMock(return_value={"ok": True, "content": ""}),
+    ):
+        await ks.sync_local_to_weknora(store, workspace_id="ws1", limit=10)
+        await store.upsert(
+            doc_id="local1",
+            title="Note",
+            content="dirty local",
+            workspace_id="ws1",
+            content_hash_value=content_hash("dirty local"),
+        )
+        dirty = await ks.sync_weknora_to_local(store, workspace_id="ws1", limit=10)
+        assert dirty.get("conflicts") == 1
+        row = await store.get("local1")
+        assert row and row["content"] == "dirty local"
+
+        await store.upsert(
+            doc_id="local1",
+            title="Note",
+            content=original,
+            workspace_id="ws1",
+            content_hash_value=content_hash(original),
+        )
+        await store.log_sync(
+            source="weknora_push",
+            source_uri="kb-1:local1",
+            content_hash_value=content_hash(original),
+            status="ok",
+            workspace_id="ws1",
+        )
+        remote_body["text"] = "remote newer"
+        clean = await ks.sync_weknora_to_local(store, workspace_id="ws1", limit=10)
+        assert clean.get("conflicts") == 0
+        assert clean.get("updated") == 1
+        row = await store.get("local1")
+        assert row and row["content"] == "remote newer"
+
+
+@pytest.mark.asyncio
+async def test_both_does_not_clobber_just_edited_local(store, monkeypatch):
+    from src.core_kernel.plugin_runtime import knowledge_sync as ks
+
+    monkeypatch.setenv("WEKNORA_BASE_URL", "http://weknora.test")
+    monkeypatch.setenv("WEKNORA_KB_ID", "kb-1")
+
+    await store.upsert(
+        doc_id="local1",
+        title="Note",
+        content="v1",
+        workspace_id="ws1",
+        content_hash_value=content_hash("v1"),
+    )
+
+    async def fake_push(**kwargs):
+        return {"ok": True, "pushed": True, "kb_id": "kb-1", "knowledge_id": "remote-1"}
+
+    async def fake_update(**kwargs):
+        return {"ok": False, "error": "update unsupported", "updated": False, "skipped": True}
+
+    async def fake_list(kb_id="", **kwargs):
+        return {
+            "ok": True,
+            "kb_id": "kb-1",
+            "items": [{"id": "remote-1", "title": "Note", "content": "v1"}],
+        }
+
+    with patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_push_document",
+        new=fake_push,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_update_document",
+        new=fake_update,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_list_knowledge",
+        new=fake_list,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_get_knowledge",
+        new=AsyncMock(return_value={"ok": True, "content": ""}),
+    ):
+        await ks.sync_local_to_weknora(store, workspace_id="ws1", limit=10)
+        await store.upsert(
+            doc_id="local1",
+            title="Note",
+            content="just edited",
+            workspace_id="ws1",
+            content_hash_value=content_hash("just edited"),
+        )
+        both = await ks.sync_weknora_bidirectional(
+            store, workspace_id="ws1", direction="both", limit=10
+        )
+        assert both.get("ok") is True
+        assert both.get("pull", {}).get("conflicts") == 1
+
+    row = await store.get("local1")
+    assert row and row["content"] == "just edited"
+
+
+@pytest.mark.asyncio
+async def test_weknora_search_requires_kb_id(monkeypatch):
+    from src.core_kernel.plugin_runtime import weknora_client as wc
+
+    monkeypatch.setenv("WEKNORA_BASE_URL", "http://weknora.test")
+    monkeypatch.delenv("WEKNORA_KB_ID", raising=False)
+    monkeypatch.delenv("WEKNORA_KB_MAP", raising=False)
+
+    class BoomClient:
+        def __init__(self, *a, **k):
+            raise AssertionError("must not contact WeKnora without a kb_id")
+
+    monkeypatch.setattr(wc.httpx, "AsyncClient", BoomClient)
+    out = await wc.weknora_search("hello")
+    assert out.get("ok") is False
+    assert "kb_id" in str(out.get("error") or "")
+    assert out.get("results") == []
+
+
+@pytest.mark.asyncio
+async def test_weknora_read_and_import(store, monkeypatch):
+    from src.core_kernel.plugin_runtime.invoke_context import workspace_cwd_scope
+    from src.core_kernel.plugin_runtime.knowledge_sync import import_weknora_knowledge
+    from src.core_kernel.plugin_runtime.knowledge_tools import (
+        KnowledgeToolsPlugin,
+        knowledge_tools_manifest,
+    )
+
+    monkeypatch.setenv("WEKNORA_BASE_URL", "http://weknora.test")
+    monkeypatch.setenv("WEKNORA_KB_ID", "kb-1")
+
+    async def fake_get(knowledge_id: str):
+        return {
+            "ok": True,
+            "id": knowledge_id,
+            "title": "Remote note",
+            "content": "full remote body",
+            "nlm_doc_id": "",
+            "content_hash": "",
+            "metadata": {},
+        }
+
+    monkeypatch.setattr(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_get_knowledge",
+        fake_get,
+    )
+    plugin = KnowledgeToolsPlugin(knowledge_tools_manifest())
+    plugin._store = store
+    with workspace_cwd_scope("/tmp/ws", {"weknora_kb_id": "kb-1", "workspace_id": "ws1"}):
+        out = await plugin._on_invoke("weknora_read", {"knowledge_id": "r-9"})
+    assert out.get("ok") is True
+    assert out.get("content") == "full remote body"
+
+    imported = await import_weknora_knowledge(
+        store, knowledge_id="r-9", workspace_id="ws1", kb_id="kb-1"
+    )
+    assert imported.get("ok") is True
+    assert imported.get("imported") is True
+    row = await store.get(imported["doc_id"])
+    assert row and row["content"] == "full remote body"
+
+
+def test_skill_playbook_injected_outside_repo(tmp_path: Path):
+    from src.core_kernel.agent_prompts import build_system_prompt
+    from src.core_kernel.skills_loader import skill_playbook_block
+
+    other = tmp_path / "other-workspace"
+    other.mkdir()
+    block = skill_playbook_block(str(other), "/skill:weknora-research please research")
+    assert "WeKnora research" in block
+    assert "weknora_read" in block
+    prompt = build_system_prompt(
+        metadata={
+            "cwd": str(other),
+            "user_text": "/skill:weknora-research",
+        }
+    )
+    assert "Active skill: weknora-research" in prompt
+    assert "do not try to `read_file` a repo-relative" in prompt.lower() or "injected" in prompt.lower()

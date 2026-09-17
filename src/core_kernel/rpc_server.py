@@ -872,25 +872,83 @@ def create_kernel_app() -> FastAPI:
             return RpcEnvelope(
                 ok=False, error={"code": "EMPTY", "message": "content or doc_id required"}
             )
-        data = await weknora_push_document(
-            title=title or "untitled",
-            content=content,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-            metadata={"nlm_doc_id": doc_id} if doc_id else None,
-        )
-        if data.get("ok") and data.get("pushed") and doc_id:
-            from src.core_kernel.plugin_runtime.knowledge_sync import record_weknora_push_identity
+        if not title:
+            title = "untitled"
+        digest = content_hash(content)
+        if not doc_id:
+            by_hash = await store.find_by_content_hash(digest, workspace_id=workspace_id)
+            if by_hash and by_hash.get("doc_id"):
+                doc_id = str(by_hash["doc_id"])
+            else:
+                from uuid import uuid4
 
+                doc_id = f"kb_{uuid4().hex[:12]}"
+                await store.upsert(
+                    doc_id=doc_id,
+                    title=title,
+                    content=content,
+                    tags="weknora",
+                    source="weknora_push",
+                    workspace_id=workspace_id,
+                    content_hash_value=digest,
+                )
+        from src.core_kernel.plugin_runtime.knowledge_sync import (
+            is_real_remote_id,
+            lookup_weknora_remote_id,
+            record_weknora_push_identity,
+        )
+        from src.core_kernel.plugin_runtime.weknora_client import weknora_update_document
+
+        known = await lookup_weknora_remote_id(
+            store, kb_id=kb_id, local_doc_id=doc_id, workspace_id=workspace_id
+        )
+        push_meta = {"nlm_doc_id": doc_id, "content_hash": digest}
+        if is_real_remote_id(known):
+            data = await weknora_update_document(
+                knowledge_id=known,
+                title=title,
+                content=content,
+                kb_id=kb_id,
+                workspace_id=workspace_id,
+                metadata=push_meta,
+            )
+            if not (data.get("ok") and (data.get("updated") or data.get("pushed"))):
+                data = {
+                    **data,
+                    "skipped": True,
+                    "reason": "refused append-only POST; update failed",
+                    "doc_id": doc_id,
+                }
+                return RpcEnvelope(ok=bool(data.get("ok")), data=data)
+        elif known.startswith("titlehash:"):
+            data = {
+                "ok": True,
+                "skipped": True,
+                "pushed": False,
+                "reason": "refused append-only POST (remote id unknown; title/hash fallback only)",
+                "doc_id": doc_id,
+            }
+            return RpcEnvelope(ok=True, data=data)
+        else:
+            data = await weknora_push_document(
+                title=title,
+                content=content,
+                kb_id=kb_id,
+                workspace_id=workspace_id,
+                metadata=push_meta,
+            )
+        if data.get("ok") and data.get("pushed"):
             await record_weknora_push_identity(
                 store,
                 kb_id=str(data.get("kb_id") or kb_id),
                 local_doc_id=doc_id,
-                remote_id=str(data.get("knowledge_id") or ""),
-                digest=content_hash(content),
+                remote_id=str(data.get("knowledge_id") or known or ""),
+                digest=digest,
                 workspace_id=workspace_id,
-                message=f"pushed knowledge_id={data.get('knowledge_id') or ''}",
+                title=title,
+                message=f"pushed knowledge_id={data.get('knowledge_id') or known or ''}",
             )
+        data = {**data, "doc_id": doc_id}
         return RpcEnvelope(ok=bool(data.get("ok")), data=data)
 
     @app.get("/rpc/knowledge/weknora/knowledge")
@@ -907,6 +965,43 @@ def create_kernel_app() -> FastAPI:
             page_size=max(1, min(page_size, 100)),
         )
         return RpcEnvelope(ok=bool(data.get("ok") or data.get("skipped")), data=data)
+
+    @app.get("/rpc/knowledge/weknora/item")
+    async def weknora_get_knowledge_rpc(knowledge_id: str = ""):
+        from src.core_kernel.plugin_runtime.weknora_client import weknora_get_knowledge
+
+        kid = (knowledge_id or "").strip()
+        if not kid:
+            return RpcEnvelope(
+                ok=False, error={"code": "EMPTY", "message": "knowledge_id required"}
+            )
+        data = await weknora_get_knowledge(kid)
+        return RpcEnvelope(ok=bool(data.get("ok") or data.get("skipped")), data=data)
+
+    @app.post("/rpc/knowledge/weknora/import")
+    async def weknora_import_rpc(request: Request):
+        from src.core_kernel.plugin_runtime.knowledge_sync import import_weknora_knowledge
+
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        kid = str(body.get("knowledge_id") or body.get("doc_id") or "").strip()
+        if not kid:
+            return RpcEnvelope(
+                ok=False, error={"code": "EMPTY", "message": "knowledge_id required"}
+            )
+        data = await import_weknora_knowledge(
+            store,
+            knowledge_id=kid,
+            workspace_id=str(body.get("workspace_id") or ""),
+            kb_id=str(body.get("kb_id") or ""),
+        )
+        return RpcEnvelope(ok=bool(data.get("ok")), data=data)
 
     @app.post("/rpc/knowledge/weknora/sync")
     async def weknora_sync_rpc(request: Request):
@@ -934,10 +1029,25 @@ def create_kernel_app() -> FastAPI:
     return app
 
 
+def _user_text_from_task(task: StandardTask) -> str:
+    text = str(getattr(task, "content", "") or "").strip()
+    if text:
+        return text
+    for msg in reversed(list(task.messages or [])):
+        role = getattr(msg, "role", None)
+        role_s = role.value if hasattr(role, "value") else str(role or "")
+        if role_s == "user":
+            return str(getattr(msg, "content", "") or "")
+    return ""
+
+
 def _build_messages(task: StandardTask, system_prompt: str) -> list[ChatMessage]:
     from src.core_kernel.agent_prompts import build_system_prompt
 
-    prompt = build_system_prompt(base_prompt=system_prompt, metadata=task.metadata or {})
+    meta = dict(task.metadata or {})
+    if not str(meta.get("user_text") or "").strip():
+        meta["user_text"] = _user_text_from_task(task)
+    prompt = build_system_prompt(base_prompt=system_prompt, metadata=meta)
     messages: list[ChatMessage] = [ChatMessage(role=ChatRole.SYSTEM, content=prompt)]
     if task.messages:
         messages.extend(task.messages)

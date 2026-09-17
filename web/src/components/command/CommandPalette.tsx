@@ -261,7 +261,7 @@ export function CommandPalette({
                   onSelect={() =>
                     run(() =>
                       onInsertText?.(
-                        `/skill:${s.name}\n请按技能「${s.name}」执行（路径 ${s.path}）。`,
+                        `/skill:${s.name}\n请按技能「${s.name}」执行。`,
                       ),
                     )
                   }

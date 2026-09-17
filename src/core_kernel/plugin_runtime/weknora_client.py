@@ -258,6 +258,17 @@ async def weknora_search(
         ids = [str(x).strip() for x in kb_ids if str(x).strip()]
     elif kb:
         ids = [kb]
+    if not ids:
+        return {
+            "ok": False,
+            "error": (
+                "kb_id required (pass kb_id, bind a session WeKnora KB, "
+                "or set WEKNORA_KB_ID / WEKNORA_KB_MAP)"
+            ),
+            "results": [],
+            "citations_md": "",
+            "source": "weknora",
+        }
 
     # 1) Preferred native WeKnora knowledge-search
     native = await _search_native(base, headers, q, limit=limit, kb_ids=ids)
@@ -356,6 +367,87 @@ async def weknora_push_document(
         "knowledge_id": knowledge_id,
         "title": title_s,
         "raw_keys": list(data.keys()) if isinstance(data, dict) else [],
+    }
+
+
+async def weknora_update_document(
+    *,
+    knowledge_id: str,
+    title: str,
+    content: str,
+    kb_id: str = "",
+    workspace_id: str = "",
+    session_kb_id: str = "",
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Update an existing WeKnora knowledge entry. Never POSTs a new manual doc."""
+    base = weknora_base_url()
+    if not base:
+        return _not_configured({"updated": False})
+    if not weknora_ingest_enabled():
+        return {
+            "ok": False,
+            "error": "WeKnora ingest disabled (WEKNORA_INGEST_ENABLED=0)",
+            "updated": False,
+        }
+    rid = (knowledge_id or "").strip()
+    if not rid or rid.startswith("titlehash:"):
+        return {
+            "ok": False,
+            "error": "knowledge_id required for update",
+            "updated": False,
+        }
+    kid = resolve_weknora_kb_id(
+        kb_id=kb_id, workspace_id=workspace_id, session_kb_id=session_kb_id
+    ).strip()
+    title_s = (title or "").strip() or "untitled"
+    body = (content or "").strip()
+    if not body:
+        return {"ok": False, "error": "content required", "updated": False}
+
+    payload: Dict[str, Any] = {"title": title_s, "content": body}
+    if metadata:
+        payload["metadata"] = metadata
+    headers = _auth_headers()
+    urls = [f"{base}{_API_PREFIX}/knowledge/{rid}"]
+    if kid:
+        urls.append(f"{base}{_API_PREFIX}/knowledge-bases/{kid}/knowledge/{rid}")
+
+    last_error = ""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for url in urls:
+            try:
+                resp = await client.put(url, headers=headers, json=payload)
+                if resp.status_code in (404, 405, 501):
+                    last_error = f"HTTP {resp.status_code}"
+                    continue
+                if resp.status_code >= 400:
+                    return {
+                        "ok": False,
+                        "error": f"WeKnora HTTP {resp.status_code}: {(resp.text or '')[:400]}",
+                        "updated": False,
+                        "kb_id": kid,
+                        "knowledge_id": rid,
+                    }
+                return {
+                    "ok": True,
+                    "updated": True,
+                    "pushed": True,
+                    "source": "weknora",
+                    "kb_id": kid,
+                    "knowledge_id": rid,
+                    "title": title_s,
+                }
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+    return {
+        "ok": False,
+        "error": last_error or "WeKnora update unsupported",
+        "updated": False,
+        "skipped": True,
+        "kb_id": kid,
+        "knowledge_id": rid,
     }
 
 
@@ -477,15 +569,19 @@ async def _search_native(
         body["knowledge_base_id"] = kb_ids[0]
     elif len(kb_ids) > 1:
         body["knowledge_base_ids"] = kb_ids
-    # WeKnora requires at least one KB id for knowledge-search
+    # WeKnora requires at least one KB id — never silently pick the first listed KB
     if not kb_ids:
-        listed = await weknora_list_knowledge_bases(limit=5)
-        if listed.get("ok") and listed.get("knowledge_bases"):
-            first = listed["knowledge_bases"][0]["id"]
-            body["knowledge_base_id"] = first
-            kb_ids = [first]
-        else:
-            return None
+        return {
+            "ok": False,
+            "error": (
+                "kb_id required (pass kb_id, bind a session WeKnora KB, "
+                "or set WEKNORA_KB_ID / WEKNORA_KB_MAP)"
+            ),
+            "results": [],
+            "citations_md": "",
+            "source": "weknora",
+            "endpoint": "/api/v1/knowledge-search",
+        }
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, headers=headers, json=body)

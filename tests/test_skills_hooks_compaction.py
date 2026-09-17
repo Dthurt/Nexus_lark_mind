@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.core_kernel.compaction_ledger import make_compaction_entry, notice_from_info
-from src.core_kernel.skills_loader import discover_skills, skills_prompt_block
+from src.core_kernel.skills_loader import (
+    discover_skills,
+    skill_playbook_block,
+    skills_prompt_block,
+)
 from src.core_kernel.tool_hooks import run_pre_tool_hook
 
 
@@ -23,6 +27,10 @@ def test_discover_skills_from_nlm_dir(tmp_path: Path) -> None:
     block = skills_prompt_block(str(tmp_path))
     assert "demo" in block
     assert "progressive disclosure" in block.lower() or "Available skills" in block
+    assert "injected" in block.lower()
+    playbook = skill_playbook_block(str(tmp_path), "/skill:demo")
+    assert "Do the thing." in playbook
+    assert "Active skill: demo" in playbook
 
 
 def test_pre_tool_hook_blocks_env(tmp_path: Path, monkeypatch) -> None:

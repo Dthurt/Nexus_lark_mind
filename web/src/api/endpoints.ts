@@ -937,6 +937,36 @@ export function listWeknoraKnowledge(params?: {
   return apiGet(`/api/knowledge/weknora/knowledge${qs ? `?${qs}` : ""}`);
 }
 
+export function getWeknoraKnowledge(knowledgeId: string): Promise<{
+  ok?: boolean;
+  id?: string;
+  title?: string;
+  content?: string;
+  skipped?: boolean;
+  error?: string;
+}> {
+  const q = new URLSearchParams({ knowledge_id: knowledgeId });
+  return apiGet(`/api/knowledge/weknora/item?${q.toString()}`);
+}
+
+export function importWeknoraKnowledge(body: {
+  knowledge_id: string;
+  kb_id?: string;
+  workspace_id?: string;
+}): Promise<{
+  ok?: boolean;
+  imported?: boolean;
+  unchanged?: boolean;
+  conflict?: boolean;
+  doc_id?: string;
+  title?: string;
+  knowledge_id?: string;
+  error?: string;
+  reason?: string;
+}> {
+  return apiPost("/api/knowledge/weknora/import", body);
+}
+
 export function syncWeknora(body: {
   workspace_id?: string;
   kb_id?: string;

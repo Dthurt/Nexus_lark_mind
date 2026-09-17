@@ -12,6 +12,7 @@ import {
   listKnowledgeDocs,
   listKnowledgeSyncLog,
   listWeknoraKbs,
+  importWeknoraKnowledge,
   listWeknoraKnowledge,
   patchInteraction,
   patchKnowledgeDoc,
@@ -38,7 +39,7 @@ export type KnowledgePanelProps = {
   workspaceId?: string;
   sessionId?: string;
   className?: string;
-  onBoundKbChange?: (kbId: string) => void;
+  onBoundKbChange?: (kbId: string, kbName?: string) => void;
 };
 
 export function KnowledgePanel({
@@ -67,6 +68,7 @@ export function KnowledgePanel({
   const [wkKbs, setWkKbs] = useState<WeknoraKb[]>([]);
   const [wkKbId, setWkKbId] = useState("");
   const [wkSyncing, setWkSyncing] = useState(false);
+  const [importingId, setImportingId] = useState("");
   const [browseMode, setBrowseMode] = useState<"local" | "remote">("local");
   const [remoteHits, setRemoteHits] = useState<
     Array<WeknoraHit & { doc_id?: string; content?: string }> | null
@@ -122,7 +124,8 @@ export function KnowledgePanel({
 
   const onSelectWeknoraKb = async (kbId: string) => {
     setWkKbId(kbId);
-    onBoundKbChange?.(kbId);
+    const kbName = wkKbs.find((kb) => kb.id === kbId)?.name || kbId;
+    onBoundKbChange?.(kbId, kbName);
     if (!sessionId || !kbId) return;
     try {
       await patchInteraction(sessionId, { weknora_kb_id: kbId });
@@ -204,6 +207,39 @@ export function KnowledgePanel({
         source: "weknora",
       })),
     );
+  };
+
+  const onImportRemote = async (knowledgeId: string) => {
+    const kid = String(knowledgeId || "").trim();
+    if (!kid) {
+      toast.error("缺少远程文档 id");
+      return;
+    }
+    setImportingId(kid);
+    try {
+      const data = await importWeknoraKnowledge({
+        knowledge_id: kid,
+        kb_id: wkKbId || undefined,
+        workspace_id: workspaceId || undefined,
+      });
+      if (data.ok === false) {
+        toast.error(String(data.error || "导入失败"));
+      } else if (data.conflict) {
+        toast.error("本地已有未同步修改，未覆盖");
+      } else if (data.unchanged) {
+        toast.success(`已存在本地 · ${data.doc_id || kid}`);
+      } else {
+        toast.success(`已导入本地 · ${data.title || data.doc_id || kid}`);
+        setBrowseMode("local");
+        setRemoteHits(null);
+        if (data.doc_id) void onOpen(data.doc_id);
+      }
+      await refresh();
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "导入失败"));
+    } finally {
+      setImportingId("");
+    }
   };
 
   const onSearch = async () => {
@@ -603,7 +639,19 @@ export function KnowledgePanel({
                     </p>
                   ) : null}
                 </button>
-                {!isRemote ? (
+                {isRemote ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 shrink-0 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+                    title="导入到本地知识库"
+                    disabled={Boolean(importingId)}
+                    onClick={() => void onImportRemote(String(id))}
+                  >
+                    {importingId === String(id) ? "导入中…" : "导入到本地"}
+                  </Button>
+                ) : (
                   <Button
                     type="button"
                     size="sm"
@@ -614,7 +662,7 @@ export function KnowledgePanel({
                   >
                     <Trash2 className="size-3.5" />
                   </Button>
-                ) : null}
+                )}
               </div>
             </div>
           );
@@ -640,6 +688,18 @@ export function KnowledgePanel({
             <span className="shrink-0 text-[10px] text-muted-foreground">
               {selected.content_len ?? selected.content?.length ?? 0} chars
             </span>
+            {selected.source === "weknora" || browseMode === "remote" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 px-1.5 text-[10px]"
+                disabled={Boolean(importingId)}
+                onClick={() => void onImportRemote(String(selected.doc_id))}
+              >
+                {importingId === selected.doc_id ? "导入中…" : "导入到本地"}
+              </Button>
+            ) : null}
           </div>
           {selected.source_uri || selected.source ? (
             <div className="mb-1 truncate font-mono text-[10px] text-muted-foreground">

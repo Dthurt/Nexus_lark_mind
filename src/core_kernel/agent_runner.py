@@ -37,6 +37,7 @@ SAFE_TOOLS = {
     "weknora_search",
     "weknora_list_kbs",
     "weknora_health",
+    "weknora_read",
     "web_search",
     "literature_search",
     "image_search",
@@ -66,6 +67,7 @@ PLAN_ALLOWED_TOOLS = {
     "weknora_search",
     "weknora_list_kbs",
     "weknora_health",
+    "weknora_read",
 }
 
 

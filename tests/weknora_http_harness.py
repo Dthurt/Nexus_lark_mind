@@ -54,6 +54,15 @@ class WeknoraHttpRecorder:
             return self.canned["knowledge_search"], 200
         if path.rstrip("/").endswith("/knowledge/manual") and method == "POST":
             return self.canned["knowledge_manual"], 200
+        if method == "PUT" and "/knowledge/" in path:
+            return self.canned["knowledge_update"], 200
+        if (
+            method == "GET"
+            and "/knowledge/" in path
+            and "knowledge-bases" not in path
+            and not path.rstrip("/").endswith("/knowledge")
+        ):
+            return self.canned["knowledge_get"], 200
         if path.rstrip("/").endswith("/knowledge") and method == "GET":
             return self.canned["knowledge_list"], 200
         if path.rstrip("/").endswith("/knowledge-bases") and method == "GET":

@@ -833,8 +833,6 @@ def create_adapters_app() -> FastAPI:
         from src.core_kernel.skills_loader import list_skills_public
 
         path = (cwd or "").strip()
-        if not path:
-            return RpcEnvelope(ok=True, data={"skills": []})
         return RpcEnvelope(ok=True, data={"skills": list_skills_public(path), "cwd": path})
 
     @app.get("/api/prompts")
@@ -1472,6 +1470,27 @@ def create_adapters_app() -> FastAPI:
             "GET",
             "/rpc/knowledge/weknora/knowledge",
             params={"kb_id": kb_id or "", "page": page, "page_size": page_size},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/weknora/item")
+    async def knowledge_weknora_item(knowledge_id: str = ""):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            "/rpc/knowledge/weknora/item",
+            params={"knowledge_id": knowledge_id or ""},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/weknora/import")
+    async def knowledge_weknora_import(request: Request):
+        kernel: RpcClient = state["kernel"]
+        body = await request.json()
+        data = await kernel.call(
+            "POST",
+            "/rpc/knowledge/weknora/import",
+            json=body if isinstance(body, dict) else {},
         )
         return RpcEnvelope(ok=True, data=data)
 

@@ -115,7 +115,7 @@ export type RightDockProps = {
   delivery?: DeliveryArtifactApi | null;
   sessionId?: string;
   workspaceId?: string;
-  onBoundKbChange?: (kbId: string) => void;
+  onBoundKbChange?: (kbId: string, kbName?: string) => void;
   onTogglePlugin?: (pluginId: string, enabled: boolean) => void | Promise<void>;
   onReload?: () => void | Promise<void>;
   onReloadOne?: (pluginId: string) => void | Promise<void>;

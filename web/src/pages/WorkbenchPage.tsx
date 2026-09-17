@@ -12,7 +12,7 @@ import {
   TrajectoryView,
   type TrajectoryRow,
 } from "@/components/trajectory/TrajectoryView";
-import { gitInfo, getPluginCalls, deleteSession as apiDeleteSession, patchInteraction, addSessionBookmark, getSession } from "@/api/endpoints";
+import { gitInfo, getPluginCalls, deleteSession as apiDeleteSession, patchInteraction, addSessionBookmark, getSession, listWeknoraKbs } from "@/api/endpoints";
 import { useChatActions } from "@/hooks/useChatActions";
 import { useChatStream } from "@/hooks/useChatStream";
 import { useChatTimeline } from "@/hooks/useChatTimeline";
@@ -91,6 +91,8 @@ export function WorkbenchPage({
     sshHostId,
     weknoraKbId,
     setWeknoraKbId,
+    weknoraKbName,
+    setWeknoraKbName,
     activeTools,
     upsertLocalConv,
     syncServerList,
@@ -217,6 +219,27 @@ export function WorkbenchPage({
       setGitDeletions(0);
     }
   }, [cwd, workspaceKind]);
+
+  useEffect(() => {
+    if (!weknoraKbId) {
+      setWeknoraKbName("");
+      return;
+    }
+    if (weknoraKbName) return;
+    let cancelled = false;
+    void listWeknoraKbs(40)
+      .then((data) => {
+        if (cancelled) return;
+        const hit = (data.knowledge_bases || []).find((kb) => kb.id === weknoraKbId);
+        if (hit) setWeknoraKbName(hit.name || hit.id);
+      })
+      .catch(() => {
+        /* ignore */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setWeknoraKbName, weknoraKbId, weknoraKbName]);
 
   const loadActivityFromServer = useCallback(async () => {
     try {
@@ -583,6 +606,12 @@ export function WorkbenchPage({
             canvasOpen={canvas.open}
             onToggleCanvas={canvas.togglePane}
             weknoraKbId={weknoraKbId}
+            weknoraKbName={weknoraKbName}
+            onWeknoraKbClick={() => {
+              dock.expand();
+              dock.openTab("knowledge", { reveal: true });
+              if (narrowUi) setLayout((s) => ({ ...s, railOpen: true }));
+            }}
             activeTools={activeTools}
           />
 
@@ -737,7 +766,10 @@ export function WorkbenchPage({
           sessionId={sessionId}
           workspaceId={workspaceId}
           delivery={delivery}
-          onBoundKbChange={setWeknoraKbId}
+          onBoundKbChange={(kbId, kbName) => {
+            setWeknoraKbId(kbId);
+            setWeknoraKbName(kbName || "");
+          }}
           onInspectJob={onInspectTool}
           onStopJob={() => void actions.stopGeneration(currentTaskId)}
           onTogglePlugin={async (id, enabled) => {

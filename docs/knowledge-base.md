@@ -37,6 +37,7 @@ Documents are split on headings / blank lines into ~512-character chunks with ~1
 | `kb_sync_docs` | Scan workspace docs with `content_hash` upsert |
 | `kb_stats` / `kb_reindex` | Counts + hybrid readiness; backfill missing embeddings |
 | `weknora_search` | Optional remote search (`kb_id` / session / `WEKNORA_KB_MAP`) |
+| `weknora_read` | Full remote body by `knowledge_id` (after `weknora_search`) |
 | `weknora_list_kbs` | List remote knowledge bases |
 | `weknora_push` / `weknora_sync` | Push doc or bidirectional sync (content_hash) |
 | `weknora_health` | Connectivity / latency probe |
@@ -55,9 +56,10 @@ Right dock tab **知识库** (Command Palette → 右坞 → 知识库):
 - **回填向量** — when embeddings env is configured
 - Optional **远程** tab when a WeKnora KB is selected — list/search that KB via
   `/api/knowledge/weknora/knowledge` and `/api/knowledge/weknora/search`.
+  **导入到本地** copies one remote doc into SQLite (`POST /api/knowledge/weknora/import`).
   Local SQLite remains the default tab.
-- Session chrome shows the bound WeKnora KB and active-tools count after Dock
-  select or Command Palette preset apply.
+- Session chrome shows the bound WeKnora KB **name** (click the chip to open Dock 知识库)
+  and active-tools count after Dock select or Command Palette preset apply.
 
 ## REST (workspace-scoped)
 
@@ -78,6 +80,8 @@ Query/body may include `workspace_id` and `cwd` where relevant.
 - `GET /api/knowledge/weknora/health`
 - `GET /api/knowledge/weknora/kbs`
 - `GET /api/knowledge/weknora/knowledge?kb_id=` — remote list (Dock 远程)
+- `GET /api/knowledge/weknora/item?knowledge_id=` — full remote body
+- `POST /api/knowledge/weknora/import` — one remote doc → local SQLite
 - `POST /api/knowledge/weknora/search`
 - `POST /api/knowledge/weknora/push`
 - `POST /api/knowledge/weknora/sync`
@@ -121,14 +125,16 @@ WEKNORA_KB_ID=...            # default knowledge-base id
 
 | Capability | How |
 |------------|-----|
-| Search | Prefer `POST /api/v1/knowledge-search`; tool `weknora_search` (+ `kb_id`) |
+| Search | Prefer `POST /api/v1/knowledge-search`; tool `weknora_search` (+ `kb_id`). Requires a KB id — does not pick the first listed KB. |
+| Read | `weknora_read` / `GET /api/knowledge/weknora/item` for the full remote body |
 | Multi-KB | `weknora_list_kbs` / `GET /api/knowledge/weknora/kbs`; Dock KB picker |
 | Route | Explicit `kb_id` → session `weknora_kb_id` → `WEKNORA_KB_MAP[workspace]` → `WEKNORA_KB_ID` |
-| Push | `weknora_push` / `POST /api/knowledge/weknora/push` → manual knowledge |
-| Sync | `weknora_sync` direction=`push\|pull\|both` with content_hash skip |
-| Identity | Pull matches `nlm_doc_id` / `weknora_idmap` / `content_hash` so a push+pull does not mint a second `weknora_*` row |
+| Push | `weknora_push` / `POST /api/knowledge/weknora/push`. If a remote id is already known, **update or skip** (no append-only second POST). Title+content push records local identity. |
+| Sync | `weknora_sync` direction=`push\|pull\|both` with content_hash skip. Dirty local (hash ≠ last pull/push) is a **conflict** — pull does not overwrite. |
+| Identity | Pull matches `nlm_doc_id` / `weknora_idmap` / title+hash fallback / `content_hash` so a push+pull does not mint a second `weknora_*` row (even when WeKnora omits `knowledge_id`) |
+| Import | Dock 远程 **导入到本地** / `POST /api/knowledge/weknora/import` |
 | Health | `weknora_health` / Dock WeKnora strip |
-| Skill / preset | `weknora-research` skill + `knowledge-research` preset (`kb_search` → `weknora_search` → `kb_read` / `weknora_push`) |
+| Skill / preset | `weknora-research` skill (`/skill:` injects SKILL.md) + `knowledge-research` preset (`kb_search` → `weknora_search` → `weknora_read` / `kb_read`) |
 
 Kernel helper: `weknora_client.py`. MCP stub: `plugins_volume/mcp/weknora_http.json`.
 

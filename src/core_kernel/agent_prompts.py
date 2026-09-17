@@ -94,7 +94,8 @@ PLAN_MODE = (
     "- Imperative language from the user means **plan** the implementation, not execute it.\n"
     "- A user's conversational agreement (including answering a clarifying question) **approves nothing**.\n"
     "- Explore first with read-only tools: `glob`, `grep`, `list_dir`, `read_file`, "
-    "`kb_search`/`kb_read`/`kb_get`/`kb_list`, `web_search`, `literature_search`, `web_crawl`, `ask_user`.\n"
+    "`kb_search`/`kb_read`/`kb_get`/`kb_list`, `weknora_search`/`weknora_read`/`weknora_list_kbs`, "
+    "`web_search`, `literature_search`, `web_crawl`, `ask_user`.\n"
     "- Do NOT edit files, write files, or run shell while planning.\n"
     "- Resolve discoverable facts by inspection. Use `ask_user` only for user-owned choices "
     "(preferences, scope, product decisions). If you recommend an option, put it first and "
@@ -153,9 +154,10 @@ KNOWLEDGE_HINTS = (
     "- `kb_add` accepts pasted Markdown or `path` (workspace-relative `.md/.txt/.rst/.pdf`).\n"
     "- `kb_sync_docs` indexes workspace docs with content_hash upsert; `kb_stats` / `kb_reindex` "
     "for status and embedding backfill when configured.\n"
-    "- Optional WeKnora (when WEKNORA_BASE_URL is set): `weknora_search` / `weknora_list_kbs` / "
-    "`weknora_push` / `weknora_sync` / `weknora_health`. Prefer local `kb_*` first; use WeKnora "
-    "for team/remote KB. Pass `kb_id` when multiple remote KBs exist.\n"
+    "- Optional WeKnora (when WEKNORA_BASE_URL is set): `weknora_search` / `weknora_read` / "
+    "`weknora_list_kbs` / `weknora_push` / `weknora_sync` / `weknora_health`. Prefer local "
+    "`kb_*` first; use WeKnora for team/remote KB. Pass `kb_id` when multiple remote KBs exist. "
+    "After `weknora_search`, call `weknora_read` on the hit `doc_id`/`knowledge_id` for the full body.\n"
     "- Tools: `kb_add` / `kb_search` / `kb_read` / `kb_get` / `kb_list` / `kb_delete` / "
     "`kb_sync_docs` / `kb_stats` / `kb_reindex` (+ WeKnora tools when configured).\n"
 )
@@ -278,11 +280,15 @@ def build_system_prompt(
         instr = load_workspace_instructions(cwd)
         if instr:
             parts.append(instr)
-        from src.core_kernel.skills_loader import skills_prompt_block
 
-        skills = skills_prompt_block(cwd)
-        if skills:
-            parts.append(skills)
+    from src.core_kernel.skills_loader import skill_playbook_block, skills_prompt_block
+
+    skills = skills_prompt_block(cwd)
+    if skills:
+        parts.append(skills)
+    playbook = skill_playbook_block(cwd, str(meta.get("user_text") or ""))
+    if playbook:
+        parts.append(playbook)
 
     parts.append(
         "## Permission preset\n"
@@ -321,7 +327,8 @@ def build_system_prompt(
     if bound_kb:
         parts.append(
             f"- This session is bound to WeKnora KB `{bound_kb}`. "
-            "`weknora_search` / `weknora_push` / `weknora_sync` use it when `kb_id` is omitted."
+            "`weknora_search` / `weknora_read` / `weknora_push` / `weknora_sync` "
+            "use it when `kb_id` is omitted."
         )
     parts.append(PLUGIN_HINTS)
     parts.append(experience_tier_prompt_block(experience_tier))

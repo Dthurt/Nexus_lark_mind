@@ -19,6 +19,8 @@ from src.core_kernel.plugin_runtime.knowledge_store import (
 )
 from src.core_kernel.plugin_runtime.knowledge_sync import (
     FeishuWikiConnector,
+    is_real_remote_id,
+    lookup_weknora_remote_id,
     record_weknora_push_identity,
     stable_doc_id_for_path,
     sync_weknora_bidirectional,
@@ -104,6 +106,24 @@ WEKNORA_TOOLS: List[Dict[str, Any]] = [
         "name": "weknora_health",
         "description": "Check WeKnora connectivity, latency, and default KB configuration.",
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "weknora_read",
+        "description": (
+            "Read the full remote WeKnora knowledge body by knowledge_id "
+            "(use weknora_search doc_id / knowledge_id). Prefer after weknora_search; "
+            "do not invent from snippets."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "knowledge_id": {"type": "string"},
+                "doc_id": {
+                    "type": "string",
+                    "description": "Alias for knowledge_id (weknora_search hit)",
+                },
+            },
+        },
     },
 ]
 
@@ -370,6 +390,15 @@ class KnowledgeToolsPlugin(BasePlugin):
                 limit=int(arguments.get("limit") or 40),
                 doc_ids=ids,
             )
+        if tool_name == "weknora_read":
+            from src.core_kernel.plugin_runtime.weknora_client import weknora_get_knowledge
+
+            kid = str(
+                arguments.get("knowledge_id") or arguments.get("doc_id") or ""
+            ).strip()
+            if not kid:
+                raise PluginError("knowledge_id required")
+            return await weknora_get_knowledge(kid)
         raise PluginError(f"unknown knowledge tool: {tool_name}")
 
     async def _weknora_push(
@@ -379,7 +408,10 @@ class KnowledgeToolsPlugin(BasePlugin):
         workspace_id: str,
         meta: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        from src.core_kernel.plugin_runtime.weknora_client import weknora_push_document
+        from src.core_kernel.plugin_runtime.weknora_client import (
+            weknora_push_document,
+            weknora_update_document,
+        )
 
         meta = meta or {}
         doc_id = str(arguments.get("doc_id") or "").strip()
@@ -387,46 +419,92 @@ class KnowledgeToolsPlugin(BasePlugin):
         content = str(arguments.get("content") or "")
         kb_id = str(arguments.get("kb_id") or meta.get("weknora_kb_id") or "").strip()
         session_kb = str(meta.get("weknora_kb_id") or "")
+        nlm_source = ""
         if doc_id:
             row = await store.get(doc_id)
             if not row:
                 raise PluginError(f"doc not found: {doc_id}")
             title = title or str(row.get("title") or doc_id)
             content = content or str(row.get("content") or "")
+            digest = str(row.get("content_hash") or content_hash(content))
+            nlm_source = str(row.get("source") or "")
+        else:
+            if not content.strip():
+                raise PluginError("content or doc_id required")
+            if not title:
+                title = "untitled"
+            digest = content_hash(content)
+            by_hash = await store.find_by_content_hash(digest, workspace_id=workspace_id)
+            if by_hash and by_hash.get("doc_id"):
+                doc_id = str(by_hash["doc_id"])
+            else:
+                doc_id = f"kb_{uuid4().hex[:12]}"
+                await store.upsert(
+                    doc_id=doc_id,
+                    title=title,
+                    content=content,
+                    tags="weknora",
+                    source="weknora_push",
+                    workspace_id=workspace_id,
+                    content_hash_value=digest,
+                )
+        known = await lookup_weknora_remote_id(
+            store,
+            kb_id=kb_id or session_kb,
+            local_doc_id=doc_id,
+            workspace_id=workspace_id,
+        )
+        push_meta = {
+            "nlm_doc_id": doc_id,
+            "nlm_source": nlm_source,
+            "content_hash": digest,
+        }
+        if is_real_remote_id(known):
+            result = await weknora_update_document(
+                knowledge_id=known,
+                title=title,
+                content=content,
+                kb_id=kb_id,
+                workspace_id=workspace_id,
+                session_kb_id=session_kb,
+                metadata=push_meta,
+            )
+            if not (result.get("ok") and (result.get("updated") or result.get("pushed"))):
+                return {
+                    **result,
+                    "doc_id": doc_id,
+                    "skipped": True,
+                    "reason": "refused append-only POST; update failed",
+                }
+        elif known.startswith("titlehash:"):
+            return {
+                "ok": True,
+                "skipped": True,
+                "pushed": False,
+                "reason": "refused append-only POST (remote id unknown; title/hash fallback only)",
+                "doc_id": doc_id,
+            }
+        else:
             result = await weknora_push_document(
                 title=title,
                 content=content,
                 kb_id=kb_id,
                 workspace_id=workspace_id,
                 session_kb_id=session_kb,
-                metadata={
-                    "nlm_doc_id": doc_id,
-                    "nlm_source": str(row.get("source") or ""),
-                    "content_hash": str(row.get("content_hash") or content_hash(content)),
-                },
+                metadata=push_meta,
             )
-            if result.get("ok") and result.get("pushed"):
-                await record_weknora_push_identity(
-                    store,
-                    kb_id=str(result.get("kb_id") or kb_id),
-                    local_doc_id=doc_id,
-                    remote_id=str(result.get("knowledge_id") or ""),
-                    digest=str(row.get("content_hash") or content_hash(content)),
-                    workspace_id=workspace_id,
-                    message=f"pushed knowledge_id={result.get('knowledge_id') or ''}",
-                )
-            return result
-        if not content.strip():
-            raise PluginError("content or doc_id required")
-        if not title:
-            title = "untitled"
-        return await weknora_push_document(
-            title=title,
-            content=content,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-            session_kb_id=session_kb,
-        )
+        if result.get("ok") and result.get("pushed"):
+            await record_weknora_push_identity(
+                store,
+                kb_id=str(result.get("kb_id") or kb_id),
+                local_doc_id=doc_id,
+                remote_id=str(result.get("knowledge_id") or known or ""),
+                digest=digest,
+                workspace_id=workspace_id,
+                title=title,
+                message=f"pushed knowledge_id={result.get('knowledge_id') or known or ''}",
+            )
+        return {**result, "doc_id": doc_id}
 
     async def _kb_add(
         self, store: KnowledgeStore, arguments: Dict[str, Any], workspace_id: str

@@ -69,6 +69,8 @@ export type TopbarProps = {
   onCycleTheme?: () => void;
   onOpenCommand?: () => void;
   weknoraKbId?: string;
+  weknoraKbName?: string;
+  onWeknoraKbClick?: () => void;
   activeTools?: string[] | null;
   className?: string;
 };
@@ -86,6 +88,8 @@ export function Topbar({
   onCycleTheme,
   onOpenCommand,
   weknoraKbId = "",
+  weknoraKbName = "",
+  onWeknoraKbClick,
   activeTools = null,
   className,
 }: TopbarProps) {
@@ -121,12 +125,14 @@ export function Topbar({
               </code>
             ) : null}
             {weknoraKbId ? (
-              <code
-                title={`WeKnora KB ${weknoraKbId}`}
-                className="max-w-[140px] truncate rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+              <button
+                type="button"
+                title={`WeKnora KB ${weknoraKbName || weknoraKbId}（打开知识库）`}
+                className="max-w-[160px] truncate rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:border-teal/50 hover:text-foreground"
+                onClick={() => onWeknoraKbClick?.()}
               >
-                KB · {weknoraKbId}
-              </code>
+                KB · {weknoraKbName || weknoraKbId}
+              </button>
             ) : null}
             {activeTools && activeTools.length ? (
               <span

@@ -964,6 +964,46 @@ class KnowledgeStore:
                 return None
             return str(row.message or "") or None
 
+    async def find_sync_uri_by_message(
+        self,
+        *,
+        source: str,
+        message: str,
+        workspace_id: str = "",
+        status: str = "ok",
+        source_uri_prefix: str = "",
+    ) -> Optional[str]:
+        """Newest sync log source_uri whose message matches (e.g. idmap → local doc)."""
+        key = (message or "").strip()
+        if not key:
+            return None
+        async with self.session_factory() as session:
+            stmt = (
+                select(KnowledgeSyncLog)
+                .where(KnowledgeSyncLog.source == (source or ""))
+                .where(KnowledgeSyncLog.message == key)
+                .where(KnowledgeSyncLog.status == (status or "ok"))
+                .order_by(KnowledgeSyncLog.created_at.desc())
+                .limit(40)
+            )
+            if workspace_id:
+                stmt = stmt.where(KnowledgeSyncLog.workspace_id == workspace_id)
+            rows = list((await session.execute(stmt)).scalars().all())
+        prefix = (source_uri_prefix or "").strip()
+        fallback: Optional[str] = None
+        for row in rows:
+            uri = str(row.source_uri or "")
+            if not uri:
+                continue
+            if prefix and not uri.startswith(prefix):
+                continue
+            rest = uri[len(prefix) :] if prefix else uri
+            if rest.startswith("titlehash:"):
+                fallback = fallback or uri
+                continue
+            return uri
+        return fallback
+
     @staticmethod
     def _snippet(content: str, tokens: List[str], radius: int = SNIPPET_RADIUS) -> str:
         lower = content.lower()

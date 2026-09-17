@@ -42,5 +42,40 @@
         }
       }
     ]
+  },
+  "knowledge_list_no_id": {
+    "success": true,
+    "data": [
+      {
+        "id": "",
+        "title": "Note",
+        "content": "hello weknora sync"
+      }
+    ]
+  },
+  "knowledge_manual_no_id": {
+    "success": true,
+    "data": {
+      "title": "Note"
+    }
+  },
+  "knowledge_get": {
+    "success": true,
+    "data": {
+      "id": "remote-canned",
+      "title": "Canned Doc",
+      "content": "full canned remote body",
+      "metadata": {
+        "nlm_doc_id": "local1",
+        "content_hash": "fixture"
+      }
+    }
+  },
+  "knowledge_update": {
+    "success": true,
+    "data": {
+      "id": "remote-canned",
+      "title": "Note"
+    }
   }
 }
