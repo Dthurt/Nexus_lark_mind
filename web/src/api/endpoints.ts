@@ -877,6 +877,66 @@ export function listWeknoraKbs(limit = 50): Promise<{
   return apiGet(`/api/knowledge/weknora/kbs?limit=${limit}`);
 }
 
+export type WeknoraHit = {
+  title?: string;
+  snippet?: string;
+  source_uri?: string;
+  score?: number | null;
+  doc_id?: string;
+  citation?: string;
+  source?: string;
+  kb_id?: string;
+};
+
+export function searchWeknora(body: {
+  query: string;
+  limit?: number;
+  kb_id?: string;
+  kb_ids?: string[];
+  workspace_id?: string;
+  weknora_kb_id?: string;
+}): Promise<{
+  query?: string;
+  results?: WeknoraHit[];
+  citations_md?: string;
+  skipped?: boolean;
+  error?: string;
+  ok?: boolean;
+  endpoint?: string;
+}> {
+  return apiPost("/api/knowledge/weknora/search", body);
+}
+
+export type WeknoraKnowledgeItem = {
+  id: string;
+  title?: string;
+  content?: string;
+  nlm_doc_id?: string;
+  content_hash?: string;
+  updated_at?: string;
+  source_type?: string;
+};
+
+export function listWeknoraKnowledge(params?: {
+  kb_id?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<{
+  items?: WeknoraKnowledgeItem[];
+  count?: number;
+  kb_id?: string;
+  skipped?: boolean;
+  error?: string;
+  ok?: boolean;
+}> {
+  const q = new URLSearchParams();
+  if (params?.kb_id) q.set("kb_id", params.kb_id);
+  if (params?.page != null) q.set("page", String(params.page));
+  if (params?.page_size != null) q.set("page_size", String(params.page_size));
+  const qs = q.toString();
+  return apiGet(`/api/knowledge/weknora/knowledge${qs ? `?${qs}` : ""}`);
+}
+
 export function syncWeknora(body: {
   workspace_id?: string;
   kb_id?: string;

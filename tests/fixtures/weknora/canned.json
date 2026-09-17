@@ -1,0 +1,46 @@
+{
+  "knowledge_bases": {
+    "success": true,
+    "data": [
+      {
+        "id": "kb-1",
+        "name": "Team KB",
+        "description": "canned fixture",
+        "knowledge_count": 2
+      }
+    ]
+  },
+  "knowledge_search": {
+    "success": true,
+    "data": [
+      {
+        "content": "canned hit body",
+        "knowledge_title": "Canned Doc",
+        "score": 0.91,
+        "knowledge_id": "k-canned",
+        "knowledge_base_id": "kb-1"
+      }
+    ]
+  },
+  "knowledge_manual": {
+    "success": true,
+    "data": {
+      "id": "remote-canned",
+      "title": "Note"
+    }
+  },
+  "knowledge_list": {
+    "success": true,
+    "data": [
+      {
+        "id": "remote-canned",
+        "title": "Note",
+        "content": "hello weknora sync",
+        "metadata": {
+          "nlm_doc_id": "local1",
+          "content_hash": "fixture"
+        }
+      }
+    ]
+  }
+}

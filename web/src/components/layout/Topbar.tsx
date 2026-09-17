@@ -68,6 +68,8 @@ export type TopbarProps = {
   onClear?: () => void;
   onCycleTheme?: () => void;
   onOpenCommand?: () => void;
+  weknoraKbId?: string;
+  activeTools?: string[] | null;
   className?: string;
 };
 
@@ -83,6 +85,8 @@ export function Topbar({
   onClear,
   onCycleTheme,
   onOpenCommand,
+  weknoraKbId = "",
+  activeTools = null,
   className,
 }: TopbarProps) {
   const { theme, cycle, label } = useTheme();
@@ -115,6 +119,22 @@ export function Topbar({
                 {workspaceKind === "ssh" ? "SSH · " : ""}
                 {workspaceTitle || cwd}
               </code>
+            ) : null}
+            {weknoraKbId ? (
+              <code
+                title={`WeKnora KB ${weknoraKbId}`}
+                className="max-w-[140px] truncate rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+              >
+                KB · {weknoraKbId}
+              </code>
+            ) : null}
+            {activeTools && activeTools.length ? (
+              <span
+                title={activeTools.join(", ")}
+                className="max-w-[120px] truncate rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+              >
+                tools · {activeTools.length}
+              </span>
             ) : null}
           </div>
         </div>

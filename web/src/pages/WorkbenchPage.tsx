@@ -89,6 +89,9 @@ export function WorkbenchPage({
     cwd,
     workspaceKind,
     sshHostId,
+    weknoraKbId,
+    setWeknoraKbId,
+    activeTools,
     upsertLocalConv,
     syncServerList,
     fetchSession,
@@ -579,6 +582,8 @@ export function WorkbenchPage({
             onOpenCommand={commandPalette.show}
             canvasOpen={canvas.open}
             onToggleCanvas={canvas.togglePane}
+            weknoraKbId={weknoraKbId}
+            activeTools={activeTools}
           />
 
           <section className="nlm-chat-panel" aria-label="对话">
@@ -732,6 +737,7 @@ export function WorkbenchPage({
           sessionId={sessionId}
           workspaceId={workspaceId}
           delivery={delivery}
+          onBoundKbChange={setWeknoraKbId}
           onInspectJob={onInspectTool}
           onStopJob={() => void actions.stopGeneration(currentTaskId)}
           onTogglePlugin={async (id, enabled) => {
@@ -884,6 +890,7 @@ export function WorkbenchPage({
           void (async () => {
             try {
               await patchInteraction(sessionId, { preset_name: name, cwd: cwd || undefined });
+              await fetchSession();
               toast.success(`已应用预设 ${name}`);
             } catch (err: any) {
               toast.error(String(err?.message || err || "预设应用失败"));
@@ -894,6 +901,7 @@ export function WorkbenchPage({
           void (async () => {
             try {
               await patchInteraction(sessionId, { clear_active_tools: true });
+              await fetchSession();
               toast.success("已清除工具收敛");
             } catch (err: any) {
               toast.error(String(err?.message || err || "清除失败"));

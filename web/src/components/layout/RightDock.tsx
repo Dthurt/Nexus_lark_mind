@@ -115,6 +115,7 @@ export type RightDockProps = {
   delivery?: DeliveryArtifactApi | null;
   sessionId?: string;
   workspaceId?: string;
+  onBoundKbChange?: (kbId: string) => void;
   onTogglePlugin?: (pluginId: string, enabled: boolean) => void | Promise<void>;
   onReload?: () => void | Promise<void>;
   onReloadOne?: (pluginId: string) => void | Promise<void>;
@@ -170,6 +171,7 @@ export function RightDock({
   delivery = null,
   sessionId = "",
   workspaceId = "",
+  onBoundKbChange,
   onTogglePlugin,
   onReload,
   onReloadOne,
@@ -422,6 +424,7 @@ export function RightDock({
                     cwd={cwd}
                     workspaceId={workspaceId}
                     sessionId={sessionId}
+                    onBoundKbChange={onBoundKbChange}
                   />
                 )}
                 {kind === "teams" && <TeamsPanel teamId={teamId} />}

@@ -311,6 +311,102 @@ class FeishuWikiConnector(KnowledgeConnector):
         }
 
 
+def weknora_mint_doc_id(kb_id: str, remote_id: str) -> str:
+    digest = hashlib.sha1(f"{kb_id}:{remote_id}".encode("utf-8")).hexdigest()[:16]
+    return f"weknora_{digest}"
+
+
+def extract_remote_identity(item: Dict[str, Any]) -> tuple[str, str]:
+    """Read nlm_doc_id / content_hash from a WeKnora list/get row."""
+    meta: Any = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    if not meta and isinstance(item.get("meta"), dict):
+        meta = item["meta"]
+    nlm_id = str(meta.get("nlm_doc_id") or item.get("nlm_doc_id") or "").strip()
+    digest = str(meta.get("content_hash") or item.get("content_hash") or "").strip()
+    return nlm_id, digest
+
+
+async def record_weknora_push_identity(
+    store: KnowledgeStore,
+    *,
+    kb_id: str,
+    local_doc_id: str,
+    remote_id: str = "",
+    digest: str = "",
+    workspace_id: str = "",
+    message: str = "",
+) -> None:
+    """Log push + reverse idmap so pull collapses onto the same local doc."""
+    kid = (kb_id or "").strip()
+    doc_id = (local_doc_id or "").strip()
+    if kid and doc_id:
+        await store.log_sync(
+            source="weknora_push",
+            source_uri=f"{kid}:{doc_id}",
+            content_hash_value=digest,
+            status="ok",
+            message=message or (f"pushed knowledge_id={remote_id}" if remote_id else "pushed"),
+            workspace_id=workspace_id,
+        )
+    remote = (remote_id or "").strip()
+    if kid and remote and doc_id:
+        await store.log_sync(
+            source="weknora_idmap",
+            source_uri=f"{kid}:{remote}",
+            content_hash_value=digest,
+            status="ok",
+            message=doc_id,
+            workspace_id=workspace_id,
+        )
+
+
+async def resolve_local_doc_id_for_remote(
+    store: KnowledgeStore,
+    *,
+    kb_id: str,
+    remote_id: str,
+    workspace_id: str = "",
+    nlm_doc_id: str = "",
+    digest: str = "",
+) -> tuple[str, str]:
+    """Map a remote WeKnora entry onto an existing local doc when possible.
+
+    Returns (doc_id, reason) where reason is nlm_doc_id|idmap|content_hash|source_uri|minted.
+    """
+    kid = (kb_id or "").strip()
+    rid = (remote_id or "").strip()
+    explicit = (nlm_doc_id or "").strip()
+    if explicit:
+        existing = await store.get(explicit)
+        if existing:
+            return explicit, "nlm_doc_id"
+
+    if kid and rid:
+        mapped = await store.latest_sync_message(
+            source="weknora_idmap",
+            source_uri=f"{kid}:{rid}",
+            workspace_id=workspace_id,
+            status="ok",
+        )
+        mapped_id = (mapped or "").strip()
+        if mapped_id:
+            existing = await store.get(mapped_id)
+            if existing:
+                return mapped_id, "idmap"
+
+    if digest:
+        by_hash = await store.find_by_content_hash(digest, workspace_id=workspace_id)
+        if by_hash and by_hash.get("doc_id"):
+            return str(by_hash["doc_id"]), "content_hash"
+
+    if rid:
+        by_uri = await store.find_by_source_uri(rid, workspace_id=workspace_id)
+        if by_uri and by_uri.get("doc_id"):
+            return str(by_uri["doc_id"]), "source_uri"
+
+    return weknora_mint_doc_id(kid, rid), "minted"
+
+
 async def sync_local_to_weknora(
     store: KnowledgeStore,
     *,
@@ -399,13 +495,14 @@ async def sync_local_to_weknora(
         )
         if result.get("ok") and result.get("pushed"):
             pushed += 1
-            await store.log_sync(
-                source="weknora_push",
-                source_uri=f"{kid}:{doc_id}",
-                content_hash_value=digest,
-                status="ok",
-                message=f"pushed knowledge_id={result.get('knowledge_id') or ''}",
+            await record_weknora_push_identity(
+                store,
+                kb_id=kid,
+                local_doc_id=doc_id,
+                remote_id=str(result.get("knowledge_id") or ""),
+                digest=digest,
                 workspace_id=workspace_id,
+                message=f"pushed knowledge_id={result.get('knowledge_id') or ''}",
             )
         else:
             err = str(result.get("error") or "push failed")
@@ -477,7 +574,7 @@ async def sync_weknora_to_local(
             "kb_id": kid,
         }
 
-    added = updated = skipped = 0
+    added = updated = skipped = collapsed = 0
     errors: List[str] = []
     for item in listed.get("items") or []:
         if not isinstance(item, dict):
@@ -487,45 +584,80 @@ async def sync_weknora_to_local(
             continue
         title = str(item.get("title") or remote_id)
         body = str(item.get("content") or "")
+        nlm_id, meta_hash = extract_remote_identity(item)
         if not body.strip():
             detail = await weknora_get_knowledge(remote_id)
             if detail.get("ok"):
                 body = str(detail.get("content") or "")
                 if detail.get("title"):
                     title = str(detail["title"])
+                extra_id, extra_hash = extract_remote_identity(detail)
+                nlm_id = nlm_id or extra_id
+                meta_hash = meta_hash or extra_hash
         if not body.strip():
             skipped += 1
             continue
-        digest = content_hash(body)
-        doc_id = f"weknora_{hashlib.sha1(f'{kid}:{remote_id}'.encode()).hexdigest()[:16]}"
+        digest = content_hash(body) or meta_hash
+        doc_id, reason = await resolve_local_doc_id_for_remote(
+            store,
+            kb_id=kid,
+            remote_id=remote_id,
+            workspace_id=workspace_id,
+            nlm_doc_id=nlm_id,
+            digest=digest,
+        )
         try:
             existing = await store.get(doc_id)
+            keep_local = bool(existing) and reason != "minted"
+            tags = str(existing.get("tags") or "") if existing else f"weknora,{kid}"
+            if "weknora" not in {t.strip() for t in (tags or "").split(",") if t.strip()}:
+                tags = f"{tags},weknora" if tags else f"weknora,{kid}"
+            source = (
+                str(existing.get("source") or "")
+                if keep_local
+                else f"weknora:{kid}"
+            )
+            source_uri = (
+                str(existing.get("source_uri") or "")
+                if keep_local and existing.get("source_uri")
+                else remote_id
+            )
             result = await store.upsert(
                 doc_id=doc_id,
-                title=title,
+                title=str(existing.get("title") or title) if keep_local else title,
                 content=body,
-                tags=f"weknora,{kid}",
-                source=f"weknora:{kid}",
-                source_uri=remote_id,
-                workspace_id=workspace_id,
+                tags=tags,
+                source=source,
+                source_uri=source_uri,
+                workspace_id=workspace_id or str((existing or {}).get("workspace_id") or ""),
                 content_hash_value=digest,
                 skip_if_unchanged=True,
             )
             if result.get("unchanged"):
                 skipped += 1
-                status, msg = "skip", "unchanged"
+                status, msg = "skip", f"unchanged ({reason})"
             elif existing:
                 updated += 1
-                status, msg = "ok", "updated"
+                status, msg = "ok", f"updated ({reason})"
             else:
                 added += 1
-                status, msg = "ok", "added"
+                status, msg = "ok", f"added ({reason})"
+            if reason != "minted":
+                collapsed += 1
             await store.log_sync(
                 source="weknora_pull",
                 source_uri=f"{kid}:{remote_id}",
                 content_hash_value=digest,
                 status=status,
                 message=msg,
+                workspace_id=workspace_id,
+            )
+            await store.log_sync(
+                source="weknora_idmap",
+                source_uri=f"{kid}:{remote_id}",
+                content_hash_value=digest,
+                status="ok",
+                message=doc_id,
                 workspace_id=workspace_id,
             )
         except Exception as exc:
@@ -545,6 +677,7 @@ async def sync_weknora_to_local(
         "added": added,
         "updated": updated,
         "skipped_unchanged": skipped,
+        "collapsed": collapsed,
         "errors": errors[:20],
     }
 

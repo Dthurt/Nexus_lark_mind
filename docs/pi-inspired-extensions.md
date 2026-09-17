@@ -31,6 +31,9 @@ allowed-tools: read_file, grep, glob, list_dir, run_shell
 - API: `GET /api/skills?cwd=<path>`
 
 Example skill ships at `.nlm/skills/verify-change/SKILL.md` (repo root).
+Built-in WeKnora playbook: `plugins_volume/skills/weknora-research/SKILL.md`
+(also `.nlm/skills/weknora-research/`). `skills_loader` scans workspace dirs
+first, then `plugins_volume/skills`.
 
 ## Unified Extension event system
 
@@ -123,7 +126,7 @@ plugins_volume/presets/<name>.json
 Fields: `model`, `provider`, `permission_preset`, `reasoning_effort`,
 `active_tools`, `system_prompt_append`.
 
-Built-ins: `code-review`, `quick-ask`, `docs-write`.
+Built-ins: `code-review`, `quick-ask`, `docs-write`, `knowledge-research`.
 
 Command Palette → **预设 Presets** applies via interaction patch (tools + permission).
 **清除工具收敛** clears session `active_tools`.

@@ -499,6 +499,55 @@ class KnowledgeStore:
             rows = (await session.execute(stmt)).scalars().all()
             return [self._public(r, include_content=False) for r in rows]
 
+    async def find_by_content_hash(
+        self,
+        digest: str,
+        *,
+        workspace_id: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Return a local doc with this content_hash. Prefer non-weknora_* ids."""
+        key = (digest or "").strip()
+        if not key:
+            return None
+        async with self.session_factory() as session:
+            stmt = select(KnowledgeDoc).where(KnowledgeDoc.content_hash == key)
+            if workspace_id:
+                stmt = stmt.where(
+                    or_(
+                        KnowledgeDoc.workspace_id == workspace_id,
+                        KnowledgeDoc.workspace_id == "",
+                    )
+                )
+            rows = list((await session.execute(stmt)).scalars().all())
+        if not rows:
+            return None
+        preferred = [r for r in rows if not (r.doc_id or "").startswith("weknora_")]
+        return self._public(preferred[0] if preferred else rows[0])
+
+    async def find_by_source_uri(
+        self,
+        source_uri: str,
+        *,
+        workspace_id: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        uri = (source_uri or "").strip()
+        if not uri:
+            return None
+        async with self.session_factory() as session:
+            stmt = select(KnowledgeDoc).where(KnowledgeDoc.source_uri == uri)
+            if workspace_id:
+                stmt = stmt.where(
+                    or_(
+                        KnowledgeDoc.workspace_id == workspace_id,
+                        KnowledgeDoc.workspace_id == "",
+                    )
+                )
+            rows = list((await session.execute(stmt)).scalars().all())
+        if not rows:
+            return None
+        preferred = [r for r in rows if not (r.doc_id or "").startswith("weknora_")]
+        return self._public(preferred[0] if preferred else rows[0])
+
     async def search(
         self, query: str, *, workspace_id: str = "", limit: int = 8
     ) -> List[Dict[str, Any]]:
@@ -889,6 +938,31 @@ class KnowledgeStore:
             if not row:
                 return None
             return str(row.content_hash or "") or None
+
+    async def latest_sync_message(
+        self,
+        *,
+        source: str,
+        source_uri: str,
+        workspace_id: str = "",
+        status: str = "ok",
+    ) -> Optional[str]:
+        """Return message of the newest matching sync log row, if any."""
+        async with self.session_factory() as session:
+            stmt = (
+                select(KnowledgeSyncLog)
+                .where(KnowledgeSyncLog.source == (source or ""))
+                .where(KnowledgeSyncLog.source_uri == (source_uri or ""))
+                .where(KnowledgeSyncLog.status == (status or "ok"))
+                .order_by(KnowledgeSyncLog.created_at.desc())
+                .limit(1)
+            )
+            if workspace_id:
+                stmt = stmt.where(KnowledgeSyncLog.workspace_id == workspace_id)
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if not row:
+                return None
+            return str(row.message or "") or None
 
     @staticmethod
     def _snippet(content: str, tokens: List[str], radius: int = SNIPPET_RADIUS) -> str:

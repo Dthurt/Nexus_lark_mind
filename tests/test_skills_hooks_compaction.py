@@ -17,9 +17,9 @@ def test_discover_skills_from_nlm_dir(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     skills = discover_skills(str(tmp_path))
-    assert len(skills) == 1
-    assert skills[0].name == "demo"
-    assert "Demo skill" in skills[0].description
+    by_name = {s.name: s for s in skills}
+    assert "demo" in by_name
+    assert "Demo skill" in by_name["demo"].description
     block = skills_prompt_block(str(tmp_path))
     assert "demo" in block
     assert "progressive disclosure" in block.lower() or "Available skills" in block

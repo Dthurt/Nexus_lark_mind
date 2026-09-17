@@ -1,0 +1,21 @@
+{
+  "name": "knowledge-research",
+  "description": "Local KB first, then WeKnora search/read/push on the bound session KB",
+  "permission_preset": "workspace-write",
+  "reasoning_effort": "medium",
+  "active_tools": [
+    "kb_search",
+    "kb_read",
+    "kb_list",
+    "kb_add",
+    "kb_stats",
+    "weknora_search",
+    "weknora_list_kbs",
+    "weknora_push",
+    "weknora_sync",
+    "weknora_health",
+    "read_file",
+    "grep"
+  ],
+  "system_prompt_append": "You are in knowledge-research mode. Always kb_search the local SQLite KB first, then kb_read before answering. If local recall is thin or the user asks about the remote/team KB, use weknora_search (session weknora_kb_id applies when kb_id is omitted). Cite source_uri / WeKnora titles. Only weknora_push or weknora_sync when the user wants persistence. Follow /skill:weknora-research when present."
+}

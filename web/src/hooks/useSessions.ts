@@ -52,6 +52,8 @@ export function useSessions() {
   const [cwd, setCwd] = useState("");
   const [workspaceKind, setWorkspaceKind] = useState("local");
   const [sshHostId, setSshHostId] = useState("");
+  const [weknoraKbId, setWeknoraKbId] = useState("");
+  const [activeTools, setActiveTools] = useState<string[] | null>(null);
 
   const persistActive = useCallback((id: string) => {
     localStorage.setItem(ACTIVE_KEY, id);
@@ -76,6 +78,26 @@ export function useSessions() {
       setCwd(path || "");
       setWorkspaceKind(workspace_kind || (ssh_host_id ? "ssh" : "local"));
       setSshHostId(ssh_host_id || "");
+    },
+    [],
+  );
+
+  const applySessionChrome = useCallback(
+    (
+      data: {
+        weknora_kb_id?: string;
+        active_tools?: string[] | null;
+      } = {},
+    ) => {
+      if ("weknora_kb_id" in data) {
+        setWeknoraKbId(String(data.weknora_kb_id || "").trim());
+      }
+      if ("active_tools" in data) {
+        const tools = data.active_tools;
+        setActiveTools(
+          Array.isArray(tools) ? tools.map((t) => String(t)).filter(Boolean) : null,
+        );
+      }
     },
     [],
   );
@@ -162,6 +184,7 @@ export function useSessions() {
       const data = await getSession(sessionId);
       if (data) {
         applyWorkspaceMeta(data);
+        applySessionChrome(data);
         setChatTitle(data.title || chatTitle);
         setSessionUsage(data.usage || {});
       }
@@ -169,7 +192,7 @@ export function useSessions() {
     } catch {
       return null;
     }
-  }, [applyWorkspaceMeta, chatTitle, sessionId]);
+  }, [applySessionChrome, applyWorkspaceMeta, chatTitle, sessionId]);
 
   const ensureSessionOnServer = useCallback(
     async ({
@@ -268,6 +291,7 @@ export function useSessions() {
         ssh_host_id: ssh_host_id || "",
       };
       applyWorkspaceMeta(meta);
+      applySessionChrome({ weknora_kb_id: "", active_tools: null });
       upsertLocalConv({
         id,
         title: "新对话",
@@ -279,7 +303,7 @@ export function useSessions() {
         sshHostId: meta.ssh_host_id,
       });
     },
-    [applyWorkspaceMeta, persistActive, upsertLocalConv],
+    [applySessionChrome, applyWorkspaceMeta, persistActive, upsertLocalConv],
   );
 
   const switchTo = useCallback(
@@ -298,9 +322,10 @@ export function useSessions() {
         });
         setChatTitle(local.title || "新对话");
       }
+      applySessionChrome({ weknora_kb_id: "", active_tools: null });
       return true;
     },
-    [applyWorkspaceMeta, conversations, persistActive, sessionId],
+    [applySessionChrome, applyWorkspaceMeta, conversations, persistActive, sessionId],
   );
 
   const deleteConversation = useCallback(
@@ -407,6 +432,10 @@ export function useSessions() {
     cwd,
     workspaceKind,
     sshHostId,
+    weknoraKbId,
+    setWeknoraKbId,
+    activeTools,
+    applySessionChrome,
     upsertLocalConv,
     syncServerList,
     fetchSession,

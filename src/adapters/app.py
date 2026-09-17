@@ -1461,6 +1461,20 @@ def create_adapters_app() -> FastAPI:
         )
         return RpcEnvelope(ok=True, data=data)
 
+    @app.get("/api/knowledge/weknora/knowledge")
+    async def knowledge_weknora_knowledge(
+        kb_id: str = "",
+        page: int = 1,
+        page_size: int = 40,
+    ):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            "/rpc/knowledge/weknora/knowledge",
+            params={"kb_id": kb_id or "", "page": page, "page_size": page_size},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
     @app.post("/api/knowledge/weknora/push")
     async def knowledge_weknora_push(request: Request):
         kernel: RpcClient = state["kernel"]

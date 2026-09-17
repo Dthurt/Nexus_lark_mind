@@ -19,6 +19,7 @@ from src.core_kernel.plugin_runtime.knowledge_store import (
 )
 from src.core_kernel.plugin_runtime.knowledge_sync import (
     FeishuWikiConnector,
+    record_weknora_push_identity,
     stable_doc_id_for_path,
     sync_weknora_bidirectional,
     sync_workspace_docs,
@@ -405,13 +406,14 @@ class KnowledgeToolsPlugin(BasePlugin):
                 },
             )
             if result.get("ok") and result.get("pushed"):
-                await store.log_sync(
-                    source="weknora_push",
-                    source_uri=f"{result.get('kb_id')}:{doc_id}",
-                    content_hash_value=str(row.get("content_hash") or content_hash(content)),
-                    status="ok",
-                    message=f"pushed knowledge_id={result.get('knowledge_id') or ''}",
+                await record_weknora_push_identity(
+                    store,
+                    kb_id=str(result.get("kb_id") or kb_id),
+                    local_doc_id=doc_id,
+                    remote_id=str(result.get("knowledge_id") or ""),
+                    digest=str(row.get("content_hash") or content_hash(content)),
                     workspace_id=workspace_id,
+                    message=f"pushed knowledge_id={result.get('knowledge_id') or ''}",
                 )
             return result
         if not content.strip():

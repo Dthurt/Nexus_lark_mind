@@ -3,6 +3,7 @@
 Layout (first match wins per skill name):
   <cwd>/.nlm/skills/<name>/SKILL.md
   <cwd>/.agents/skills/<name>/SKILL.md
+  plugins_volume/skills/<name>/SKILL.md
 
 SKILL.md front matter (optional YAML between ---):
   ---
@@ -68,16 +69,25 @@ def _first_heading(body: str) -> str:
     return ""
 
 
+def _skill_search_roots(cwd: Optional[str] = None) -> List[Path]:
+    paths: List[Path] = []
+    if cwd:
+        root = Path(cwd)
+        if root.is_dir():
+            paths.append(root / ".nlm" / "skills")
+            paths.append(root / ".agents" / "skills")
+    paths.append(Path("plugins_volume") / "skills")
+    repo = Path(__file__).resolve().parents[2]
+    paths.append(repo / "plugins_volume" / "skills")
+    return paths
+
+
 def discover_skills(cwd: str, *, max_skills: int = 40) -> List[SkillInfo]:
-    """Scan skill directories under cwd; later dirs do not override earlier names."""
-    root = Path(cwd)
-    if not root.is_dir():
-        return []
+    """Scan skill directories; later dirs do not override earlier names."""
+    root = Path(cwd) if cwd else None
     found: dict[str, SkillInfo] = {}
-    search_roots = [
-        root / ".nlm" / "skills",
-        root / ".agents" / "skills",
-    ]
+    search_roots = _skill_search_roots(cwd)
+    repo = Path(__file__).resolve().parents[2]
     for base in search_roots:
         if not base.is_dir():
             continue
@@ -109,9 +119,15 @@ def discover_skills(cwd: str, *, max_skills: int = 40) -> List[SkillInfo]:
                 meta.get("allowed-tools") or meta.get("allowed_tools") or ""
             )
             try:
-                rel = str(skill_md.relative_to(root)).replace("\\", "/")
+                if root and root.is_dir():
+                    rel = str(skill_md.relative_to(root)).replace("\\", "/")
+                else:
+                    raise ValueError
             except ValueError:
-                rel = str(skill_md)
+                try:
+                    rel = str(skill_md.relative_to(repo)).replace("\\", "/")
+                except ValueError:
+                    rel = str(skill_md).replace("\\", "/")
             found[name] = SkillInfo(
                 name=name,
                 description=desc,

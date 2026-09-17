@@ -396,6 +396,9 @@ async def weknora_list_knowledge(
         if not isinstance(row, dict):
             continue
         kid_doc = str(row.get("id") or row.get("knowledge_id") or "")
+        meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        if not meta and isinstance(row.get("meta"), dict):
+            meta = row["meta"]
         items.append(
             {
                 "id": kid_doc,
@@ -410,6 +413,9 @@ async def weknora_list_knowledge(
                 "parse_status": str(row.get("parse_status") or ""),
                 "updated_at": str(row.get("updated_at") or ""),
                 "source_type": str(row.get("type") or row.get("source") or ""),
+                "nlm_doc_id": str(meta.get("nlm_doc_id") or row.get("nlm_doc_id") or ""),
+                "content_hash": str(meta.get("content_hash") or row.get("content_hash") or ""),
+                "metadata": meta,
             }
         )
     return {"ok": True, "kb_id": kid, "items": items, "count": len(items)}
@@ -439,11 +445,17 @@ async def weknora_get_knowledge(knowledge_id: str) -> Dict[str, Any]:
     row = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
     if not isinstance(row, dict):
         return {"ok": False, "error": "unexpected response shape"}
+    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    if not meta and isinstance(row.get("meta"), dict):
+        meta = row["meta"]
     return {
         "ok": True,
         "id": str(row.get("id") or kid),
         "title": str(row.get("title") or row.get("file_name") or kid),
         "content": str(row.get("content") or row.get("markdown") or row.get("text") or ""),
+        "nlm_doc_id": str(meta.get("nlm_doc_id") or row.get("nlm_doc_id") or ""),
+        "content_hash": str(meta.get("content_hash") or row.get("content_hash") or ""),
+        "metadata": meta,
         "raw": row,
     }
 

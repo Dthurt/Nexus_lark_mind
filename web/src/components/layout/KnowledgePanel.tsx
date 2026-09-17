@@ -12,10 +12,12 @@ import {
   listKnowledgeDocs,
   listKnowledgeSyncLog,
   listWeknoraKbs,
+  listWeknoraKnowledge,
   patchInteraction,
   patchKnowledgeDoc,
   reindexKnowledge,
   searchKnowledge,
+  searchWeknora,
   syncKnowledgeDocs,
   syncWeknora,
   type KnowledgeDoc,
@@ -23,7 +25,9 @@ import {
   type KnowledgeStats,
   type KnowledgeSyncEntry,
   type WeknoraHealth,
+  type WeknoraHit,
   type WeknoraKb,
+  type WeknoraKnowledgeItem,
 } from "@/api/endpoints";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +38,7 @@ export type KnowledgePanelProps = {
   workspaceId?: string;
   sessionId?: string;
   className?: string;
+  onBoundKbChange?: (kbId: string) => void;
 };
 
 export function KnowledgePanel({
@@ -41,6 +46,7 @@ export function KnowledgePanel({
   workspaceId = "",
   sessionId = "",
   className,
+  onBoundKbChange,
 }: KnowledgePanelProps) {
   const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
   const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
@@ -61,6 +67,10 @@ export function KnowledgePanel({
   const [wkKbs, setWkKbs] = useState<WeknoraKb[]>([]);
   const [wkKbId, setWkKbId] = useState("");
   const [wkSyncing, setWkSyncing] = useState(false);
+  const [browseMode, setBrowseMode] = useState<"local" | "remote">("local");
+  const [remoteHits, setRemoteHits] = useState<
+    Array<WeknoraHit & { doc_id?: string; content?: string }> | null
+  >(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -112,6 +122,7 @@ export function KnowledgePanel({
 
   const onSelectWeknoraKb = async (kbId: string) => {
     setWkKbId(kbId);
+    onBoundKbChange?.(kbId);
     if (!sessionId || !kbId) return;
     try {
       await patchInteraction(sessionId, { weknora_kb_id: kbId });
@@ -147,8 +158,67 @@ export function KnowledgePanel({
     void refresh();
   }, [refresh]);
 
+  const loadRemoteBrowse = async (q: string) => {
+    if (!wkKbId) {
+      toast.error("请先选择 WeKnora KB");
+      return;
+    }
+    if (!q) {
+      const data = await listWeknoraKnowledge({
+        kb_id: wkKbId,
+        page_size: 40,
+      });
+      if (data.ok === false && data.error) {
+        toast.error(String(data.error));
+        setRemoteHits([]);
+        return;
+      }
+      const items = (data.items || []).map((row: WeknoraKnowledgeItem) => ({
+        doc_id: row.id,
+        title: row.title || row.id,
+        snippet: (row.content || "").slice(0, 240),
+        content: row.content,
+        source_uri: row.id,
+        source: "weknora",
+        kb_id: wkKbId,
+      }));
+      setRemoteHits(items);
+      return;
+    }
+    const data = await searchWeknora({
+      query: q,
+      kb_id: wkKbId,
+      weknora_kb_id: wkKbId,
+      workspace_id: workspaceId || undefined,
+      limit: 12,
+    });
+    if (data.ok === false && data.error) {
+      toast.error(String(data.error));
+      setRemoteHits([]);
+      return;
+    }
+    setRemoteHits(
+      (data.results || []).map((row) => ({
+        ...row,
+        doc_id: row.doc_id || row.source_uri || row.title,
+        source: "weknora",
+      })),
+    );
+  };
+
   const onSearch = async () => {
     const q = query.trim();
+    if (browseMode === "remote") {
+      setLoading(true);
+      try {
+        await loadRemoteBrowse(q);
+      } catch (err: any) {
+        toast.error(String(err?.message || err));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     if (!q) {
       setHits(null);
       return;
@@ -227,6 +297,7 @@ export function KnowledgePanel({
 
   const onSaveTitle = async () => {
     if (!selected) return;
+    if (selected.source === "weknora" || browseMode === "remote") return;
     const next = editTitle.trim();
     if (!next || next === selected.title) return;
     try {
@@ -287,7 +358,10 @@ export function KnowledgePanel({
     }
   };
 
-  const list = hits ?? docs.map((d) => ({ ...d, score: undefined, snippet: undefined }));
+  const remoteMode = browseMode === "remote" && Boolean(wkKbId);
+  const list: Array<KnowledgeHit & { content?: string }> = remoteMode
+    ? ((remoteHits || []) as Array<KnowledgeHit & { content?: string }>)
+    : hits ?? docs.map((d) => ({ ...d, score: undefined, snippet: undefined }));
 
   return (
     <div
@@ -381,6 +455,41 @@ export function KnowledgePanel({
             >
               {wkSyncing ? "同步中…" : "双向同步"}
             </Button>
+            {wkKbId ? (
+              <div className="ml-auto flex rounded border border-border/70">
+                <button
+                  type="button"
+                  className={cn(
+                    "h-6 px-1.5 text-[10px]",
+                    browseMode === "local"
+                      ? "bg-background text-foreground"
+                      : "text-muted-foreground",
+                  )}
+                  onClick={() => {
+                    setBrowseMode("local");
+                    setRemoteHits(null);
+                  }}
+                >
+                  本地
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "h-6 px-1.5 text-[10px]",
+                    browseMode === "remote"
+                      ? "bg-background text-foreground"
+                      : "text-muted-foreground",
+                  )}
+                  onClick={() => {
+                    setBrowseMode("remote");
+                    setHits(null);
+                    void loadRemoteBrowse(query.trim());
+                  }}
+                >
+                  远程
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : wkHealth?.skipped ? (
@@ -393,7 +502,9 @@ export function KnowledgePanel({
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索知识库…"
+          placeholder={
+            remoteMode ? "搜索远程 KB…（空则列出）" : "搜索知识库…"
+          }
           className="h-8 text-[12px]"
           onKeyDown={(e) => {
             if (e.key === "Enter") void onSearch();
@@ -409,7 +520,7 @@ export function KnowledgePanel({
         >
           <Search className="size-3.5" />
         </Button>
-        {hits ? (
+        {hits || remoteHits ? (
           <Button
             type="button"
             size="sm"
@@ -417,6 +528,7 @@ export function KnowledgePanel({
             className="h-8 px-2 text-[11px]"
             onClick={() => {
               setHits(null);
+              setRemoteHits(null);
               setQuery("");
             }}
           >
@@ -431,11 +543,14 @@ export function KnowledgePanel({
         ) : null}
         {!loading && !list.length ? (
           <p className="m-0 rounded-md border border-border/60 bg-muted/30 px-2 py-2 text-muted-foreground">
-            暂无文档。粘贴 Markdown、填路径导入，或点「同步文档」索引工作区。
+            {remoteMode
+              ? "远程 KB 暂无结果。输入关键词搜索，或清空后列出该库。"
+              : "暂无文档。粘贴 Markdown、填路径导入，或点「同步文档」索引工作区。"}
           </p>
         ) : null}
         {list.map((row) => {
-          const id = row.doc_id;
+          const id = row.doc_id || row.source_uri || row.title || "remote";
+          const isRemote = remoteMode || row.source === "weknora";
           return (
             <div
               key={id + (row.chunk_id || "")}
@@ -448,10 +563,29 @@ export function KnowledgePanel({
                 <button
                   type="button"
                   className="min-w-0 flex-1 text-left"
-                  onClick={() => void onOpen(id)}
+                  onClick={() => {
+                    if (isRemote) {
+                      setSelected({
+                        doc_id: String(id),
+                        title: row.title || String(id),
+                        content: row.content || row.snippet || "",
+                        source: "weknora",
+                        source_uri: row.source_uri || String(id),
+                        content_len: (row.content || row.snippet || "").length,
+                      });
+                      setEditTitle(row.title || "");
+                      return;
+                    }
+                    void onOpen(String(id));
+                  }}
                 >
                   <div className="truncate font-medium text-foreground">
                     {row.title || id}
+                    {isRemote ? (
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        · 远程
+                      </span>
+                    ) : null}
                     {row.heading ? (
                       <span className="font-normal text-muted-foreground">
                         {" "}
@@ -469,16 +603,18 @@ export function KnowledgePanel({
                     </p>
                   ) : null}
                 </button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive"
-                  title="删除"
-                  onClick={() => void onDelete(id)}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
+                {!isRemote ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+                    title="删除"
+                    onClick={() => void onDelete(String(id))}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                ) : null}
               </div>
             </div>
           );
@@ -492,6 +628,7 @@ export function KnowledgePanel({
               value={editTitle}
               onChange={(e) => setEditTitle(e.target.value)}
               className="h-7 flex-1 text-[11px]"
+              disabled={selected.source === "weknora" || browseMode === "remote"}
               onBlur={() => void onSaveTitle()}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {

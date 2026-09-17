@@ -176,6 +176,134 @@ async def test_weknora_push_and_bidirectional_sync(store, monkeypatch):
         assert push2.get("skipped_unchanged") >= 1
 
 
+@pytest.mark.asyncio
+async def test_push_pull_does_not_duplicate_local_doc(store, monkeypatch):
+    """Identity: nlm_doc_id / content_hash / idmap must collapse, not mint weknora_*."""
+    from src.core_kernel.plugin_runtime import knowledge_sync as ks
+
+    monkeypatch.setenv("WEKNORA_BASE_URL", "http://weknora.test")
+    monkeypatch.setenv("WEKNORA_KB_ID", "kb-1")
+
+    body = "hello weknora sync"
+    digest = content_hash(body)
+    await store.upsert(
+        doc_id="local1",
+        title="Note",
+        content=body,
+        tags="t",
+        source="manual",
+        workspace_id="ws1",
+        content_hash_value=digest,
+    )
+
+    async def fake_push(**kwargs):
+        meta = kwargs.get("metadata") or {}
+        assert meta.get("nlm_doc_id") == "local1"
+        assert meta.get("content_hash") == digest
+        return {"ok": True, "pushed": True, "kb_id": "kb-1", "knowledge_id": "remote-1"}
+
+    async def fake_list(kb_id="", **kwargs):
+        return {
+            "ok": True,
+            "kb_id": kb_id or "kb-1",
+            "items": [
+                {
+                    "id": "remote-1",
+                    "title": "Note",
+                    "content": body,
+                    "metadata": {"nlm_doc_id": "local1", "content_hash": digest},
+                }
+            ],
+        }
+
+    with patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_push_document",
+        new=fake_push,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_list_knowledge",
+        new=fake_list,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_get_knowledge",
+        new=AsyncMock(return_value={"ok": True, "content": ""}),
+    ):
+        push = await ks.sync_local_to_weknora(store, workspace_id="ws1", limit=10)
+        assert push.get("pushed") == 1
+        pull = await ks.sync_weknora_to_local(store, workspace_id="ws1", limit=10)
+        assert pull.get("added") == 0
+        assert pull.get("collapsed") == 1
+        both = await ks.sync_weknora_bidirectional(
+            store, workspace_id="ws1", direction="both", limit=10
+        )
+        assert both.get("ok") is True
+        assert both.get("pull", {}).get("added") == 0
+
+    docs = await store.list_docs(workspace_id="ws1", limit=50)
+    ids = [d["doc_id"] for d in docs]
+    assert ids.count("local1") == 1
+    assert not any(str(i).startswith("weknora_") for i in ids)
+    assert len(ids) == 1
+
+
+@pytest.mark.asyncio
+async def test_push_pull_collapses_on_content_hash_only(store, monkeypatch):
+    from src.core_kernel.plugin_runtime import knowledge_sync as ks
+
+    monkeypatch.setenv("WEKNORA_BASE_URL", "http://weknora.test")
+    monkeypatch.setenv("WEKNORA_KB_ID", "kb-1")
+
+    body = "hash-only identity body"
+    digest = content_hash(body)
+    await store.upsert(
+        doc_id="file_local",
+        title="File note",
+        content=body,
+        tags="docs",
+        source="file:docs/a.md",
+        source_uri="docs/a.md",
+        workspace_id="ws1",
+        content_hash_value=digest,
+    )
+
+    async def fake_push(**kwargs):
+        return {"ok": True, "pushed": True, "kb_id": "kb-1", "knowledge_id": "r-hash"}
+
+    async def fake_list(kb_id="", **kwargs):
+        return {
+            "ok": True,
+            "kb_id": "kb-1",
+            "items": [
+                {
+                    "id": "r-hash",
+                    "title": "Remote title",
+                    "content": body,
+                    # no nlm_doc_id — content_hash / idmap must still collapse
+                }
+            ],
+        }
+
+    with patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_push_document",
+        new=fake_push,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_list_knowledge",
+        new=fake_list,
+    ), patch(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_get_knowledge",
+        new=AsyncMock(return_value={"ok": True, "content": ""}),
+    ):
+        await ks.sync_local_to_weknora(store, workspace_id="ws1", limit=10)
+        pull = await ks.sync_weknora_to_local(store, workspace_id="ws1", limit=10)
+        assert pull.get("added") == 0
+        assert pull.get("collapsed") == 1
+
+    docs = await store.list_docs(workspace_id="ws1", limit=50)
+    ids = [d["doc_id"] for d in docs]
+    assert ids == ["file_local"]
+    row = await store.get("file_local")
+    assert row and row.get("source") == "file:docs/a.md"
+    assert row.get("source_uri") == "docs/a.md"
+
+
 def test_extension_event_bus_and_active_tools(tmp_path: Path):
     reg = ExtensionRegistry()
     seen = []
@@ -253,11 +381,27 @@ def test_presets_loader():
     presets = discover_presets(None)
     names = {p.name for p in presets}
     assert "code-review" in names
+    assert "knowledge-research" in names
     p = resolve_preset(None, "code-review")
     assert p is not None
     patch = apply_preset_to_session_patch(p)
     assert patch.get("permission_preset") == "read-only"
     assert "read_file" in (patch.get("active_tools") or [])
+    kr = resolve_preset(None, "knowledge-research")
+    assert kr is not None
+    kr_patch = apply_preset_to_session_patch(kr)
+    assert "weknora_search" in (kr_patch.get("active_tools") or [])
+    assert "kb_search" in (kr_patch.get("active_tools") or [])
+    assert "weknora" in (kr_patch.get("system_prompt_append") or "").lower()
+
+
+def test_builtin_weknora_research_skill():
+    skills = discover_skills("")
+    names = {s.name for s in skills}
+    assert "weknora-research" in names
+    skill = next(s for s in skills if s.name == "weknora-research")
+    assert "weknora_search" in skill.allowed_tools
+    assert "kb_search" in skill.allowed_tools
 
 
 def test_session_tree_and_bookmarks():

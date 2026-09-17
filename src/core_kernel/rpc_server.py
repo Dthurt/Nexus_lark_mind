@@ -880,15 +880,33 @@ def create_kernel_app() -> FastAPI:
             metadata={"nlm_doc_id": doc_id} if doc_id else None,
         )
         if data.get("ok") and data.get("pushed") and doc_id:
-            await store.log_sync(
-                source="weknora_push",
-                source_uri=f"{data.get('kb_id')}:{doc_id}",
-                content_hash_value=content_hash(content),
-                status="ok",
-                message=f"pushed knowledge_id={data.get('knowledge_id') or ''}",
+            from src.core_kernel.plugin_runtime.knowledge_sync import record_weknora_push_identity
+
+            await record_weknora_push_identity(
+                store,
+                kb_id=str(data.get("kb_id") or kb_id),
+                local_doc_id=doc_id,
+                remote_id=str(data.get("knowledge_id") or ""),
+                digest=content_hash(content),
                 workspace_id=workspace_id,
+                message=f"pushed knowledge_id={data.get('knowledge_id') or ''}",
             )
         return RpcEnvelope(ok=bool(data.get("ok")), data=data)
+
+    @app.get("/rpc/knowledge/weknora/knowledge")
+    async def weknora_list_knowledge_rpc(
+        kb_id: str = "",
+        page: int = 1,
+        page_size: int = 40,
+    ):
+        from src.core_kernel.plugin_runtime.weknora_client import weknora_list_knowledge
+
+        data = await weknora_list_knowledge(
+            kb_id,
+            page=max(1, page),
+            page_size=max(1, min(page_size, 100)),
+        )
+        return RpcEnvelope(ok=bool(data.get("ok") or data.get("skipped")), data=data)
 
     @app.post("/rpc/knowledge/weknora/sync")
     async def weknora_sync_rpc(request: Request):

@@ -53,6 +53,11 @@ Right dock tab **知识库** (Command Palette → 右坞 → 知识库):
 - Edit title inline; delete with confirm
 - **同步文档** — workspace ingest + sync log strip
 - **回填向量** — when embeddings env is configured
+- Optional **远程** tab when a WeKnora KB is selected — list/search that KB via
+  `/api/knowledge/weknora/knowledge` and `/api/knowledge/weknora/search`.
+  Local SQLite remains the default tab.
+- Session chrome shows the bound WeKnora KB and active-tools count after Dock
+  select or Command Palette preset apply.
 
 ## REST (workspace-scoped)
 
@@ -70,6 +75,12 @@ Query/body may include `workspace_id` and `cwd` where relevant.
 - `POST /api/knowledge/sync/docs` — `{ cwd, workspace_id? }`
 - `POST /api/knowledge/sync/feishu` — skeleton (logs TODO; prefer paste/file first)
 - `GET /api/knowledge/sync/log`
+- `GET /api/knowledge/weknora/health`
+- `GET /api/knowledge/weknora/kbs`
+- `GET /api/knowledge/weknora/knowledge?kb_id=` — remote list (Dock 远程)
+- `POST /api/knowledge/weknora/search`
+- `POST /api/knowledge/weknora/push`
+- `POST /api/knowledge/weknora/sync`
 
 ## Workspace docs sync
 
@@ -115,7 +126,9 @@ WEKNORA_KB_ID=...            # default knowledge-base id
 | Route | Explicit `kb_id` → session `weknora_kb_id` → `WEKNORA_KB_MAP[workspace]` → `WEKNORA_KB_ID` |
 | Push | `weknora_push` / `POST /api/knowledge/weknora/push` → manual knowledge |
 | Sync | `weknora_sync` direction=`push\|pull\|both` with content_hash skip |
+| Identity | Pull matches `nlm_doc_id` / `weknora_idmap` / `content_hash` so a push+pull does not mint a second `weknora_*` row |
 | Health | `weknora_health` / Dock WeKnora strip |
+| Skill / preset | `weknora-research` skill + `knowledge-research` preset (`kb_search` → `weknora_search` → `kb_read` / `weknora_push`) |
 
 Kernel helper: `weknora_client.py`. MCP stub: `plugins_volume/mcp/weknora_http.json`.
 
