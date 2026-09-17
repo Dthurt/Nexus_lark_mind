@@ -97,6 +97,21 @@ class SessionContext:
             "inbox": [],
         }
         await self.redis.set_session(session_id, payload)
+        try:
+            from src.core_kernel.extension_runtime import emit_extension_event
+
+            emit_extension_event(
+                "session_start",
+                {
+                    "session_id": session_id,
+                    "channel": channel,
+                    "user_id": user_id,
+                    "cwd": payload.get("cwd") or "",
+                    "workspace_id": payload.get("workspace_id") or "",
+                },
+            )
+        except Exception:
+            pass
         return payload
 
     async def get_inbox(self, session_id: str) -> List[Dict[str, Any]]:
@@ -393,6 +408,12 @@ class SessionContext:
         return holder["totals"]
 
     async def clear(self, session_id: str) -> None:
+        try:
+            from src.core_kernel.extension_runtime import emit_extension_event
+
+            emit_extension_event("session_end", {"session_id": session_id})
+        except Exception:
+            pass
         await self.redis.delete_session(session_id)
 
     async def list_summaries(self) -> List[Dict[str, Any]]:

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
+  Bookmark,
   Bot,
   FileText,
   Gauge,
@@ -53,6 +54,7 @@ export type CommandPaletteProps = {
   onClearChat?: () => void;
   onForkChat?: () => void;
   onReforkChat?: () => void;
+  onBookmarkLast?: () => void;
   onInsertText?: (text: string) => void;
   onApplyPreset?: (name: string) => void;
   onClearActiveTools?: () => void;
@@ -93,6 +95,7 @@ export function CommandPalette({
   onClearChat,
   onForkChat,
   onReforkChat,
+  onBookmarkLast,
   onInsertText,
   onApplyPreset,
   onClearActiveTools,
@@ -194,6 +197,12 @@ export function CommandPalette({
             <CommandItem onSelect={() => run(onReforkChat)}>
               <RotateCcw className="mr-2 size-4" />
               回到分叉点再试（Refork）
+            </CommandItem>
+          ) : null}
+          {onBookmarkLast ? (
+            <CommandItem onSelect={() => run(onBookmarkLast)}>
+              <Bookmark className="mr-2 size-4" />
+              收藏当前会话最后一条消息
             </CommandItem>
           ) : null}
           <CommandItem onSelect={() => run(onClearChat)}>

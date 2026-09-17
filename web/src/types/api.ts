@@ -63,6 +63,12 @@ export type SessionDetail = {
   agent_mode?: "agent" | "plan" | string;
   auto_accept?: boolean;
   plan_status?: "idle" | "drafting" | "accepted" | string;
+  weknora_kb_id?: string;
+  bookmarks?: { message_index: number; label?: string }[];
+  parent_id?: string;
+  fork_point_index?: number | null;
+  active_tools?: string[] | null;
+  preset_name?: string;
 };
 
 export type Workspace = {

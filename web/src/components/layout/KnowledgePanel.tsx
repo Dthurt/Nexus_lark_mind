@@ -7,10 +7,12 @@ import {
   deleteKnowledgeDoc,
   getKnowledgeDoc,
   getKnowledgeStats,
+  getSession,
   getWeknoraHealth,
   listKnowledgeDocs,
   listKnowledgeSyncLog,
   listWeknoraKbs,
+  patchInteraction,
   patchKnowledgeDoc,
   reindexKnowledge,
   searchKnowledge,
@@ -30,12 +32,14 @@ import { cn } from "@/lib/utils";
 export type KnowledgePanelProps = {
   cwd?: string;
   workspaceId?: string;
+  sessionId?: string;
   className?: string;
 };
 
 export function KnowledgePanel({
   cwd = "",
   workspaceId = "",
+  sessionId = "",
   className,
 }: KnowledgePanelProps) {
   const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
@@ -76,7 +80,23 @@ export function KnowledgePanel({
         if (health?.configured && !health?.skipped) {
           const kbs = await listWeknoraKbs(40);
           setWkKbs(kbs.knowledge_bases || []);
-          setWkKbId((prev) => prev || kbs.default_kb_id || kbs.knowledge_bases?.[0]?.id || "");
+          let sessionKb = "";
+          if (sessionId) {
+            try {
+              const sess = await getSession(sessionId);
+              sessionKb = String(sess?.weknora_kb_id || "").trim();
+            } catch {
+              /* ignore */
+            }
+          }
+          setWkKbId(
+            (prev) =>
+              sessionKb ||
+              prev ||
+              kbs.default_kb_id ||
+              kbs.knowledge_bases?.[0]?.id ||
+              "",
+          );
         } else {
           setWkKbs([]);
         }
@@ -88,7 +108,18 @@ export function KnowledgePanel({
     } finally {
       setLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, sessionId]);
+
+  const onSelectWeknoraKb = async (kbId: string) => {
+    setWkKbId(kbId);
+    if (!sessionId || !kbId) return;
+    try {
+      await patchInteraction(sessionId, { weknora_kb_id: kbId });
+      toast.success("已绑定会话 WeKnora KB");
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "绑定 KB 失败"));
+    }
+  };
 
   const onWeknoraSync = async () => {
     setWkSyncing(true);
@@ -330,8 +361,8 @@ export function KnowledgePanel({
               <select
                 className="h-6 max-w-[140px] rounded border border-border bg-background px-1 text-[11px]"
                 value={wkKbId}
-                onChange={(e) => setWkKbId(e.target.value)}
-                title="目标知识库"
+                onChange={(e) => void onSelectWeknoraKb(e.target.value)}
+                title="目标知识库（同步 + 绑定当前会话）"
               >
                 {wkKbs.map((kb) => (
                   <option key={kb.id} value={kb.id}>

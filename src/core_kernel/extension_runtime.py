@@ -11,7 +11,7 @@ Each module may define:
       api.register_tool(...)
       api.register_command(...)
 
-Lifecycle events (emitted by agent runner / hooks):
+Lifecycle events (emitted by agent runner / SessionContext / hooks):
   session_start, session_end, before_agent_start, after_agent_turn,
   tool_call, tool_result, model_request, model_response,
   user_message, compaction

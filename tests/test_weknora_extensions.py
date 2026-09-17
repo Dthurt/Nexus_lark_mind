@@ -345,6 +345,39 @@ def test_extension_after_agent_events():
     get_extension_registry().reset()
 
 
+@pytest.mark.asyncio
+async def test_session_start_end_events(monkeypatch):
+    """P0: session_start / session_end must fire from SessionContext lifecycle."""
+    from src.agent_orchestrator.session_context import SessionContext
+    from src.core_kernel.extension_runtime import get_extension_registry
+
+    get_extension_registry().reset()
+    seen: list[str] = []
+    get_extension_registry().bus.on("session_start", lambda ctx: seen.append("start:" + str(ctx.get("session_id"))))
+    get_extension_registry().bus.on("session_end", lambda ctx: seen.append("end:" + str(ctx.get("session_id"))))
+
+    class FakeRedis:
+        def __init__(self):
+            self._store = {}
+
+        async def get_session(self, sid):
+            return self._store.get(sid)
+
+        async def set_session(self, sid, payload):
+            self._store[sid] = dict(payload)
+            return self._store[sid]
+
+        async def delete_session(self, sid):
+            self._store.pop(sid, None)
+
+    ctx = SessionContext(FakeRedis())  # type: ignore[arg-type]
+    await ctx.ensure("s-new", user_id="u", channel="web")
+    await ctx.ensure("s-new", user_id="u", channel="web")  # existing → no second start
+    await ctx.clear("s-new")
+    assert seen == ["start:s-new", "end:s-new"]
+    get_extension_registry().reset()
+
+
 def test_filter_openai_tools_active_subset():
     from src.core_kernel.agent_runner import _filter_openai_tools
 

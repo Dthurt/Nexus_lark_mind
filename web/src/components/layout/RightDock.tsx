@@ -418,7 +418,11 @@ export function RightDock({
                   />
                 )}
                 {kind === "knowledge" && (
-                  <KnowledgePanel cwd={cwd} workspaceId={workspaceId} />
+                  <KnowledgePanel
+                    cwd={cwd}
+                    workspaceId={workspaceId}
+                    sessionId={sessionId}
+                  />
                 )}
                 {kind === "teams" && <TeamsPanel teamId={teamId} />}
                 {kind === "delivery" && delivery ? (

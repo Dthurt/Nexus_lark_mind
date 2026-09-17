@@ -12,7 +12,7 @@ import {
   TrajectoryView,
   type TrajectoryRow,
 } from "@/components/trajectory/TrajectoryView";
-import { gitInfo, getPluginCalls, deleteSession as apiDeleteSession, patchInteraction } from "@/api/endpoints";
+import { gitInfo, getPluginCalls, deleteSession as apiDeleteSession, patchInteraction, addSessionBookmark, getSession } from "@/api/endpoints";
 import { useChatActions } from "@/hooks/useChatActions";
 import { useChatStream } from "@/hooks/useChatStream";
 import { useChatTimeline } from "@/hooks/useChatTimeline";
@@ -854,6 +854,25 @@ export function WorkbenchPage({
               toast.success("已从分叉点重新开枝");
             } catch (err: any) {
               toast.error(String(err?.message || err || "回到分叉点失败"));
+            }
+          })();
+        }}
+        onBookmarkLast={() => {
+          void (async () => {
+            try {
+              const sess = await getSession(sessionId);
+              const count = Array.isArray(sess?.messages) ? sess.messages.length : 0;
+              if (count < 1) {
+                toast.error("当前会话没有可收藏的消息");
+                return;
+              }
+              await addSessionBookmark(sessionId, {
+                message_index: count - 1,
+                label: "bookmark",
+              });
+              toast.success(`已收藏消息 #${count - 1}`);
+            } catch (err: any) {
+              toast.error(String(err?.message || err || "收藏失败"));
             }
           })();
         }}
