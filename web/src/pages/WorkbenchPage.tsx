@@ -12,7 +12,7 @@ import {
   TrajectoryView,
   type TrajectoryRow,
 } from "@/components/trajectory/TrajectoryView";
-import { gitInfo, getPluginCalls, deleteSession as apiDeleteSession } from "@/api/endpoints";
+import { gitInfo, getPluginCalls, deleteSession as apiDeleteSession, patchInteraction } from "@/api/endpoints";
 import { useChatActions } from "@/hooks/useChatActions";
 import { useChatStream } from "@/hooks/useChatStream";
 import { useChatTimeline } from "@/hooks/useChatTimeline";
@@ -98,6 +98,7 @@ export function WorkbenchPage({
     switchTo,
     deleteConversation,
     forkCurrent,
+    reforkCurrent,
   } = useSessions();
 
   const canvas = useCanvasSession(sessionId);
@@ -831,6 +832,8 @@ export function WorkbenchPage({
         onOpenChange={commandPalette.setOpen}
         conversations={conversations}
         cwd={cwd}
+        workspaceId={workspaceId}
+        sessionId={sessionId}
         onNewChat={startNewConversation}
         onSelectChat={(id) => void switchConversation(id)}
         onClearChat={() => void clearSession()}
@@ -844,9 +847,39 @@ export function WorkbenchPage({
             }
           })();
         }}
+        onReforkChat={() => {
+          void (async () => {
+            try {
+              await reforkCurrent();
+              toast.success("已从分叉点重新开枝");
+            } catch (err: any) {
+              toast.error(String(err?.message || err || "回到分叉点失败"));
+            }
+          })();
+        }}
         onInsertText={(text) => {
           const cur = actions.input || "";
           actions.setInput(cur.trim() ? `${cur.trim()}\n${text}` : text);
+        }}
+        onApplyPreset={(name) => {
+          void (async () => {
+            try {
+              await patchInteraction(sessionId, { preset_name: name, cwd: cwd || undefined });
+              toast.success(`已应用预设 ${name}`);
+            } catch (err: any) {
+              toast.error(String(err?.message || err || "预设应用失败"));
+            }
+          })();
+        }}
+        onClearActiveTools={() => {
+          void (async () => {
+            try {
+              await patchInteraction(sessionId, { clear_active_tools: true });
+              toast.success("已清除工具收敛");
+            } catch (err: any) {
+              toast.error(String(err?.message || err || "清除失败"));
+            }
+          })();
         }}
         onSetCenterView={setCenterView}
         onToggleCanvas={canvas.togglePane}

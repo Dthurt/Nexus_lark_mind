@@ -507,11 +507,47 @@ async def _run_agent_stream_inner(
             "tool_count": len(openai_tools),
         },
     )
+    # Surface active-tool subset in trajectory for auditability
+    if active_tools:
+        yield {
+            "delta": "",
+            "done": False,
+            "notice": f"active tools ({len(active_tools)}): {', '.join(active_tools[:24])}",
+            "notice_kind": "active_tools",
+            "active_tools": list(active_tools),
+        }
+
+    # Latest user message → extension bus
+    for m in reversed(working):
+        role = getattr(m, "role", None)
+        role_s = role.value if hasattr(role, "value") else str(role or "")
+        if role_s == "user":
+            emit_extension_event(
+                "user_message",
+                {
+                    "session_id": parent_session_id,
+                    "content": str(getattr(m, "content", "") or "")[:4000],
+                },
+            )
+            break
 
     def _stamp_usage() -> Dict[str, Any]:
         out = dict(usage_total)
         out["duration_ms"] = (time.perf_counter() - turn_started) * 1000
         return out
+
+    def _finish_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
+        emit_extension_event(
+            "after_agent_turn",
+            {
+                "session_id": parent_session_id,
+                "error": payload.get("error"),
+                "cancelled": payload.get("cancelled"),
+                "usage": payload.get("usage"),
+                "active_tools": active_tools,
+            },
+        )
+        return payload
 
     def _refresh_tools() -> None:
         nonlocal openai_tools, tool_map, active_tools
@@ -528,14 +564,16 @@ async def _run_agent_stream_inner(
 
     for round_i in range(max_rounds):
         if cancel_event and cancel_event.is_set():
-            yield {
-                "delta": "",
-                "done": True,
-                "content": last_collected,
-                "usage": _stamp_usage(),
-                "error": "interrupted",
-                "cancelled": True,
-            }
+            yield _finish_turn(
+                {
+                    "delta": "",
+                    "done": True,
+                    "content": last_collected,
+                    "usage": _stamp_usage(),
+                    "error": "interrupted",
+                    "cancelled": True,
+                }
+            )
             return
 
         # Mid-turn steer: claim inbox steers before each model step.
@@ -599,6 +637,7 @@ async def _run_agent_stream_inner(
             from src.core_kernel.compaction_ledger import make_compaction_entry, notice_from_info
 
             entry = make_compaction_entry(compact_info)
+            emit_extension_event("compaction", {"session_id": parent_session_id, **entry})
             yield {
                 "delta": "",
                 "done": False,
@@ -704,14 +743,16 @@ async def _run_agent_stream_inner(
             break
 
         if cancel_event and cancel_event.is_set():
-            yield {
-                "delta": "",
-                "done": True,
-                "content": collected or last_collected,
-                "usage": _stamp_usage(),
-                "error": "interrupted",
-                "cancelled": True,
-            }
+            yield _finish_turn(
+                {
+                    "delta": "",
+                    "done": True,
+                    "content": collected or last_collected,
+                    "usage": _stamp_usage(),
+                    "error": "interrupted",
+                    "cancelled": True,
+                }
+            )
             return
 
         last_collected = collected
@@ -743,7 +784,7 @@ async def _run_agent_stream_inner(
             }
             if agent_mode == "plan" and (collected or "").strip():
                 out["plan_ready"] = True
-            yield out
+            yield _finish_turn(out)
             return
 
         working.append(
@@ -1309,13 +1350,15 @@ async def _run_agent_stream_inner(
             yield {"delta": chunk.content, "done": False}
         if chunk.usage:
             usage_total = _add_usage(usage_total, _extract_usage(chunk.usage))
-    yield {
-        "delta": "",
-        "done": True,
-        "content": collected or last_collected,
-        "usage": _stamp_usage(),
-        "error": "tool loop exceeded max rounds",
-    }
+    yield _finish_turn(
+        {
+            "delta": "",
+            "done": True,
+            "content": collected or last_collected,
+            "usage": _stamp_usage(),
+            "error": "tool loop exceeded max rounds",
+        }
+    )
 
 
 async def _execute_subagent_tool(

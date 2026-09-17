@@ -865,6 +865,31 @@ class KnowledgeStore:
                 for r in rows
             ]
 
+    async def latest_sync_hash(
+        self,
+        *,
+        source: str,
+        source_uri: str,
+        workspace_id: str = "",
+        status: str = "ok",
+    ) -> Optional[str]:
+        """Return content_hash of the newest matching sync log row, if any."""
+        async with self.session_factory() as session:
+            stmt = (
+                select(KnowledgeSyncLog)
+                .where(KnowledgeSyncLog.source == (source or ""))
+                .where(KnowledgeSyncLog.source_uri == (source_uri or ""))
+                .where(KnowledgeSyncLog.status == (status or "ok"))
+                .order_by(KnowledgeSyncLog.created_at.desc())
+                .limit(1)
+            )
+            if workspace_id:
+                stmt = stmt.where(KnowledgeSyncLog.workspace_id == workspace_id)
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if not row:
+                return None
+            return str(row.content_hash or "") or None
+
     @staticmethod
     def _snippet(content: str, tokens: List[str], radius: int = SNIPPET_RADIUS) -> str:
         lower = content.lower()

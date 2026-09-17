@@ -827,6 +827,8 @@ def create_kernel_app() -> FastAPI:
             limit=int(body.get("limit") or 5),
             kb_id=str(body.get("kb_id") or ""),
             kb_ids=body.get("kb_ids") if isinstance(body.get("kb_ids"), list) else None,
+            workspace_id=str(body.get("workspace_id") or ""),
+            session_kb_id=str(body.get("weknora_kb_id") or ""),
         )
         return RpcEnvelope(ok=True, data=data)
 
@@ -864,6 +866,7 @@ def create_kernel_app() -> FastAPI:
             title=title or "untitled",
             content=content,
             kb_id=kb_id,
+            workspace_id=workspace_id,
             metadata={"nlm_doc_id": doc_id} if doc_id else None,
         )
         if data.get("ok") and data.get("pushed") and doc_id:

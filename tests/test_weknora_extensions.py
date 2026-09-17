@@ -284,6 +284,67 @@ def test_session_tree_and_bookmarks():
     assert marks == []
 
 
+def test_resolve_weknora_kb_routing(monkeypatch):
+    from src.core_kernel.plugin_runtime import weknora_client as wc
+
+    monkeypatch.setenv("WEKNORA_KB_ID", "global-kb")
+    monkeypatch.setenv("WEKNORA_KB_MAP", "ws-a=kb-a,ws-b=kb-b")
+    assert wc.resolve_weknora_kb_id(kb_id="explicit") == "explicit"
+    assert wc.resolve_weknora_kb_id(session_kb_id="sess-kb") == "sess-kb"
+    assert wc.resolve_weknora_kb_id(workspace_id="ws-a") == "kb-a"
+    assert wc.resolve_weknora_kb_id(workspace_id="unknown") == "global-kb"
+    monkeypatch.setenv("WEKNORA_KB_MAP", '{"ws-x":"kb-x"}')
+    assert wc.resolve_weknora_kb_id(workspace_id="ws-x") == "kb-x"
+
+
+@pytest.mark.asyncio
+async def test_latest_sync_hash_skip(store):
+    await store.log_sync(
+        source="weknora_push",
+        source_uri="kb-1:local1",
+        content_hash_value="abc123",
+        status="ok",
+        workspace_id="ws1",
+    )
+    h = await store.latest_sync_hash(
+        source="weknora_push",
+        source_uri="kb-1:local1",
+        workspace_id="ws1",
+    )
+    assert h == "abc123"
+    assert (
+        await store.latest_sync_hash(
+            source="weknora_push", source_uri="kb-1:missing", workspace_id="ws1"
+        )
+        is None
+    )
+
+
+def test_fork_point_for_refork():
+    from src.core_kernel.session_tree import fork_point_for_refork
+
+    assert fork_point_for_refork({"session_id": "a"}) is None
+    point = fork_point_for_refork(
+        {"session_id": "b", "parent_id": "a", "fork_point_index": 4, "title": "Try B"}
+    )
+    assert point["parent_id"] == "a"
+    assert point["fork_point_index"] == 4
+
+
+def test_extension_after_agent_events():
+    from src.core_kernel.extension_runtime import emit_extension_event, get_extension_registry
+
+    get_extension_registry().reset()
+    seen = []
+    get_extension_registry().bus.on("after_agent_turn", lambda ctx: seen.append(ctx.get("event")))
+    get_extension_registry().bus.on("compaction", lambda ctx: seen.append("compaction"))
+    emit_extension_event("after_agent_turn", {"session_id": "s1"})
+    emit_extension_event("compaction", {"via": "llm"})
+    assert "after_agent_turn" in seen
+    assert "compaction" in seen
+    get_extension_registry().reset()
+
+
 def test_filter_openai_tools_active_subset():
     from src.core_kernel.agent_runner import _filter_openai_tools
 

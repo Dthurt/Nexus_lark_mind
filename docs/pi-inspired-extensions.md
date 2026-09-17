@@ -88,7 +88,12 @@ POST /api/sessions/{id}/bookmarks   { "message_index": 5, "label": "decision" }
 DELETE /api/sessions/{id}/bookmarks/{message_index}
 ```
 
-Web: Command Palette → **从此会话分叉**.
+Web: Command Palette → **从此会话分叉** / **会话树** (when forks exist) /
+**回到分叉点再试**. Bookmarks via API; tree nodes show bookmark counts.
+
+```http
+POST /api/sessions/{id}/refork   # new sibling under same parent at fork_point
+```
 
 ## Prompt templates
 
@@ -98,6 +103,7 @@ plugins_volume/prompts/<name>.md
 ```
 
 Slash expansion in chat: `/review src/app.py` → full prompt body with `$FILE` filled.
+Command Palette → **Prompt 模板** lists templates and inserts `/name $VARS`.
 
 ```http
 GET /api/prompts?cwd=
@@ -118,6 +124,9 @@ Fields: `model`, `provider`, `permission_preset`, `reasoning_effort`,
 `active_tools`, `system_prompt_append`.
 
 Built-ins: `code-review`, `quick-ask`, `docs-write`.
+
+Command Palette → **预设 Presets** applies via interaction patch (tools + permission).
+**清除工具收敛** clears session `active_tools`.
 
 ```http
 GET /api/presets?cwd=

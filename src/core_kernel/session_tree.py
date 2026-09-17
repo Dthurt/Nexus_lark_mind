@@ -101,3 +101,23 @@ def lineage_ids(session: Dict[str, Any], lookup) -> List[str]:
             break
         cur = lookup(parent)
     return chain
+
+
+def fork_point_for_refork(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Describe how to re-fork from this session's fork point.
+
+    Returns {parent_id, fork_point_index, title_hint} or None if not a fork child.
+    """
+    parent = str(session.get("parent_id") or session.get("forked_from") or "").strip()
+    if not parent:
+        return None
+    idx = session.get("fork_point_index")
+    try:
+        fork_idx = int(idx) if idx is not None else None
+    except (TypeError, ValueError):
+        fork_idx = None
+    return {
+        "parent_id": parent,
+        "fork_point_index": fork_idx,
+        "title_hint": f"Retry from {(session.get('title') or 'fork')}",
+    }

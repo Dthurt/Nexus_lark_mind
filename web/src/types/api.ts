@@ -335,6 +335,15 @@ export type InteractionPatchBody = {
   plan_enforcement?: "hard" | "soft" | string;
   experience_tier?: "fast" | "balanced" | "high" | string;
   reasoning_effort?: "low" | "medium" | "high" | string;
+  model_provider?: string;
+  model_name?: string;
+  active_tools?: string[] | null;
+  clear_active_tools?: boolean;
+  preset_name?: string;
+  system_prompt_append?: string;
+  cwd?: string;
+  weknora_kb_id?: string;
+  clear_weknora_kb_id?: boolean;
 };
 
 export type WorkspacePatchBody = {

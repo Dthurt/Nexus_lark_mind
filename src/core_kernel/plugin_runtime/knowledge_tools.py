@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from src.common.errors import PluginError
@@ -36,6 +36,23 @@ WEKNORA_TOOLS: List[Dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {"limit": {"type": "integer", "default": 50}},
+        },
+    },
+    {
+        "name": "weknora_search",
+        "description": (
+            "Search a remote WeKnora knowledge base when WEKNORA_BASE_URL is set. "
+            "Prefer local kb_search first. Pass kb_id to target a specific remote KB "
+            "(use weknora_list_kbs). Session/workspace routing applies when kb_id omitted."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 5},
+                "kb_id": {"type": "string"},
+            },
+            "required": ["query"],
         },
     },
     {
@@ -325,15 +342,29 @@ class KnowledgeToolsPlugin(BasePlugin):
             from src.core_kernel.plugin_runtime.weknora_client import weknora_health
 
             return await weknora_health()
+        if tool_name == "weknora_search":
+            from src.core_kernel.plugin_runtime.weknora_client import weknora_search
+
+            q = str(arguments.get("query") or "").strip()
+            if not q:
+                raise PluginError("query required")
+            return await weknora_search(
+                q,
+                limit=int(arguments.get("limit") or 5),
+                kb_id=str(arguments.get("kb_id") or ""),
+                workspace_id=ws,
+                session_kb_id=str(meta.get("weknora_kb_id") or ""),
+            )
         if tool_name == "weknora_push":
-            return await self._weknora_push(store, arguments, ws)
+            return await self._weknora_push(store, arguments, ws, meta)
         if tool_name == "weknora_sync":
             doc_ids = arguments.get("doc_ids")
             ids = [str(x) for x in doc_ids] if isinstance(doc_ids, list) else None
+            kb = str(arguments.get("kb_id") or meta.get("weknora_kb_id") or "")
             return await sync_weknora_bidirectional(
                 store,
                 workspace_id=ws,
-                kb_id=str(arguments.get("kb_id") or ""),
+                kb_id=kb,
                 direction=str(arguments.get("direction") or "both"),
                 limit=int(arguments.get("limit") or 40),
                 doc_ids=ids,
@@ -341,14 +372,20 @@ class KnowledgeToolsPlugin(BasePlugin):
         raise PluginError(f"unknown knowledge tool: {tool_name}")
 
     async def _weknora_push(
-        self, store: KnowledgeStore, arguments: Dict[str, Any], workspace_id: str
+        self,
+        store: KnowledgeStore,
+        arguments: Dict[str, Any],
+        workspace_id: str,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> Any:
         from src.core_kernel.plugin_runtime.weknora_client import weknora_push_document
 
+        meta = meta or {}
         doc_id = str(arguments.get("doc_id") or "").strip()
         title = str(arguments.get("title") or "").strip()
         content = str(arguments.get("content") or "")
-        kb_id = str(arguments.get("kb_id") or "").strip()
+        kb_id = str(arguments.get("kb_id") or meta.get("weknora_kb_id") or "").strip()
+        session_kb = str(meta.get("weknora_kb_id") or "")
         if doc_id:
             row = await store.get(doc_id)
             if not row:
@@ -359,6 +396,8 @@ class KnowledgeToolsPlugin(BasePlugin):
                 title=title,
                 content=content,
                 kb_id=kb_id,
+                workspace_id=workspace_id,
+                session_kb_id=session_kb,
                 metadata={
                     "nlm_doc_id": doc_id,
                     "nlm_source": str(row.get("source") or ""),
@@ -379,7 +418,13 @@ class KnowledgeToolsPlugin(BasePlugin):
             raise PluginError("content or doc_id required")
         if not title:
             title = "untitled"
-        return await weknora_push_document(title=title, content=content, kb_id=kb_id)
+        return await weknora_push_document(
+            title=title,
+            content=content,
+            kb_id=kb_id,
+            workspace_id=workspace_id,
+            session_kb_id=session_kb,
+        )
 
     async def _kb_add(
         self, store: KnowledgeStore, arguments: Dict[str, Any], workspace_id: str

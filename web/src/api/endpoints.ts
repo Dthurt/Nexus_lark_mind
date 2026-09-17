@@ -144,6 +144,89 @@ export function listSkills(cwd: string): Promise<{
   return apiGet(`/api/skills?${q.toString()}`);
 }
 
+export function listPrompts(cwd = ""): Promise<{
+  prompts: {
+    name: string;
+    description: string;
+    path: string;
+    variables?: string[];
+    slash?: string;
+  }[];
+}> {
+  const q = new URLSearchParams();
+  if (cwd) q.set("cwd", cwd);
+  const qs = q.toString();
+  return apiGet(`/api/prompts${qs ? `?${qs}` : ""}`);
+}
+
+export function listPresets(cwd = ""): Promise<{
+  presets: {
+    name: string;
+    description: string;
+    path: string;
+    permission_preset?: string;
+    reasoning_effort?: string;
+    active_tools?: string[] | null;
+    model?: string;
+    provider?: string;
+  }[];
+}> {
+  const q = new URLSearchParams();
+  if (cwd) q.set("cwd", cwd);
+  const qs = q.toString();
+  return apiGet(`/api/presets${qs ? `?${qs}` : ""}`);
+}
+
+export type SessionTreeNode = {
+  session_id: string;
+  title?: string;
+  parent_id?: string | null;
+  fork_point_index?: number | null;
+  updated_at?: string;
+  bookmarks?: { message_index: number; label?: string }[];
+  children?: SessionTreeNode[];
+};
+
+export function getSessionTree(workspaceId = ""): Promise<{
+  roots: SessionTreeNode[];
+  node_count?: number;
+  root_count?: number;
+}> {
+  const q = new URLSearchParams();
+  if (workspaceId) q.set("workspace_id", workspaceId);
+  const qs = q.toString();
+  return apiGet(`/api/sessions/tree${qs ? `?${qs}` : ""}`);
+}
+
+export function reforkSession(
+  sessionId: string,
+  body: { title?: string } = {},
+): Promise<SessionDetail> {
+  return apiPost<SessionDetail>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/refork`,
+    body,
+  );
+}
+
+export function addSessionBookmark(
+  sessionId: string,
+  body: { message_index: number; label?: string },
+): Promise<{ bookmarks?: { message_index: number; label?: string }[] }> {
+  return apiPost(
+    `/api/sessions/${encodeURIComponent(sessionId)}/bookmarks`,
+    body,
+  );
+}
+
+export function deleteSessionBookmark(
+  sessionId: string,
+  messageIndex: number,
+): Promise<{ bookmarks?: { message_index: number; label?: string }[] }> {
+  return apiDelete(
+    `/api/sessions/${encodeURIComponent(sessionId)}/bookmarks/${messageIndex}`,
+  );
+}
+
 export function deleteSession(sessionId: string): Promise<unknown> {
   return apiDelete(`/api/sessions/${encodeURIComponent(sessionId)}`);
 }

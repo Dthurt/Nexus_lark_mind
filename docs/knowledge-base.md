@@ -36,7 +36,10 @@ Documents are split on headings / blank lines into ~512-character chunks with ~1
 | `kb_add` | Paste content **or** `path` (`.md/.txt/.rst/.pdf`) → `source=file:...` |
 | `kb_sync_docs` | Scan workspace docs with `content_hash` upsert |
 | `kb_stats` / `kb_reindex` | Counts + hybrid readiness; backfill missing embeddings |
-| `weknora_search` | Optional remote (CLI) when `WEKNORA_BASE_URL` is set |
+| `weknora_search` | Optional remote search (`kb_id` / session / `WEKNORA_KB_MAP`) |
+| `weknora_list_kbs` | List remote knowledge bases |
+| `weknora_push` / `weknora_sync` | Push doc or bidirectional sync (content_hash) |
+| `weknora_health` | Connectivity / latency probe |
 
 System prompt: search → read before answering; cite `source_uri` / citation like web_search.
 
@@ -100,14 +103,16 @@ bidirectionally sync** with WeKnora.
 WEKNORA_BASE_URL=http://127.0.0.1:8080
 WEKNORA_API_KEY=...          # X-API-Key + Bearer
 WEKNORA_KB_ID=...            # default knowledge-base id
+# WEKNORA_KB_MAP=ws-a=kb-1,ws-b=kb-2   # workspace → KB routing
 # WEKNORA_SEARCH_PATH=       # optional legacy override
 # WEKNORA_INGEST_ENABLED=1   # set 0 to disable push/sync write
 ```
 
 | Capability | How |
 |------------|-----|
-| Search | Prefer `POST /api/v1/knowledge-search`; CLI `weknora_search` (+ `kb_id`) |
-| Multi-KB | `weknora_list_kbs` / `GET /api/knowledge/weknora/kbs` |
+| Search | Prefer `POST /api/v1/knowledge-search`; tool `weknora_search` (+ `kb_id`) |
+| Multi-KB | `weknora_list_kbs` / `GET /api/knowledge/weknora/kbs`; Dock KB picker |
+| Route | Explicit `kb_id` → session `weknora_kb_id` → `WEKNORA_KB_MAP[workspace]` → `WEKNORA_KB_ID` |
 | Push | `weknora_push` / `POST /api/knowledge/weknora/push` → manual knowledge |
 | Sync | `weknora_sync` direction=`push\|pull\|both` with content_hash skip |
 | Health | `weknora_health` / Dock WeKnora strip |

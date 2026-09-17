@@ -398,6 +398,8 @@ def create_orchestrator_app() -> FastAPI:
                 preset_name=body.get("preset_name"),
                 system_prompt_append=body.get("system_prompt_append"),
                 cwd_for_preset=str(body.get("cwd") or "").strip() or None,
+                weknora_kb_id=body.get("weknora_kb_id") if "weknora_kb_id" in body else None,
+                clear_weknora_kb_id=bool(body.get("clear_weknora_kb_id")),
             )
         except ValueError as exc:
             from src.common.errors import ValidationAppError
@@ -475,6 +477,82 @@ def create_orchestrator_app() -> FastAPI:
 
         data = await sessions.redis.update_session(session_id, _mutate, preserve_messages=True)
         return RpcEnvelope(ok=True, data={"bookmarks": data.get("bookmarks") or []})
+
+    @app.post("/rpc/sessions/{session_id}/refork")
+    async def refork_session(session_id: str, request: Request):
+        """Re-fork from this session's fork point (new sibling under the same parent)."""
+        from src.core_kernel.session_tree import fork_point_for_refork
+
+        sessions: SessionContext = state["sessions"]
+        body = await request.json() if request.headers.get("content-length") not in (None, "0") else {}
+        if not isinstance(body, dict):
+            body = {}
+        current = await sessions.redis.get_session(session_id)
+        if not current:
+            from src.common.errors import NotFoundError
+
+            raise NotFoundError(session_id)
+        point = fork_point_for_refork(current)
+        if not point:
+            from src.common.errors import ValidationAppError
+
+            raise ValidationAppError("session is not a fork child — nothing to refork from")
+        parent_id = str(point["parent_id"])
+        parent = await sessions.redis.get_session(parent_id)
+        if not parent:
+            from src.common.errors import NotFoundError
+
+            raise NotFoundError(parent_id)
+        # Delegate to the same fork logic by crafting until_index
+        fork_idx = point.get("fork_point_index")
+        from src.common.schemas import new_id
+
+        new_sid = str(body.get("session_id") or "").strip() or new_id("web_")
+        messages = list(parent.get("messages") or [])
+        if fork_idx is not None:
+            try:
+                idx = int(fork_idx)
+                if idx >= 0:
+                    messages = messages[: idx + 1]
+            except (TypeError, ValueError):
+                pass
+        seeded = [m for m in messages if isinstance(m, dict)]
+        await sessions.ensure(
+            new_sid,
+            user_id=str(body.get("user_id") or parent.get("user_id") or "web-user"),
+            channel=str(body.get("channel") or parent.get("channel") or "web"),
+            cwd=str(parent.get("cwd") or "").strip() or None,
+            workspace_id=str(parent.get("workspace_id") or "").strip() or None,
+            workspace_title=str(parent.get("workspace_title") or "").strip() or None,
+            workspace_kind=str(parent.get("workspace_kind") or "").strip() or None,
+            ssh_host_id=str(parent.get("ssh_host_id") or "").strip() or None,
+        )
+
+        def _seed(sess: dict) -> None:
+            sess["messages"] = seeded
+            sess["forked_from"] = parent_id
+            sess["parent_id"] = parent_id
+            sess["fork_point_index"] = (
+                int(fork_idx) if fork_idx is not None else max(0, len(seeded) - 1)
+            )
+            sess["title"] = str(
+                body.get("title") or point.get("title_hint") or f"Retry of {current.get('title') or session_id}"
+            )[:80]
+            for key in (
+                "agent_mode",
+                "auto_accept",
+                "permission_preset",
+                "plan_enforcement",
+                "experience_tier",
+                "reasoning_effort",
+                "active_tools",
+                "preset_name",
+            ):
+                if key in parent and parent[key] is not None:
+                    sess[key] = parent[key]
+
+        child = await sessions.redis.update_session(new_sid, _seed, preserve_messages=False)
+        return RpcEnvelope(ok=True, data=child)
 
     @app.delete("/rpc/sessions/{session_id}")
     async def delete_session(session_id: str):

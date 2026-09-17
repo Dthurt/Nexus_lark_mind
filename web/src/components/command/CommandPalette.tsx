@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
   Bot,
+  FileText,
   Gauge,
   GitFork,
+  GitBranch,
   History,
   LayoutTemplate,
   MessageSquare,
   Moon,
   Plus,
   Puzzle,
+  RotateCcw,
   Search,
   Settings,
   Sparkles,
@@ -27,7 +30,13 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
-import { listSkills } from "@/api/endpoints";
+import {
+  getSessionTree,
+  listPresets,
+  listPrompts,
+  listSkills,
+  type SessionTreeNode,
+} from "@/api/endpoints";
 import type { CenterViewId } from "@/components/layout/ViewRing";
 import type { LocalConversation } from "@/hooks/useSessions";
 import { cycleTheme } from "@/hooks/useTheme";
@@ -37,11 +46,16 @@ export type CommandPaletteProps = {
   onOpenChange: (open: boolean) => void;
   conversations?: Pick<LocalConversation, "id" | "title">[];
   cwd?: string;
+  workspaceId?: string;
+  sessionId?: string;
   onNewChat?: () => void;
   onSelectChat?: (id: string) => void;
   onClearChat?: () => void;
   onForkChat?: () => void;
+  onReforkChat?: () => void;
   onInsertText?: (text: string) => void;
+  onApplyPreset?: (name: string) => void;
+  onClearActiveTools?: () => void;
   onSetCenterView?: (view: CenterViewId) => void;
   onToggleCanvas?: () => void;
   onNewCanvas?: () => void;
@@ -53,16 +67,35 @@ export type CommandPaletteProps = {
   onCycleTheme?: () => void;
 };
 
+function flattenTree(
+  nodes: SessionTreeNode[],
+  depth = 0,
+): { node: SessionTreeNode; depth: number }[] {
+  const out: { node: SessionTreeNode; depth: number }[] = [];
+  for (const n of nodes) {
+    out.push({ node: n, depth });
+    if (n.children?.length) {
+      out.push(...flattenTree(n.children, depth + 1));
+    }
+  }
+  return out;
+}
+
 export function CommandPalette({
   open,
   onOpenChange,
   conversations = [],
   cwd = "",
+  workspaceId = "",
+  sessionId = "",
   onNewChat,
   onSelectChat,
   onClearChat,
   onForkChat,
+  onReforkChat,
   onInsertText,
+  onApplyPreset,
+  onClearActiveTools,
   onSetCenterView,
   onToggleCanvas,
   onNewCanvas,
@@ -75,24 +108,66 @@ export function CommandPalette({
   const [skills, setSkills] = useState<
     { name: string; description: string; path: string }[]
   >([]);
+  const [prompts, setPrompts] = useState<
+    { name: string; description: string; slash?: string; variables?: string[] }[]
+  >([]);
+  const [presets, setPresets] = useState<
+    {
+      name: string;
+      description: string;
+      active_tools?: string[] | null;
+      permission_preset?: string;
+    }[]
+  >([]);
+  const [treeRows, setTreeRows] = useState<{ node: SessionTreeNode; depth: number }[]>(
+    [],
+  );
 
   useEffect(() => {
-    if (!open || !cwd) {
+    if (!open) {
       setSkills([]);
+      setPrompts([]);
+      setPresets([]);
+      setTreeRows([]);
       return;
     }
     let cancelled = false;
-    void listSkills(cwd)
+    void listSkills(cwd || "")
       .then((data) => {
         if (!cancelled) setSkills(data.skills || []);
       })
       .catch(() => {
         if (!cancelled) setSkills([]);
       });
+    void listPrompts(cwd || "")
+      .then((data) => {
+        if (!cancelled) setPrompts(data.prompts || []);
+      })
+      .catch(() => {
+        if (!cancelled) setPrompts([]);
+      });
+    void listPresets(cwd || "")
+      .then((data) => {
+        if (!cancelled) setPresets(data.presets || []);
+      })
+      .catch(() => {
+        if (!cancelled) setPresets([]);
+      });
+    void getSessionTree(workspaceId || "")
+      .then((data) => {
+        if (cancelled) return;
+        const flat = flattenTree(data.roots || []);
+        // Only show tree strip when there is at least one fork edge
+        const hasFork = flat.some((r) => r.depth > 0);
+        setTreeRows(hasFork ? flat.slice(0, 24) : []);
+      })
+      .catch(() => {
+        if (!cancelled) setTreeRows([]);
+      });
     return () => {
       cancelled = true;
     };
-  }, [open, cwd]);
+  }, [open, cwd, workspaceId]);
 
   const run = (fn?: () => void) => {
     fn?.();
@@ -101,7 +176,7 @@ export function CommandPalette({
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
-      <CommandInput placeholder="搜索命令、会话、技能…" />
+      <CommandInput placeholder="搜索命令、会话、技能、模板、预设…" />
       <CommandList>
         <CommandEmpty>无匹配项</CommandEmpty>
 
@@ -115,6 +190,12 @@ export function CommandPalette({
             <GitFork className="mr-2 size-4" />
             从此会话分叉（Fork）
           </CommandItem>
+          {onReforkChat ? (
+            <CommandItem onSelect={() => run(onReforkChat)}>
+              <RotateCcw className="mr-2 size-4" />
+              回到分叉点再试（Refork）
+            </CommandItem>
+          ) : null}
           <CommandItem onSelect={() => run(onClearChat)}>
             <Trash2 className="mr-2 size-4" />
             清空当前对话
@@ -126,6 +207,40 @@ export function CommandPalette({
             </CommandItem>
           ))}
         </CommandGroup>
+
+        {treeRows.length > 0 ? (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="会话树">
+              {treeRows.map(({ node, depth }) => (
+                <CommandItem
+                  key={node.session_id}
+                  onSelect={() => run(() => onSelectChat?.(node.session_id))}
+                >
+                  <GitBranch className="mr-2 size-4 shrink-0" />
+                  <span
+                    className="flex min-w-0 flex-col"
+                    style={{ paddingLeft: Math.min(depth, 6) * 10 }}
+                  >
+                    <span className="truncate">
+                      {depth > 0 ? "↳ " : ""}
+                      {node.title || node.session_id}
+                      {node.session_id === sessionId ? " · 当前" : ""}
+                    </span>
+                    {node.bookmarks?.length ? (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {node.bookmarks.length} bookmark
+                        {node.bookmarks[0]?.label
+                          ? ` · ${node.bookmarks[0].label}`
+                          : ""}
+                      </span>
+                    ) : null}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        ) : null}
 
         {skills.length > 0 ? (
           <>
@@ -151,6 +266,75 @@ export function CommandPalette({
                   </span>
                 </CommandItem>
               ))}
+            </CommandGroup>
+          </>
+        ) : null}
+
+        {prompts.length > 0 ? (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Prompt 模板">
+              {prompts.map((p) => (
+                <CommandItem
+                  key={p.name}
+                  onSelect={() =>
+                    run(() => {
+                      const slash = p.slash || `/${p.name}`;
+                      const hint = p.variables?.length
+                        ? ` ${p.variables.map((v) => `$${v}`).join(" ")}`
+                        : "";
+                      onInsertText?.(`${slash}${hint}`.trim());
+                    })
+                  }
+                >
+                  <FileText className="mr-2 size-4" />
+                  <span className="flex min-w-0 flex-col">
+                    <span>
+                      {p.slash || `/${p.name}`}
+                      {p.variables?.length ? (
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          ({p.variables.join(", ")})
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {p.description}
+                    </span>
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        ) : null}
+
+        {presets.length > 0 ? (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="预设 Presets">
+              {presets.map((p) => (
+                <CommandItem
+                  key={p.name}
+                  onSelect={() => run(() => onApplyPreset?.(p.name))}
+                >
+                  <Sparkles className="mr-2 size-4" />
+                  <span className="flex min-w-0 flex-col">
+                    <span>{p.name}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {p.description}
+                      {p.active_tools?.length
+                        ? ` · ${p.active_tools.length} tools`
+                        : ""}
+                      {p.permission_preset ? ` · ${p.permission_preset}` : ""}
+                    </span>
+                  </span>
+                </CommandItem>
+              ))}
+              {onClearActiveTools ? (
+                <CommandItem onSelect={() => run(onClearActiveTools)}>
+                  <Wrench className="mr-2 size-4" />
+                  清除工具收敛（恢复全量工具）
+                </CommandItem>
+              ) : null}
             </CommandGroup>
           </>
         ) : null}

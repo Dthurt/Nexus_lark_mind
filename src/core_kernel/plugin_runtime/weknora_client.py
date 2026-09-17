@@ -36,6 +36,58 @@ def weknora_default_kb_id() -> str:
     return (os.getenv("WEKNORA_KB_ID") or "").strip()
 
 
+def weknora_kb_map() -> Dict[str, str]:
+    """Parse WEKNORA_KB_MAP for workspace→KB routing.
+
+    Accepts JSON object ``{"ws-id":"kb-id"}`` or comma pairs ``ws=kb,ws2=kb2``.
+    """
+    raw = (os.getenv("WEKNORA_KB_MAP") or "").strip()
+    if not raw:
+        return {}
+    if raw.startswith("{"):
+        try:
+            import json
+
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return {
+                    str(k).strip(): str(v).strip()
+                    for k, v in data.items()
+                    if str(k).strip() and str(v).strip()
+                }
+        except Exception:
+            return {}
+    out: Dict[str, str] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        k, _, v = part.partition("=")
+        k, v = k.strip(), v.strip()
+        if k and v:
+            out[k] = v
+    return out
+
+
+def resolve_weknora_kb_id(
+    *,
+    kb_id: str = "",
+    workspace_id: str = "",
+    session_kb_id: str = "",
+) -> str:
+    """Resolve target KB: explicit → session → workspace map → global default."""
+    for candidate in (kb_id, session_kb_id):
+        val = (candidate or "").strip()
+        if val:
+            return val
+    ws = (workspace_id or "").strip()
+    if ws:
+        mapped = weknora_kb_map().get(ws)
+        if mapped:
+            return mapped
+    return weknora_default_kb_id()
+
+
 def weknora_ingest_enabled() -> bool:
     raw = (os.getenv("WEKNORA_INGEST_ENABLED") or "1").strip().lower()
     return raw not in {"0", "false", "no", "off"}
@@ -182,6 +234,8 @@ async def weknora_search(
     limit: int = 5,
     kb_id: str = "",
     kb_ids: Optional[List[str]] = None,
+    workspace_id: str = "",
+    session_kb_id: str = "",
 ) -> Dict[str, Any]:
     """Search remote WeKnora. Never raises — returns ok/skipped/error envelopes."""
     q = (query or "").strip()
@@ -196,7 +250,9 @@ async def weknora_search(
         return {"ok": False, "error": "query required", "results": [], "citations_md": ""}
 
     headers = _auth_headers()
-    kb = (kb_id or weknora_default_kb_id()).strip()
+    kb = resolve_weknora_kb_id(
+        kb_id=kb_id, workspace_id=workspace_id, session_kb_id=session_kb_id
+    ).strip()
     ids: List[str] = []
     if kb_ids:
         ids = [str(x).strip() for x in kb_ids if str(x).strip()]
@@ -230,6 +286,8 @@ async def weknora_push_document(
     title: str,
     content: str,
     kb_id: str = "",
+    workspace_id: str = "",
+    session_kb_id: str = "",
     tag_id: str = "",
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -243,11 +301,13 @@ async def weknora_push_document(
             "error": "WeKnora ingest disabled (WEKNORA_INGEST_ENABLED=0)",
             "pushed": False,
         }
-    kid = (kb_id or weknora_default_kb_id()).strip()
+    kid = resolve_weknora_kb_id(
+        kb_id=kb_id, workspace_id=workspace_id, session_kb_id=session_kb_id
+    ).strip()
     if not kid:
         return {
             "ok": False,
-            "error": "kb_id required (pass kb_id or set WEKNORA_KB_ID)",
+            "error": "kb_id required (pass kb_id or set WEKNORA_KB_ID / WEKNORA_KB_MAP)",
             "pushed": False,
         }
     title_s = (title or "").strip() or "untitled"

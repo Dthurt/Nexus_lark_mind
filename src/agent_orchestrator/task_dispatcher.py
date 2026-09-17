@@ -182,6 +182,8 @@ class TaskDispatcher:
             task.metadata["system_prompt_append"] = session.get("system_prompt_append")
         if session.get("preset_name") and not task.metadata.get("preset_name"):
             task.metadata["preset_name"] = session.get("preset_name")
+        if session.get("weknora_kb_id") and not task.metadata.get("weknora_kb_id"):
+            task.metadata["weknora_kb_id"] = session.get("weknora_kb_id")
         if cwd:
             task.metadata = {
                 **task.metadata,

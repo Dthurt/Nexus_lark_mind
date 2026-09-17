@@ -229,6 +229,8 @@ class SessionContext:
         preset_name: Optional[str] = None,
         system_prompt_append: Optional[str] = None,
         cwd_for_preset: Optional[str] = None,
+        weknora_kb_id: Optional[str] = None,
+        clear_weknora_kb_id: bool = False,
     ) -> Dict[str, Any]:
         from src.common.experience_tiers import (
             normalize_experience_tier,
@@ -308,6 +310,10 @@ class SessionContext:
                 raise ValueError("active_tools must be a list of tool names or null")
         if system_prompt_append is not None:
             working["system_prompt_append"] = str(system_prompt_append)
+        if clear_weknora_kb_id:
+            working["weknora_kb_id"] = ""
+        elif weknora_kb_id is not None:
+            working["weknora_kb_id"] = str(weknora_kb_id).strip()
         if not working.get("permission_preset"):
             working["permission_preset"] = normalize_preset(None)
         if not working.get("plan_enforcement"):
@@ -335,6 +341,7 @@ class SessionContext:
             "active_tools",
             "preset_name",
             "system_prompt_append",
+            "weknora_kb_id",
             "updated_at",
         )
         patch = {k: working.get(k) for k in keys}

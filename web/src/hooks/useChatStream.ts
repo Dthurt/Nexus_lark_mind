@@ -203,6 +203,8 @@ export function useChatStream(opts: UseChatStreamOpts) {
         if (payload.kind === "compaction" || payload.compaction) {
           const via = payload.compaction?.via || "";
           tr.addStatus(via ? `compaction (${via}): ${msg}` : `compaction: ${msg}`);
+        } else if (payload.kind === "active_tools") {
+          tr.addStatus(msg);
         } else {
           tr.addStatus(msg);
         }

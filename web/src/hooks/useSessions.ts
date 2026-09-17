@@ -6,6 +6,7 @@ import {
   getSession,
   listSessions,
   patchWorkspace,
+  reforkSession,
 } from "@/api/endpoints";
 import { newId } from "@/lib/id";
 import type { SessionDetail, Usage } from "@/types/api";
@@ -351,6 +352,40 @@ export function useSessions() {
     ],
   );
 
+  const reforkCurrent = useCallback(
+    async (opts: { title?: string } = {}) => {
+      const data = await reforkSession(sessionId, opts);
+      const id = String((data as any)?.session_id || "");
+      if (!id) throw new Error("refork returned no session_id");
+      setSessionId(id);
+      persistActive(id);
+      const title = String((data as any)?.title || opts.title || "Retry fork");
+      setChatTitle(title);
+      applyWorkspaceMeta(data || {});
+      upsertLocalConv({
+        id,
+        title,
+        workspaceId: (data as any)?.workspace_id || workspaceId || "",
+        workspaceTitle: (data as any)?.workspace_title || workspaceTitle || "",
+        cwd: (data as any)?.cwd || cwd || "",
+        workspaceKind: (data as any)?.workspace_kind || workspaceKind || "local",
+        sshHostId: (data as any)?.ssh_host_id || sshHostId || "",
+      });
+      return data;
+    },
+    [
+      applyWorkspaceMeta,
+      cwd,
+      persistActive,
+      sessionId,
+      sshHostId,
+      upsertLocalConv,
+      workspaceId,
+      workspaceKind,
+      workspaceTitle,
+    ],
+  );
+
   const setSessionIdPersisted = useCallback(
     (id: string) => {
       setSessionId(id);
@@ -382,5 +417,6 @@ export function useSessions() {
     switchTo,
     deleteConversation,
     forkCurrent,
+    reforkCurrent,
   };
 }

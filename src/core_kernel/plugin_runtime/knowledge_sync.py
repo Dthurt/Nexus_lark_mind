@@ -321,8 +321,8 @@ async def sync_local_to_weknora(
 ) -> Dict[str, Any]:
     """Push local SQLite docs to WeKnora with content_hash skip-if-unchanged."""
     from src.core_kernel.plugin_runtime.weknora_client import (
+        resolve_weknora_kb_id,
         weknora_configured,
-        weknora_default_kb_id,
         weknora_ingest_enabled,
         weknora_push_document,
     )
@@ -344,11 +344,11 @@ async def sync_local_to_weknora(
             "skipped_unchanged": 0,
             "errors": [],
         }
-    kid = (kb_id or weknora_default_kb_id()).strip()
+    kid = resolve_weknora_kb_id(kb_id=kb_id, workspace_id=workspace_id).strip()
     if not kid:
         return {
             "ok": False,
-            "error": "kb_id required (pass kb_id or set WEKNORA_KB_ID)",
+            "error": "kb_id required (pass kb_id or set WEKNORA_KB_ID / WEKNORA_KB_MAP)",
             "pushed": 0,
             "skipped_unchanged": 0,
             "errors": [],
@@ -376,16 +376,14 @@ async def sync_local_to_weknora(
             skipped += 1
             continue
         digest = str(full.get("content_hash") or content_hash(body))
-        # Skip if last successful push logged same hash for this doc
-        recent = await store.list_sync_log(workspace_id=workspace_id, limit=80)
-        already = any(
-            e.get("source") == "weknora_push"
-            and e.get("source_uri") == f"{kid}:{doc_id}"
-            and e.get("content_hash") == digest
-            and e.get("status") == "ok"
-            for e in recent
+        # Skip if last successful push for this doc already recorded the same hash
+        prev_hash = await store.latest_sync_hash(
+            source="weknora_push",
+            source_uri=f"{kid}:{doc_id}",
+            workspace_id=workspace_id,
+            status="ok",
         )
-        if already:
+        if prev_hash is not None and prev_hash == digest:
             skipped += 1
             continue
         result = await weknora_push_document(
@@ -440,8 +438,8 @@ async def sync_weknora_to_local(
 ) -> Dict[str, Any]:
     """Pull WeKnora knowledge entries into local SQLite with content_hash upsert."""
     from src.core_kernel.plugin_runtime.weknora_client import (
+        resolve_weknora_kb_id,
         weknora_configured,
-        weknora_default_kb_id,
         weknora_get_knowledge,
         weknora_list_knowledge,
     )
@@ -456,11 +454,11 @@ async def sync_weknora_to_local(
             "skipped_unchanged": 0,
             "errors": [],
         }
-    kid = (kb_id or weknora_default_kb_id()).strip()
+    kid = resolve_weknora_kb_id(kb_id=kb_id, workspace_id=workspace_id).strip()
     if not kid:
         return {
             "ok": False,
-            "error": "kb_id required",
+            "error": "kb_id required (pass kb_id or set WEKNORA_KB_ID / WEKNORA_KB_MAP)",
             "added": 0,
             "updated": 0,
             "skipped_unchanged": 0,

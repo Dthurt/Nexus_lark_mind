@@ -90,6 +90,8 @@ class InteractionPatchRequest(BaseModel):
     preset_name: Optional[str] = None
     system_prompt_append: Optional[str] = None
     cwd: Optional[str] = None
+    weknora_kb_id: Optional[str] = None
+    clear_weknora_kb_id: Optional[bool] = None
 
 
 class AcceptPlanRequest(BaseModel):
@@ -902,6 +904,20 @@ def create_adapters_app() -> FastAPI:
         data = await orch.call(
             "DELETE",
             f"/rpc/sessions/{session_id}/bookmarks/{message_index}",
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/sessions/{session_id}/refork")
+    async def refork_session(session_id: str, request: Request):
+        orch: RpcClient = state["orchestrator"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await orch.call(
+            "POST",
+            f"/rpc/sessions/{session_id}/refork",
+            json=body if isinstance(body, dict) else {},
         )
         return RpcEnvelope(ok=True, data=data)
 
