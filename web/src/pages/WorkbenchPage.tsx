@@ -702,7 +702,7 @@ export function WorkbenchPage({
           )}
         >
           <Topbar
-            title={chatTitle}
+            title={centerView === "knowledge" ? "知识库" : chatTitle}
             centerView={centerView}
             onCenterViewChange={setCenterView}
             workspaceTitle={workspaceTitle}

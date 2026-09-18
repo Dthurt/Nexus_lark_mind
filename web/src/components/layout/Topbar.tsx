@@ -139,7 +139,11 @@ export function Topbar({
               onClick={() => onWeknoraKbClick?.()}
             >
               <BookOpen className="size-3 shrink-0" aria-hidden />
-              {weknoraKbId ? `知识库 · ${weknoraKbName || weknoraKbId}` : "知识库"}
+              {centerView === "knowledge"
+                ? `知识库 › ${weknoraKbName || weknoraKbId || "本地默认"}`
+                : weknoraKbId
+                  ? `知识库 · ${weknoraKbName || weknoraKbId}`
+                  : "知识库"}
             </button>
             {activeTools && activeTools.length ? (
               <span

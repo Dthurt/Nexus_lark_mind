@@ -55,7 +55,8 @@ export function ViewRing({
             className={cn(
               "inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors",
               "hover:text-foreground",
-              active && "bg-primary/15 font-medium text-primary",
+              isKnowledge && !active && "text-teal hover:bg-teal/10 hover:text-teal",
+              active && (isKnowledge ? "bg-teal/20 font-medium text-teal" : "bg-primary/15 font-medium text-primary"),
             )}
             onClick={() => onChange?.(v.id)}
           >

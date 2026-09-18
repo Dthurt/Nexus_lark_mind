@@ -22,7 +22,6 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { TeamsPanel } from "@/components/layout/TeamsPanel";
 import { DeliveryPanel } from "@/components/layout/DeliveryPanel";
-import { KnowledgePanel } from "@/components/layout/KnowledgePanel";
 import { MarketplacePanel } from "@/components/layout/MarketplacePanel";
 import { ExtensionsPanel } from "@/components/layout/ExtensionsPanel";
 import type { MarketplaceCatalog } from "@/api/endpoints";
@@ -291,6 +290,10 @@ export function RightDock({
                 title={meta.title}
                 active={active}
                 onClick={() => {
+                  if (tab.kind === "knowledge" && onOpenKnowledgeCenter) {
+                    onOpenKnowledgeCenter();
+                    return;
+                  }
                   dock.focusTab(panes[0].id, tab.id);
                   if (collapsed) onToggleCollapse?.();
                 }}
@@ -424,28 +427,23 @@ export function RightDock({
                   />
                 )}
                 {kind === "knowledge" && (
-                  knowledgeCenterOpen ? (
                     <div className="flex min-h-0 flex-1 flex-col gap-2 p-3 text-[12px] text-muted-foreground">
+                      <p className="m-0 font-medium text-foreground">知识库已是独立主栏页面</p>
                       <p className="m-0">
-                        知识库中心已在主栏打开。侧栏不再重复文档列表。
+                        {knowledgeCenterOpen
+                          ? "文档列表在中间主栏，右坞不再重复。可点下方回到知识库中心。"
+                          : "检索、导入和管理文档请打开中间的知识库页面，不再使用右坞小面板。"}
                       </p>
                       <Button
                         type="button"
                         size="sm"
                         className="h-8"
+                        data-testid="dock-open-knowledge"
                         onClick={() => onOpenKnowledgeCenter?.()}
                       >
-                        打开知识库中心
+                        打开知识库
                       </Button>
                     </div>
-                  ) : (
-                  <KnowledgePanel
-                    cwd={cwd}
-                    workspaceId={workspaceId}
-                    sessionId={sessionId}
-                    onBoundKbChange={onBoundKbChange}
-                  />
-                  )
                 )}
                 {kind === "teams" && <TeamsPanel teamId={teamId} />}
                 {kind === "delivery" && delivery ? (

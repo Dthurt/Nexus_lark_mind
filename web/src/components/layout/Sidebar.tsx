@@ -214,12 +214,12 @@ export function Sidebar({
               type="button"
               data-testid="sidebar-knowledge-entry"
               className={cn(
-                "h-8 w-full justify-start gap-1.5",
+                "h-8 w-full justify-start gap-1.5 border",
                 knowledgeActive
-                  ? "border border-teal/45 bg-teal/15 text-teal hover:bg-teal/20"
-                  : "text-muted-foreground hover:text-foreground",
+                  ? "border-teal/50 bg-teal/18 text-teal hover:bg-teal/25"
+                  : "border-teal/30 bg-teal/8 text-teal hover:border-teal/50 hover:bg-teal/14",
               )}
-              variant="ghost"
+              variant="secondary"
               size="sm"
               onClick={onOpenKnowledge}
             >
