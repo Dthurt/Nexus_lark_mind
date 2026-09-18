@@ -46,6 +46,7 @@ export function KnowledgeScopePicker({
           <button
             type="button"
             disabled={disabled}
+            data-testid="knowledge-scope-picker"
             title={`知识库：${label}${remoteReady ? (online ? " · WeKnora 在线" : " · WeKnora 离线") : ""}`}
             className={cn(
               "inline-flex max-w-[180px] min-w-0 items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 text-xs text-muted-foreground",
@@ -66,6 +67,7 @@ export function KnowledgeScopePicker({
           </DropdownMenuLabel>
           <DropdownMenuItem
             className="gap-2"
+            data-testid="knowledge-scope-local"
             onSelect={() => onChange?.(LOCAL_KB_ID, "本地知识库")}
           >
             <Check className={cn("size-3.5", boundId ? "opacity-0" : "opacity-100")} />

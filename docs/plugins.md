@@ -13,6 +13,8 @@
 禁用会 **teardown** 运行时资源（如 MCP stdio 子进程），不只是改状态。  
 进行中的 `invoke` 期间禁止 `reload`（返回错误）。
 
+工作区目录下的 Python 扩展（`<cwd>/.nlm/extensions`）与 hooks 需先在 UI 中 **信任此文件夹**；随仓 `plugins_volume` 不受影响。详见 [workspaces.md](./workspaces.md) 与 [pi-inspired-extensions.md](./pi-inspired-extensions.md)。
+
 ## CLI 插件
 
 1. 在 `plugins_volume/cli/` 新建脚本，例如 `weather.py`

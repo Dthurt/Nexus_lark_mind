@@ -81,6 +81,7 @@ export type Workspace = {
   is_dir?: boolean;
   session_ids?: string[];
   session_count?: number;
+  trusted?: boolean;
   created_at?: string;
   updated_at?: string;
 };

@@ -3,6 +3,16 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -101,6 +111,7 @@ export function WorkspacePicker({
     createSsh,
     upsertSshHost,
     testSshHost,
+    setTrusted,
     browsePath,
     browseSsh,
   } = api;
@@ -116,6 +127,7 @@ export function WorkspacePicker({
   const [browserFilter, setBrowserFilter] = useState("");
   const [selectedHostId, setSelectedHostId] = useState("");
   const [hostForm, setHostForm] = useState<HostForm>(EMPTY_HOST);
+  const [pendingTrust, setPendingTrust] = useState<Workspace | null>(null);
 
   function setHint(msg: string, ok = false) {
     setHintMsg(msg);
@@ -148,6 +160,38 @@ export function WorkspacePicker({
   );
 
   async function pickExisting(ws: Workspace) {
+    await bindWithTrust(ws);
+  }
+
+  async function bindWithTrust(ws: Workspace) {
+    if (ws.trusted) {
+      onBound(ws);
+      return;
+    }
+    setPendingTrust(ws);
+  }
+
+  async function confirmTrust() {
+    if (!pendingTrust) return;
+    setBusy(true);
+    try {
+      const trusted =
+        setTrusted != null
+          ? await setTrusted(pendingTrust.id, true)
+          : pendingTrust;
+      setPendingTrust(null);
+      onBound(trusted);
+    } catch (err: any) {
+      setHint(String(err?.message || err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function bindUntrusted() {
+    if (!pendingTrust) return;
+    const ws = pendingTrust;
+    setPendingTrust(null);
     onBound(ws);
   }
 
@@ -163,7 +207,7 @@ export function WorkspacePicker({
       const ws = await create(path);
       setPathInput("");
       setHint(`已加入 ${ws.title}`, true);
-      onBound(ws);
+      await bindWithTrust(ws);
     } catch (err: any) {
       setHint(String(err?.message || err));
     } finally {
@@ -208,7 +252,7 @@ export function WorkspacePicker({
       setPathInput("");
       setHint(`已加入 ${ws.title}`, true);
       setShowBrowser(false);
-      onBound(ws);
+      await bindWithTrust(ws);
     } catch (err: any) {
       setHint(String(err?.message || err));
     } finally {
@@ -365,7 +409,7 @@ export function WorkspacePicker({
       });
       setHint(`已接入远程 ${ws.title}`, true);
       setShowBrowser(false);
-      onBound(ws);
+      await bindWithTrust(ws);
     } catch (err: any) {
       setHint(String(err?.message || err));
     } finally {
@@ -528,6 +572,7 @@ export function WorkspacePicker({
               className="font-mono text-sm"
               value={pathInput}
               placeholder="例如 E:\projects\my-app 或 /home/user/proj"
+              data-testid="workspace-path-input"
               onChange={(e) => setPathInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void addFromInput();
@@ -547,6 +592,7 @@ export function WorkspacePicker({
                 type="button"
                 size="sm"
                 disabled={busy}
+                data-testid="workspace-bind-btn"
                 onClick={() => void addFromInput()}
               >
                 加入并选用
@@ -996,6 +1042,27 @@ export function WorkspacePicker({
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={Boolean(pendingTrust)} onOpenChange={(open) => !open && setPendingTrust(null)}>
+        <AlertDialogContent data-testid="workspace-trust-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>信任此文件夹？</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingTrust?.path
+                ? `「${pendingTrust.title || pendingTrust.path}」下的 .nlm/extensions 与 .nlm/hooks 是可执行 Python。仅在你信任该项目时启用。`
+                : "仅在你信任该项目时启用工作区扩展与 hooks。"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="workspace-trust-skip" onClick={bindUntrusted}>
+              暂不信任
+            </AlertDialogCancel>
+            <AlertDialogAction data-testid="workspace-trust-confirm" onClick={() => void confirmTrust()}>
+              信任并继续
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

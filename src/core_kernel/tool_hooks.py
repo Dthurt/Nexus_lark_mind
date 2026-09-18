@@ -24,10 +24,15 @@ logger = logging.getLogger(__name__)
 _HOOK_CACHE: dict[str, Any] = {}
 
 
-def _hook_paths(name: str, cwd: Optional[str] = None) -> list[Path]:
+def _hook_paths(
+    name: str,
+    cwd: Optional[str] = None,
+    *,
+    allow_workspace_code: bool = False,
+) -> list[Path]:
     filename = f"{name}.py"
     paths: list[Path] = []
-    if cwd:
+    if cwd and allow_workspace_code:
         paths.append(Path(cwd) / ".nlm" / "hooks" / filename)
     paths.append(Path("plugins_volume") / "hooks" / filename)
     root = Path(__file__).resolve().parents[2]
@@ -51,8 +56,21 @@ def _load_hook(path: Path, attr: str) -> Any:
     return fn
 
 
-def find_named_hook(name: str, attr: str, cwd: Optional[str] = None) -> Any:
-    for path in _hook_paths(name, cwd):
+def find_named_hook(
+    name: str,
+    attr: str,
+    cwd: Optional[str] = None,
+    *,
+    allow_workspace_code: Optional[bool] = None,
+) -> Any:
+    from src.core_kernel.workspace_trust import is_workspace_code_allowed
+
+    allowed = (
+        bool(allow_workspace_code)
+        if allow_workspace_code is not None
+        else is_workspace_code_allowed(cwd)
+    )
+    for path in _hook_paths(name, cwd, allow_workspace_code=allowed):
         if path.is_file():
             try:
                 return _load_hook(path, attr)
@@ -66,8 +84,10 @@ def run_named_hook(
     attr: str,
     ctx: Dict[str, Any],
     cwd: Optional[str] = None,
+    *,
+    allow_workspace_code: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    fn = find_named_hook(name, attr, cwd)
+    fn = find_named_hook(name, attr, cwd, allow_workspace_code=allow_workspace_code)
     if not callable(fn):
         return {}
     try:
@@ -82,8 +102,12 @@ def run_named_hook(
     return out
 
 
-def find_pre_tool_hook(cwd: Optional[str] = None) -> Any:
-    return find_named_hook("pre_tool", "pre_tool", cwd)
+def find_pre_tool_hook(
+    cwd: Optional[str] = None, *, allow_workspace_code: Optional[bool] = None
+) -> Any:
+    return find_named_hook(
+        "pre_tool", "pre_tool", cwd, allow_workspace_code=allow_workspace_code
+    )
 
 
 def run_pre_tool_hook(
@@ -95,6 +119,7 @@ def run_pre_tool_hook(
     session_id: Optional[str] = None,
     task_id: Optional[str] = None,
     cwd: Optional[str] = None,
+    allow_workspace_code: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Returns {block, reason?, arguments?}."""
     ctx = {
@@ -106,7 +131,9 @@ def run_pre_tool_hook(
         "task_id": task_id,
         "cwd": cwd or "",
     }
-    out = run_named_hook("pre_tool", "pre_tool", ctx, cwd)
+    out = run_named_hook(
+        "pre_tool", "pre_tool", ctx, cwd, allow_workspace_code=allow_workspace_code
+    )
     if not out:
         return {"block": False}
     result: Dict[str, Any] = {"block": bool(out.get("block"))}
@@ -123,6 +150,7 @@ def run_pre_compact_hook(
     cwd: Optional[str] = None,
     model: str = "",
     message_count: int = 0,
+    allow_workspace_code: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """May return {skip: True} or {instructions: '...'} extra summarizer hints."""
     return run_named_hook(
@@ -135,6 +163,7 @@ def run_pre_compact_hook(
             "message_count": message_count,
         },
         cwd,
+        allow_workspace_code=allow_workspace_code,
     )
 
 
@@ -143,6 +172,7 @@ def run_post_compact_hook(
     session_id: Optional[str] = None,
     cwd: Optional[str] = None,
     compact_info: Optional[Dict[str, Any]] = None,
+    allow_workspace_code: Optional[bool] = None,
 ) -> Dict[str, Any]:
     return run_named_hook(
         "post_compact",
@@ -153,6 +183,7 @@ def run_post_compact_hook(
             "compact_info": dict(compact_info or {}),
         },
         cwd,
+        allow_workspace_code=allow_workspace_code,
     )
 
 
@@ -162,6 +193,7 @@ def run_session_persist_hook(
     cwd: Optional[str] = None,
     role: str = "",
     content: str = "",
+    allow_workspace_code: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """May return {entries: [...]} stored on session.extension_entries."""
     return run_named_hook(
@@ -174,4 +206,5 @@ def run_session_persist_hook(
             "content": content,
         },
         cwd,
+        allow_workspace_code=allow_workspace_code,
     )

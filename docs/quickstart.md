@@ -13,11 +13,11 @@ nlm start
 
 Linux / macOS：`chmod +x nlm && ./nlm start`
 
-3. 打开 http://127.0.0.1:8000 ，绑定工作区，即可对话。
+3. 打开 http://127.0.0.1:8000 ，绑定工作区。首次绑定会询问 **信任此文件夹？**（对标 VS Code）：未信任时不会执行该目录 `.nlm/extensions` / `.nlm/hooks` 里的 Python；随仓 `plugins_volume` 与 Markdown skills 仍可用。信任后 `PATCH /api/workspaces/{id}` 写入 `trusted`。
 
 无 Key 时为 demo 回声模式，用于验证链路。
 
-顶栏 **知识库**：选「本地知识库」或 WeKnora 库，左边检索、右边针对该库提问。主输入框也有知识库选择器。详见 [knowledge-base.md](./knowledge-base.md)。
+顶栏 **知识库**：选「本地知识库」或 WeKnora 库，左边检索、右边针对该库提问。主输入框也有知识库选择器；**添加文件**会把文档写入本会话知识库（其他会话不可见）。详见 [knowledge-base.md](./knowledge-base.md)。
 
 ### 改前端时
 

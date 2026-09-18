@@ -92,6 +92,8 @@ POST /api/settings/channels/feishu|dingtalk|wecom/reload
 
 回复卡按钮：再问一次、清空会话（二次确认）。模型 / 预设 / 知识库走「会话设置」下拉。命令：`切换模型`、`权限预设`、`切换知识库`。
 
+`/知识库`（及同义命令）打开绑定卡时会 `GET /rpc/knowledge/weknora/kbs`，把远程库填进 `select_static`（最多约 20 个，与 Web 知识库页同源）。WeKnora 未配置或失败时卡片仍可切回本地，并写明离线原因，不阻塞。选中后走现有 `pick_kb` → `weknora_kb_id` / `clear_weknora_kb_id`。
+
 限制（开放平台）：交互卡片 JSON 约 **30 KB**、markdown 子集、更新接口有 QPS 限制。超长正文会被截断。图表走 `chart` + VChart（不是浏览器 ECharts）；旧客户端或超大 spec 退化为列指标。`collapsible_panel` 内不能嵌 form。`select_static` 的选项 `value` 必须是字符串，真实选项在回调的 `action.option`。
 
 ## Env fallback

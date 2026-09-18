@@ -687,6 +687,8 @@ async def _run_agent_stream_inner(
             try:
                 from src.core_kernel.kb_grounding import apply_turn_grounding
 
+                if parent_session_id and not meta0.get("session_id"):
+                    meta0["session_id"] = parent_session_id
                 working, ground_ev = await apply_turn_grounding(working, meta0)
                 if ground_ev:
                     yield ground_ev

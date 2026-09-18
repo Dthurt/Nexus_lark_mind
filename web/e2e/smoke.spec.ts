@@ -1,16 +1,16 @@
 /**
  * Smoke e2e — requires adapters on :8000 (or PLAYWRIGHT_BASE_URL).
- * Skip automatically when the server is unreachable.
+ * Skip only when the server is unreachable; empty-page assertions still fail.
  */
 import { test, expect } from "@playwright/test";
 
-test.describe("workbench smoke", () => {
-  test("empty state onboarding + mermaid size helper", async ({ page }) => {
-    const res = await page.goto("/", { waitUntil: "domcontentloaded" }).catch(() => null);
-    test.skip(!res || res.status() >= 500, "adapters not running on baseURL");
+import { openWorkbench, requireAdapters } from "./helpers";
 
-    await expect(page.getByText("Nexus Lark Mind").first()).toBeVisible({ timeout: 15000 });
-    // First-run checklist steps
+test.describe("workbench smoke", () => {
+  test("empty state onboarding + mermaid size helper", async ({ page, request }) => {
+    await requireAdapters(request);
+    await openWorkbench(page);
+
     await expect(page.getByText(/绑定工作目录/)).toBeVisible();
     await expect(page.getByText(/选择 Provider/)).toBeVisible();
 
@@ -21,7 +21,6 @@ test.describe("workbench smoke", () => {
       svg.setAttribute("height", "100%");
       svg.setAttribute("viewBox", "0 0 240 100");
       document.body.appendChild(svg);
-      // Inline the same algorithm as normalizeMermaidSvgSize
       const vb = svg.viewBox.baseVal;
       let w = parseFloat(svg.getAttribute("width") || "") || 0;
       let h = parseFloat(svg.getAttribute("height") || "") || 0;

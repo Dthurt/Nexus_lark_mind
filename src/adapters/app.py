@@ -848,9 +848,13 @@ def create_adapters_app() -> FastAPI:
     @app.get("/api/extensions")
     async def list_extensions(cwd: str = ""):
         from src.core_kernel.extension_runtime import discover_and_load_extensions
+        from src.core_kernel.workspace_trust import is_workspace_code_allowed
 
         path = (cwd or "").strip()
-        reg = discover_and_load_extensions(path or None, reload=False)
+        trusted = is_workspace_code_allowed(path or None)
+        reg = discover_and_load_extensions(
+            path or None, reload=False, allow_workspace_code=trusted
+        )
         return RpcEnvelope(
             ok=True,
             data={
@@ -859,6 +863,9 @@ def create_adapters_app() -> FastAPI:
                 "tools": list(reg.tools),
                 "commands": list(reg.commands),
                 "flags": reg.public_flags(),
+                "workspace_trusted": trusted,
+                "skipped": list(reg.skipped),
+                "skip_reason": "" if trusted else (reg.skip_reason or "workspace not trusted"),
             },
         )
 
@@ -1033,6 +1040,24 @@ def create_adapters_app() -> FastAPI:
             rec = store.create(path, title=title)
         except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
             raise ValidationAppError(str(exc)) from exc
+        return RpcEnvelope(ok=True, data=rec.public())
+
+    @app.patch("/api/workspaces/{workspace_id}")
+    async def patch_workspace(workspace_id: str, request: Request):
+        store = get_workspace_store()
+        rec = store.get(workspace_id)
+        if not rec:
+            raise NotFoundError(workspace_id)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        if "trusted" in body:
+            rec = store.set_trusted(workspace_id, bool(body.get("trusted")))
+        if rec is None:
+            raise NotFoundError(workspace_id)
         return RpcEnvelope(ok=True, data=rec.public())
 
     @app.delete("/api/workspaces/{workspace_id}")
@@ -1331,217 +1356,9 @@ def create_adapters_app() -> FastAPI:
         data = build_marketplace(installed_ids=installed_ids)
         return RpcEnvelope(ok=True, data=data)
 
-    # ----- Knowledge base (proxied to kernel SQLite) -----
+    from src.adapters.knowledge_routes import register_knowledge_routes
 
-    @app.get("/api/knowledge/docs")
-    async def knowledge_list(workspace_id: str = "", limit: int = 50, tag: str = ""):
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call(
-            "GET",
-            "/rpc/knowledge/docs",
-            params={"workspace_id": workspace_id or "", "limit": limit, "tag": tag or ""},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.get("/api/knowledge/search")
-    async def knowledge_search(query: str = "", workspace_id: str = "", limit: int = 8, tag: str = ""):
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call(
-            "GET",
-            "/rpc/knowledge/search",
-            params={"query": query, "workspace_id": workspace_id or "", "limit": limit, "tag": tag or ""},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.get("/api/knowledge/stats")
-    async def knowledge_stats(workspace_id: str = ""):
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call(
-            "GET",
-            "/rpc/knowledge/stats",
-            params={"workspace_id": workspace_id or ""},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.get("/api/knowledge/docs/{doc_id}")
-    async def knowledge_get(doc_id: str, include_chunks: bool = False):
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call(
-            "GET",
-            f"/rpc/knowledge/docs/{doc_id}",
-            params={"include_chunks": include_chunks},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.get("/api/knowledge/docs/{doc_id}/read")
-    async def knowledge_read(
-        doc_id: str,
-        offset: int = 0,
-        limit: int = 4000,
-        chunk_index: Optional[int] = None,
-        neighbors: int = 1,
-    ):
-        kernel: RpcClient = state["kernel"]
-        params: Dict[str, Any] = {
-            "offset": offset,
-            "limit": limit,
-            "neighbors": neighbors,
-        }
-        if chunk_index is not None:
-            params["chunk_index"] = chunk_index
-        data = await kernel.call(
-            "GET",
-            f"/rpc/knowledge/docs/{doc_id}/read",
-            params=params,
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.post("/api/knowledge/docs")
-    async def knowledge_add(request: Request):
-        kernel: RpcClient = state["kernel"]
-        body = await request.json()
-        payload = dict(body) if isinstance(body, dict) else {}
-        data = await kernel.call("POST", "/rpc/knowledge/docs", json=payload)
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.patch("/api/knowledge/docs/{doc_id}")
-    async def knowledge_patch(doc_id: str, request: Request):
-        kernel: RpcClient = state["kernel"]
-        body = await request.json()
-        payload = dict(body) if isinstance(body, dict) else {}
-        data = await kernel.call("PATCH", f"/rpc/knowledge/docs/{doc_id}", json=payload)
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.delete("/api/knowledge/docs/{doc_id}")
-    async def knowledge_delete(doc_id: str):
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call("DELETE", f"/rpc/knowledge/docs/{doc_id}")
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.post("/api/knowledge/reindex")
-    async def knowledge_reindex(request: Request):
-        kernel: RpcClient = state["kernel"]
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        payload = dict(body) if isinstance(body, dict) else {}
-        data = await kernel.call("POST", "/rpc/knowledge/reindex", json=payload)
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.post("/api/knowledge/sync/docs")
-    async def knowledge_sync_docs(request: Request):
-        kernel: RpcClient = state["kernel"]
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        payload = dict(body) if isinstance(body, dict) else {}
-        data = await kernel.call("POST", "/rpc/knowledge/sync/docs", json=payload)
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.post("/api/knowledge/sync/feishu")
-    async def knowledge_sync_feishu(request: Request):
-        kernel: RpcClient = state["kernel"]
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        payload = dict(body) if isinstance(body, dict) else {}
-        data = await kernel.call("POST", "/rpc/knowledge/sync/feishu", json=payload)
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.get("/api/knowledge/sync/log")
-    async def knowledge_sync_log(workspace_id: str = "", limit: int = 40):
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call(
-            "GET",
-            "/rpc/knowledge/sync/log",
-            params={"workspace_id": workspace_id or "", "limit": limit},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.get("/api/knowledge/weknora/health")
-    async def knowledge_weknora_health():
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call("GET", "/rpc/knowledge/weknora/health")
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.get("/api/knowledge/weknora/kbs")
-    async def knowledge_weknora_kbs(limit: int = 50):
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call(
-            "GET", "/rpc/knowledge/weknora/kbs", params={"limit": limit}
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.post("/api/knowledge/weknora/search")
-    async def knowledge_weknora_search(request: Request):
-        kernel: RpcClient = state["kernel"]
-        body = await request.json()
-        data = await kernel.call(
-            "POST",
-            "/rpc/knowledge/weknora/search",
-            json=body if isinstance(body, dict) else {},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.get("/api/knowledge/weknora/knowledge")
-    async def knowledge_weknora_knowledge(
-        kb_id: str = "",
-        page: int = 1,
-        page_size: int = 40,
-    ):
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call(
-            "GET",
-            "/rpc/knowledge/weknora/knowledge",
-            params={"kb_id": kb_id or "", "page": page, "page_size": page_size},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.get("/api/knowledge/weknora/item")
-    async def knowledge_weknora_item(knowledge_id: str = ""):
-        kernel: RpcClient = state["kernel"]
-        data = await kernel.call(
-            "GET",
-            "/rpc/knowledge/weknora/item",
-            params={"knowledge_id": knowledge_id or ""},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.post("/api/knowledge/weknora/import")
-    async def knowledge_weknora_import(request: Request):
-        kernel: RpcClient = state["kernel"]
-        body = await request.json()
-        data = await kernel.call(
-            "POST",
-            "/rpc/knowledge/weknora/import",
-            json=body if isinstance(body, dict) else {},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.post("/api/knowledge/weknora/push")
-    async def knowledge_weknora_push(request: Request):
-        kernel: RpcClient = state["kernel"]
-        body = await request.json()
-        data = await kernel.call(
-            "POST",
-            "/rpc/knowledge/weknora/push",
-            json=body if isinstance(body, dict) else {},
-        )
-        return RpcEnvelope(ok=True, data=data)
-
-    @app.post("/api/knowledge/weknora/sync")
-    async def knowledge_weknora_sync(request: Request):
-        kernel: RpcClient = state["kernel"]
-        body = await request.json()
-        data = await kernel.call(
-            "POST",
-            "/rpc/knowledge/weknora/sync",
-            json=body if isinstance(body, dict) else {},
-        )
-        return RpcEnvelope(ok=True, data=data)
+    register_knowledge_routes(app, state)
 
     @app.post("/api/plugins/install")
     async def install_plugin_package(request: Request):
@@ -1872,6 +1689,15 @@ def create_adapters_app() -> FastAPI:
     @app.delete("/api/sessions/{session_id}")
     async def delete_session(session_id: str):
         orch: RpcClient = state["orchestrator"]
+        kernel: RpcClient = state["kernel"]
+        try:
+            await kernel.call(
+                "DELETE",
+                "/rpc/knowledge/uploads",
+                params={"session_id": session_id},
+            )
+        except Exception:
+            logger.debug("session upload purge failed for %s", session_id, exc_info=True)
         data = await orch.call("DELETE", f"/rpc/sessions/{session_id}")
         return RpcEnvelope(ok=True, data=data)
 

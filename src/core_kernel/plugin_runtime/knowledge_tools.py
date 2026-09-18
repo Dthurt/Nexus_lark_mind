@@ -290,6 +290,15 @@ class KnowledgeToolsPlugin(BasePlugin):
         meta = get_workspace_meta() or {}
         ws = str(meta.get("workspace_id") or "")
         store = self._kb()
+        sid = str(meta.get("session_id") or "")
+
+        def _guard(row: Optional[Dict[str, Any]], doc_id: str) -> Dict[str, Any]:
+            from src.core_kernel.plugin_runtime.knowledge_store import row_visible_for_session
+
+            if not row or not row_visible_for_session(row, sid):
+                raise PluginError(f"doc not found: {doc_id}")
+            return row
+
         if tool_name == "kb_add":
             return await self._kb_add(store, arguments, ws)
         if tool_name == "kb_search":
@@ -302,6 +311,7 @@ class KnowledgeToolsPlugin(BasePlugin):
                 workspace_id=ws,
                 limit=max(1, min(limit, 20)),
                 tag=str(arguments.get("tag") or ""),
+                session_id=str(meta.get("session_id") or ""),
             )
             return {
                 "ok": True,
@@ -321,8 +331,7 @@ class KnowledgeToolsPlugin(BasePlugin):
                 chunk_index=int(chunk_index) if chunk_index is not None else None,
                 neighbors=int(arguments.get("neighbors") or 1),
             )
-            if not row:
-                raise PluginError(f"doc not found: {doc_id}")
+            row = _guard(row, doc_id)
             from src.core_kernel.plugin_runtime.knowledge_store import format_citation
 
             row["citation"] = format_citation(
@@ -338,14 +347,14 @@ class KnowledgeToolsPlugin(BasePlugin):
             row = await store.get(
                 doc_id, include_chunks=bool(arguments.get("include_chunks"))
             )
-            if not row:
-                raise PluginError(f"doc not found: {doc_id}")
-            return row
+            return _guard(row, doc_id)
         if tool_name == "kb_list":
             limit = int(arguments.get("limit") or 20)
             return {"ok": True, "docs": await store.list_docs(workspace_id=ws, limit=limit)}
         if tool_name == "kb_delete":
             doc_id = str(arguments.get("doc_id") or "").strip()
+            row = await store.get(doc_id)
+            _guard(row, doc_id)
             ok = await store.delete(doc_id)
             return {"ok": ok, "doc_id": doc_id}
         if tool_name == "kb_sync_docs":

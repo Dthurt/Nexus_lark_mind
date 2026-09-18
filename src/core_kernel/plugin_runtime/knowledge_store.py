@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -35,12 +36,25 @@ from src.core_kernel.plugin_runtime.knowledge_embeddings import (
 )
 from src.infrastructure.storage.database import Base
 
+logger = logging.getLogger(__name__)
+
 CHUNK_TARGET = 512
 CHUNK_OVERLAP_RATIO = 0.15
 CHILD_CHUNK_TARGET = 384
 PARENT_CHUNK_TARGET = 2048
 SNIPPET_RADIUS = 160
 SHORT_CHUNK_EXPAND = 350
+
+
+def row_visible_for_session(row: Optional[Dict[str, Any]], session_id: str = "") -> bool:
+    """Session-upload docs are only visible to the owning session."""
+    if not row:
+        return False
+    source = str(row.get("source") or "").strip()
+    if source != "session-upload":
+        return True
+    sid = (session_id or "").strip()
+    return bool(sid) and f"session:{sid}" in str(row.get("tags") or "")
 
 
 class KnowledgeDoc(Base):
@@ -461,28 +475,145 @@ def _score_text(blob: str, title: str, tags: str, tokens: List[str], query: str)
 class KnowledgeStore:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self.session_factory = session_factory
+        self._fts_mode: Optional[str] = None  # trigram | unicode61 | None
 
     async def ensure_schema(self) -> None:
-        from src.infrastructure.storage.database import get_engine
+        async with self.session_factory() as session:
+            conn = await session.connection()
+            await conn.run_sync(Base.metadata.create_all)
+            await session.commit()
+        for ddl in (
+            "ALTER TABLE knowledge_docs ADD COLUMN source_uri VARCHAR(1024) DEFAULT ''",
+            "ALTER TABLE knowledge_docs ADD COLUMN content_hash VARCHAR(64) DEFAULT ''",
+            "ALTER TABLE knowledge_chunks ADD COLUMN parent_chunk_id VARCHAR(80) DEFAULT ''",
+            "ALTER TABLE knowledge_chunks ADD COLUMN chunk_type VARCHAR(32) DEFAULT 'text'",
+            "ALTER TABLE knowledge_chunks ADD COLUMN context_header VARCHAR(1024) DEFAULT ''",
+        ):
+            try:
+                async with self.session_factory() as session:
+                    await session.execute(text(ddl))
+                    await session.commit()
+            except Exception:
+                pass
+        async with self.session_factory() as session:
+            conn = await session.connection()
+            self._fts_mode = await self._ensure_fts(conn)
+            await session.commit()
 
+    async def _ensure_fts(self, conn) -> Optional[str]:
+        existing = ""
         try:
-            engine = get_engine()
+            row = (
+                await conn.execute(
+                    text("SELECT sql FROM sqlite_master WHERE name='knowledge_chunks_fts'")
+                )
+            ).first()
+            existing = str(row[0] or "") if row else ""
+        except Exception:
+            existing = ""
+        if existing:
+            mode = "trigram" if "trigram" in existing else "unicode61"
+            await self._backfill_fts_if_empty(conn)
+            return mode
+        for tokenizer in ("trigram", "unicode61"):
+            ddl = (
+                "CREATE VIRTUAL TABLE knowledge_chunks_fts USING fts5("
+                "chunk_id UNINDEXED, doc_id UNINDEXED, heading, context_header, content, "
+                f"tokenize='{tokenizer}')"
+            )
+            try:
+                await conn.execute(text(ddl))
+                await self._backfill_fts_if_empty(conn)
+                return tokenizer
+            except Exception:
+                continue
+        return None
+
+    async def _backfill_fts_if_empty(self, conn) -> None:
+        """Copy existing chunks into a newly created / empty FTS table."""
+        try:
+            row = (await conn.execute(text("SELECT COUNT(*) FROM knowledge_chunks_fts"))).first()
+            n = int(row[0] or 0) if row else 0
         except Exception:
             return
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            # Lightweight column adds for existing SQLite DBs
-            for ddl in (
-                "ALTER TABLE knowledge_docs ADD COLUMN source_uri VARCHAR(1024) DEFAULT ''",
-                "ALTER TABLE knowledge_docs ADD COLUMN content_hash VARCHAR(64) DEFAULT ''",
-                "ALTER TABLE knowledge_chunks ADD COLUMN parent_chunk_id VARCHAR(80) DEFAULT ''",
-                "ALTER TABLE knowledge_chunks ADD COLUMN chunk_type VARCHAR(32) DEFAULT 'text'",
-                "ALTER TABLE knowledge_chunks ADD COLUMN context_header VARCHAR(1024) DEFAULT ''",
-            ):
-                try:
-                    await conn.execute(text(ddl))
-                except Exception:
-                    pass
+        if n > 0:
+            return
+        try:
+            await conn.execute(
+                text(
+                    "INSERT INTO knowledge_chunks_fts"
+                    "(chunk_id, doc_id, heading, context_header, content) "
+                    "SELECT chunk_id, doc_id, IFNULL(heading,''), "
+                    "IFNULL(context_header,''), IFNULL(content,'') "
+                    "FROM knowledge_chunks "
+                    "WHERE IFNULL(chunk_type, 'text') != 'parent'"
+                )
+            )
+        except Exception:
+            logger.debug("knowledge FTS backfill skipped", exc_info=True)
+
+    def _fts_match_query(self, query: str) -> str:
+        q = (query or "").strip()
+        if not q:
+            return ""
+        if self._fts_mode == "trigram":
+            return '"' + q.replace('"', '""') + '"'
+        tokens = _tokens(q)
+        parts = ['"' + t.replace('"', '""') + '"' for t in tokens if t]
+        return " OR ".join(parts) if parts else '"' + q.replace('"', '""') + '"'
+
+    async def _replace_fts_doc(
+        self,
+        session: AsyncSession,
+        doc_id: str,
+        rows: List[Tuple[str, str, str, str, str]],
+    ) -> None:
+        if not self._fts_mode:
+            return
+        try:
+            await session.execute(
+                text("DELETE FROM knowledge_chunks_fts WHERE doc_id = :d"),
+                {"d": doc_id},
+            )
+            for chunk_id, heading, header, content, ctype in rows:
+                if (ctype or "text") == "parent":
+                    continue
+                await session.execute(
+                    text(
+                        "INSERT INTO knowledge_chunks_fts"
+                        "(chunk_id, doc_id, heading, context_header, content) "
+                        "VALUES (:id, :doc, :h, :ctx, :c)"
+                    ),
+                    {
+                        "id": chunk_id,
+                        "doc": doc_id,
+                        "h": heading or "",
+                        "ctx": header or "",
+                        "c": content or "",
+                    },
+                )
+        except Exception:
+            logger.warning("knowledge FTS upsert failed for %s", doc_id, exc_info=True)
+
+    async def _fts_chunk_ids(
+        self, session: AsyncSession, query: str, *, limit: int = 160
+    ) -> List[str]:
+        if not self._fts_mode:
+            return []
+        match = self._fts_match_query(query)
+        if not match:
+            return []
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT chunk_id FROM knowledge_chunks_fts "
+                    "WHERE knowledge_chunks_fts MATCH :q ORDER BY rank LIMIT :lim"
+                ),
+                {"q": match, "lim": limit},
+            )
+            return [str(r[0]) for r in result.fetchall() if r and r[0]]
+        except Exception:
+            return []
 
     async def upsert(
         self,
@@ -554,6 +685,8 @@ class KnowledgeStore:
             ):
                 image_vec = await embed_one_image(src_path)
 
+            fts_rows: List[Tuple[str, str, str, str, str]] = []
+
             for i, piece in enumerate(pieces):
                 ctype = str(piece.get("chunk_type") or "text")
                 parent_id = ""
@@ -568,14 +701,18 @@ class KnowledgeStore:
                         ctype = "image"
                 if vec:
                     emb_json = serialize_embedding(vec)
+                chunk_id = f"{doc_id}#{i}"
+                heading = str(piece.get("heading") or "")[:512]
+                context_header = str(piece.get("context_header") or "")[:1024]
+                body_piece = str(piece.get("content") or "")
                 session.add(
                     KnowledgeChunk(
-                        chunk_id=f"{doc_id}#{i}",
+                        chunk_id=chunk_id,
                         doc_id=doc_id,
                         chunk_index=i,
-                        heading=str(piece.get("heading") or "")[:512],
-                        context_header=str(piece.get("context_header") or "")[:1024],
-                        content=str(piece.get("content") or ""),
+                        heading=heading,
+                        context_header=context_header,
+                        content=body_piece,
                         char_start=int(piece.get("char_start") or 0),
                         char_end=int(piece.get("char_end") or 0),
                         embedding=emb_json,
@@ -585,11 +722,21 @@ class KnowledgeStore:
                         updated_at=datetime.now(timezone.utc),
                     )
                 )
+                fts_rows.append((chunk_id, heading, context_header, body_piece, ctype))
+            await self._replace_fts_doc(session, doc_id, fts_rows)
             await session.commit()
             return self._public(row)
 
     async def delete(self, doc_id: str) -> bool:
         async with self.session_factory() as session:
+            if self._fts_mode:
+                try:
+                    await session.execute(
+                        text("DELETE FROM knowledge_chunks_fts WHERE doc_id = :d"),
+                        {"d": doc_id},
+                    )
+                except Exception:
+                    pass
             await session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.doc_id == doc_id))
             res = await session.execute(delete(KnowledgeDoc).where(KnowledgeDoc.doc_id == doc_id))
             await session.commit()
@@ -685,6 +832,8 @@ class KnowledgeStore:
             tag_s = (tag or "").strip()
             if tag_s:
                 stmt = stmt.where(KnowledgeDoc.tags.ilike(f"%{tag_s}%"))
+            if not tag_s.startswith("session:"):
+                stmt = stmt.where(KnowledgeDoc.source != "session-upload")
             rows = (await session.execute(stmt)).scalars().all()
             return [self._public(r, include_content=False) for r in rows]
 
@@ -738,7 +887,13 @@ class KnowledgeStore:
         return self._public(preferred[0] if preferred else rows[0])
 
     async def search(
-        self, query: str, *, workspace_id: str = "", limit: int = 8, tag: str = ""
+        self,
+        query: str,
+        *,
+        workspace_id: str = "",
+        limit: int = 8,
+        tag: str = "",
+        session_id: str = "",
     ) -> List[Dict[str, Any]]:
         from src.core_kernel.plugin_runtime.knowledge_query import (
             expand_queries,
@@ -749,7 +904,9 @@ class KnowledgeStore:
 
         q = (query or "").strip()
         pool = max(limit * 3, 16)
-        hits = await self._search_once(q, workspace_id=workspace_id, limit=pool, tag=tag)
+        hits = await self._search_once(
+            q, workspace_id=workspace_id, limit=pool, tag=tag, session_id=session_id
+        )
         if should_expand(len(hits), limit):
             extras: List[Dict[str, Any]] = []
             for variant in expand_queries(q):
@@ -761,6 +918,7 @@ class KnowledgeStore:
                         query_vec=None,
                         skip_vector=True,
                         tag=tag,
+                        session_id=session_id,
                     )
                 )
             hits = merge_hits_by_id(hits, extras, limit=pool)
@@ -769,6 +927,12 @@ class KnowledgeStore:
     def _is_searchable_chunk(self, chunk: KnowledgeChunk) -> bool:
         ctype = (getattr(chunk, "chunk_type", None) or "text").strip() or "text"
         return ctype != "parent"
+
+    def _doc_visible_for_session(self, doc: KnowledgeDoc, session_id: str = "") -> bool:
+        return row_visible_for_session(
+            {"source": getattr(doc, "source", None) or "", "tags": getattr(doc, "tags", None) or ""},
+            session_id,
+        )
 
     async def _search_once(
         self,
@@ -779,6 +943,7 @@ class KnowledgeStore:
         query_vec: Optional[List[float]] = None,
         skip_vector: bool = False,
         tag: str = "",
+        session_id: str = "",
     ) -> List[Dict[str, Any]]:
         tokens = _tokens(query)
         q = (query or "").strip()
@@ -799,18 +964,24 @@ class KnowledgeStore:
                 KnowledgeChunk.chunk_type.is_(None),
             )
 
-            # --- Keyword candidate pool ---
+            # --- Keyword candidate pool (FTS5 when available, else ILIKE) ---
             kw_chunks: List[KnowledgeChunk] = []
-            likes = []
-            if q:
+            fts_ids = await self._fts_chunk_ids(session, q, limit=160) if q else []
+            if fts_ids:
+                stmt = select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(fts_ids))
+                stmt = stmt.where(not_parent)
+                if ws_filter is not None:
+                    stmt = stmt.where(ws_filter)
+                kw_chunks = list((await session.execute(stmt)).scalars().all())
+            if not kw_chunks and q:
+                likes = []
                 likes.append(KnowledgeChunk.content.ilike(f"%{q}%"))
                 likes.append(KnowledgeChunk.heading.ilike(f"%{q}%"))
                 likes.append(KnowledgeChunk.context_header.ilike(f"%{q}%"))
-            for t in tokens:
-                likes.append(KnowledgeChunk.content.ilike(f"%{t}%"))
-                likes.append(KnowledgeChunk.heading.ilike(f"%{t}%"))
-                likes.append(KnowledgeChunk.context_header.ilike(f"%{t}%"))
-            if likes:
+                for t in tokens:
+                    likes.append(KnowledgeChunk.content.ilike(f"%{t}%"))
+                    likes.append(KnowledgeChunk.heading.ilike(f"%{t}%"))
+                    likes.append(KnowledgeChunk.context_header.ilike(f"%{t}%"))
                 stmt = select(KnowledgeChunk).where(not_parent)
                 if ws_filter is not None:
                     stmt = stmt.where(ws_filter)
@@ -841,7 +1012,9 @@ class KnowledgeStore:
 
             if not chunks:
                 # Legacy whole-doc fallback when nothing chunked yet
-                return await self._search_docs(session, query, tokens, workspace_id, limit)
+                return await self._search_docs(
+                    session, query, tokens, workspace_id, limit, session_id=session_id
+                )
 
             extra_ids = {c.parent_chunk_id for c in chunks if getattr(c, "parent_chunk_id", "")}
             extra_ids.discard("")
@@ -869,6 +1042,8 @@ class KnowledgeStore:
         for c in chunks:
             doc = docs_by_id.get(c.doc_id)
             if not doc:
+                continue
+            if not self._doc_visible_for_session(doc, session_id):
                 continue
             header = getattr(c, "context_header", "") or ""
             kw = _score_text(
@@ -946,6 +1121,8 @@ class KnowledgeStore:
         tokens: List[str],
         workspace_id: str,
         limit: int,
+        *,
+        session_id: str = "",
     ) -> List[Dict[str, Any]]:
         stmt = select(KnowledgeDoc)
         if workspace_id:
@@ -969,6 +1146,7 @@ class KnowledgeStore:
         scored = [
             (_score_text(r.content or "", r.title or "", r.tags or "", tokens, query), r)
             for r in rows
+            if self._doc_visible_for_session(r, session_id)
         ]
         scored.sort(key=lambda x: x[0], reverse=True)
         out = []
@@ -1024,6 +1202,8 @@ class KnowledgeStore:
             "embedding_multimodal": bool(info.get("multimodal")),
             "hybrid_ready": bool(info.get("configured")) and embedded > 0,
             "parent_child": parent_child_enabled(),
+            "fts5": bool(self._fts_mode),
+            "fts5_tokenizer": self._fts_mode or "",
         }
 
     async def patch(

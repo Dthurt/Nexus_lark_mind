@@ -319,6 +319,7 @@ export function KnowledgeView({
             onChange={(e) => setQuery(e.target.value)}
             placeholder={remote ? `在「${label}」中搜索…` : "搜索本地知识库…"}
             className="h-8 text-[12px]"
+            data-testid="knowledge-search-input"
             onKeyDown={(e) => {
               if (e.key === "Enter") void onSearch();
             }}
@@ -328,6 +329,7 @@ export function KnowledgeView({
             size="sm"
             variant="secondary"
             className="h-8 px-2"
+            data-testid="knowledge-search-submit"
             disabled={loading || catalogLoading}
             onClick={() => void onSearch()}
           >
@@ -460,18 +462,21 @@ export function KnowledgeView({
             onChange={(e) => setTitle(e.target.value)}
             placeholder="标题（可选）"
             className="h-8 text-[12px]"
+            data-testid="knowledge-add-title"
           />
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder="粘贴 Markdown…"
             rows={2}
+            data-testid="knowledge-add-content"
             className="w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
           <Button
             type="button"
             size="sm"
             className="h-8 w-full"
+            data-testid="knowledge-add-submit"
             disabled={adding || !content.trim()}
             onClick={() => void onAddLocal()}
           >

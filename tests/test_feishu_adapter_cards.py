@@ -314,3 +314,34 @@ def test_session_setting_select_opens_preset():
         assert any(el.get("tag") == "select_static" for el in card_elements(card))
 
     asyncio.run(_run())
+
+
+def test_fetch_weknora_kbs_online_and_offline():
+    ad = _adapter()
+
+    async def _run():
+        async def _online(*_a, **_k):
+            return {
+                "ok": True,
+                "knowledge_bases": [{"id": "kb_1", "name": "Alpha"}],
+            }
+
+        ad.kernel.call = _online  # type: ignore[method-assign]
+        rows, note = await ad._fetch_weknora_kbs()
+        assert rows[0]["id"] == "kb_1"
+        assert note == ""
+
+        async def _down(*_a, **_k):
+            return {"ok": False, "error": "unreachable", "knowledge_bases": []}
+
+        ad.kernel.call = _down  # type: ignore[method-assign]
+        rows2, note2 = await ad._fetch_weknora_kbs()
+        assert rows2 == []
+        assert "WeKnora" in note2 or "不可用" in note2
+
+        ad.kernel = None
+        rows3, note3 = await ad._fetch_weknora_kbs()
+        assert rows3 == []
+        assert note3
+
+    asyncio.run(_run())

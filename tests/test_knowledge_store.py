@@ -191,6 +191,96 @@ async def test_patch_and_stats(store: KnowledgeStore):
     assert st["docs"] >= 1
     assert st["chunks"] >= 1
     assert "hybrid_ready" in st
+    assert "fts5" in st
+
+
+@pytest.mark.asyncio
+async def test_fts5_search_and_delete(store: KnowledgeStore):
+    await store.upsert(
+        doc_id="kb_fts_en",
+        title="Hybrid search",
+        content="Adapters orchestrator kernel FTS5 retrieval marker unique_nlm_fts_token.",
+        workspace_id="ws",
+    )
+    await store.upsert(
+        doc_id="kb_fts_zh",
+        title="知识检索",
+        content="本地知识库使用 SQLite 做中文子串检索 unique_cjk_fts_token。",
+        workspace_id="ws",
+    )
+    st = await store.stats()
+    hits_en = await store.search("unique_nlm_fts_token", workspace_id="ws", limit=5)
+    assert hits_en
+    assert hits_en[0]["doc_id"] == "kb_fts_en"
+    hits_zh = await store.search("unique_cjk_fts_token", workspace_id="ws", limit=5)
+    assert hits_zh
+    assert hits_zh[0]["doc_id"] == "kb_fts_zh"
+    assert await store.delete("kb_fts_en")
+    gone = await store.search("unique_nlm_fts_token", workspace_id="ws", limit=5)
+    assert all(h["doc_id"] != "kb_fts_en" for h in gone)
+
+
+@pytest.mark.asyncio
+async def test_session_upload_isolated(store: KnowledgeStore):
+    await store.upsert(
+        doc_id="upl_a",
+        title="Secret A",
+        content="session alpha unique_upload_alpha",
+        tags="session-upload,session:sA",
+        source="session-upload",
+        workspace_id="ws",
+    )
+    await store.upsert(
+        doc_id="upl_b",
+        title="Secret B",
+        content="session beta unique_upload_alpha",
+        tags="session-upload,session:sB",
+        source="session-upload",
+        workspace_id="ws",
+    )
+    listed = await store.list_docs(workspace_id="ws")
+    assert all(d["doc_id"] not in {"upl_a", "upl_b"} for d in listed)
+    tagged = await store.list_docs(tag="session:sA")
+    assert any(d["doc_id"] == "upl_a" for d in tagged)
+    hits_a = await store.search("unique_upload_alpha", workspace_id="ws", session_id="sA")
+    assert hits_a
+    assert all(h["doc_id"] != "upl_b" for h in hits_a)
+    hits_none = await store.search("unique_upload_alpha", workspace_id="ws")
+    assert all(h.get("source") != "session-upload" for h in hits_none)
+
+
+def test_row_visible_for_session_helper():
+    from src.core_kernel.plugin_runtime.knowledge_store import row_visible_for_session
+
+    assert row_visible_for_session({"source": "manual", "tags": ""}, "") is True
+    row = {"source": "session-upload", "tags": "session-upload,session:sA"}
+    assert row_visible_for_session(row, "sA") is True
+    assert row_visible_for_session(row, "sB") is False
+    assert row_visible_for_session(row, "") is False
+
+
+@pytest.mark.asyncio
+async def test_fts5_backfill_existing_chunks(store: KnowledgeStore):
+    from sqlalchemy import text
+
+    await store.upsert(
+        doc_id="kb_fts_old",
+        title="Legacy",
+        content="preexisting unique_fts_backfill_token in the local store.",
+        workspace_id="ws",
+    )
+    if not store._fts_mode:
+        return
+    async with store.session_factory() as session:
+        await session.execute(text("DELETE FROM knowledge_chunks_fts"))
+        await session.commit()
+    async with store.session_factory() as session:
+        conn = await session.connection()
+        await store._backfill_fts_if_empty(conn)
+        await session.commit()
+    hits = await store.search("unique_fts_backfill_token", workspace_id="ws", limit=5)
+    assert hits
+    assert hits[0]["doc_id"] == "kb_fts_old"
 
 
 @pytest.mark.asyncio
@@ -343,7 +433,31 @@ def test_ingest_txt_and_crude_pdf(tmp_path):
     pdf.write_bytes(b"%PDF-1.4\nBT (HelloPDFWorld) Tj ET\n%%EOF")
     text2, note2 = read_file_as_text(pdf)
     assert "HelloPDFWorld" in text2
+
+
+def test_read_bytes_as_text_matches_file():
+    from src.core_kernel.plugin_runtime.knowledge_ingest import read_bytes_as_text
+
+    text, note = read_bytes_as_text("# Hello\n".encode("utf-8"), ".md", filename="n.md")
+    assert "Hello" in text
+    assert note == ""
+    img, n2 = read_bytes_as_text(b"\x89PNG", ".png", filename="x.png")
+    assert "x.png" in img
+    assert n2 == "image-placeholder"
+    text2, note2 = read_file_as_text(pdf)
+    assert "HelloPDFWorld" in text2
     assert note2
+
+
+def test_read_bytes_as_text_matches_file():
+    from src.core_kernel.plugin_runtime.knowledge_ingest import read_bytes_as_text
+
+    text, note = read_bytes_as_text("# Hello\n".encode("utf-8"), ".md", filename="n.md")
+    assert "Hello" in text
+    assert note == ""
+    img, n2 = read_bytes_as_text(b"\x89PNG", ".png", filename="x.png")
+    assert "x.png" in img
+    assert n2 == "image-placeholder"
 
 
 @pytest.mark.asyncio

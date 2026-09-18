@@ -4,7 +4,7 @@
 
 | Layer | Role |
 |-------|------|
-| **Workspace registry** | UI project list in `data/workspaces.json` (`id`, `path`, `title`, `session_ids`) |
+| **Workspace registry** | UI project list in `data/workspaces.json` (`id`, `path`, `title`, `session_ids`, `trusted`) |
 | **Session `cwd`** | Bound once on the Redis session; tools resolve paths against it |
 | **Tools** | `builtin.workspace` — `glob` / `grep` / `list_dir` / `read_file` / `write_file` / `edit_file` / `run_shell`; plus `builtin.subagent` — see [subagents.md](./subagents.md) |
 
@@ -24,6 +24,7 @@ See also: [ssh-workspaces.md](./ssh-workspaces.md)
 ```bash
 GET    /api/workspaces
 POST   /api/workspaces                 # { "path": "E:\\proj", "title": "optional" }
+PATCH  /api/workspaces/{id}            # { "trusted": true }  — allow cwd Python extensions/hooks
 DELETE /api/workspaces/{id}
 GET    /api/workspaces/browse?path=    # local directory browser
 
@@ -67,6 +68,16 @@ When a **local** cwd is bound, NLM may write session artifacts under the workspa
 | `.nlm/instructions.md` | (optional, user) | Injected with `AGENTS.md` / `CLAUDE.md` into the system prompt |
 
 SSH workspaces: chat file cards still work; **disk writes under `.nlm/` are local-only** today (same constraint as Delivery).
+
+## Workspace trust (cwd Python)
+
+Binding a folder prompts **信任此文件夹？**. Until `trusted=true` in `data/workspaces.json`:
+
+- `<cwd>/.nlm/extensions/*.py` and `<cwd>/.nlm/hooks/*.py` are **not** `exec`’d
+- bundled `plugins_volume/extensions` and `plugins_volume/hooks` still load
+- Markdown skills (`.nlm/skills`) remain readable
+
+`GET /api/extensions?cwd=` reports `workspace_trusted`, `skipped`, and `skip_reason` so the UI does not advertise tools that will not run. Revoking trust unloads cwd Python on the next discovery (agent turn), instead of leaving previously `exec`’d tools in the process registry. See [pi-inspired-extensions.md](./pi-inspired-extensions.md).
 
 See [canvas.md](./canvas.md), [interaction-modes.md](./interaction-modes.md), [ssh-workspaces.md](./ssh-workspaces.md).
 

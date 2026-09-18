@@ -329,7 +329,7 @@ def test_extension_event_bus_and_active_tools(tmp_path: Path):
         encoding="utf-8",
     )
     get_extension_registry().reset()
-    discover_and_load_extensions(str(tmp_path), reload=True)
+    discover_and_load_extensions(str(tmp_path), reload=True, allow_workspace_code=True)
     hook = run_tool_call_hooks({"tool": "write_file", "base": "write_file", "arguments": {}})
     assert hook.get("block") is True
     assert get_extension_registry().get_active_tools() == ["read_file"]

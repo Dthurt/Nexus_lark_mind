@@ -21,15 +21,15 @@ Optional               ──► WeKnora HTTP (weknora_client) when WEKNORA_BASE
 | Workspace sync | `src/core_kernel/plugin_runtime/knowledge_sync.py` |
 | WeKnora HTTP client | `src/core_kernel/plugin_runtime/weknora_client.py` |
 | Agent tools | `src/core_kernel/plugin_runtime/knowledge_tools.py` |
-| Kernel RPC | `src/core_kernel/rpc_server.py` (`/rpc/knowledge/*`) |
-| Adapters REST | `src/adapters/app.py` (`/api/knowledge/*`) |
+| Kernel RPC | `src/core_kernel/knowledge_rpc.py` (`/rpc/knowledge/*`, registered from `rpc_server.py`) |
+| Adapters REST | `src/adapters/knowledge_routes.py` (`/api/knowledge/*` + session uploads) |
 | Knowledge page | `web/src/components/knowledge/KnowledgeView.tsx` |
 | Composer picker | `web/src/components/knowledge/KnowledgeScopePicker.tsx` |
 | Dock admin panel | `web/src/components/layout/KnowledgePanel.tsx` |
 
-**Tables:** `knowledge_docs`, `knowledge_chunks`, `knowledge_sync_log`.
+**Tables:** `knowledge_docs`, `knowledge_chunks`, `knowledge_sync_log`, plus optional FTS5 virtual table `knowledge_chunks_fts`.
 
-Documents are split heading-aware (breadcrumb `context_header` stored separately from body). Long docs use **parent/child** chunks (WeKnora-style, `KB_PARENT_CHILD=1` default): search the ~384-char child, expand a short hit from its ~2048-char parent. Overlap stays ~15%. Search ranks **children** with keyword scoring (CJK bigrams + Latin tokens). Thin recall optionally runs **local query expansion** (stopword strip / quoted phrases / question-word peel — no LLM; `KB_QUERY_EXPAND=0` to disable). When `KB_EMBEDDING_*` or `WEMM_BASE_URL` is set, hybrid merge also scores chunks that have stored vectors — **even if keyword ILIKE misses**. Embeddings index `context_header + body`. `kb_read` / GET read return a char window or a chunk plus neighbors, with a `citation` provenance line (heading path included).
+Documents are split heading-aware (breadcrumb `context_header` stored separately from body). Long docs use **parent/child** chunks (WeKnora-style, `KB_PARENT_CHILD=1` default): search the ~384-char child, expand a short hit from its ~2048-char parent. Overlap stays ~15%. Keyword recall uses **SQLite FTS5** when the build supports it (`tokenize='trigram'` first for CJK substrings, else `unicode61`). If FTS5 is missing (some slim SQLite builds), search falls back to ILIKE token matching. Thin recall optionally runs **local query expansion** (stopword strip / quoted phrases / question-word peel — no LLM; `KB_QUERY_EXPAND=0` to disable). When `KB_EMBEDDING_*` or `WEMM_BASE_URL` is set, hybrid merge also scores chunks that have stored vectors — **even if keyword FTS/ILIKE misses**. Embeddings index `context_header + body`. A second-stage token rerank (`rerank_hits`) is unchanged. `kb_stats` reports `fts5` / `fts5_tokenizer`. `kb_read` / GET read return a char window or a chunk plus neighbors, with a `citation` provenance line (heading path included).
 
 ## Agent tools
 
@@ -74,6 +74,14 @@ Placeholder: `基于「xxx」提问`. **在知识库中打开** jumps to the Kno
 same selection. `/api/chat` also sends `weknora_kb_id` on the turn so a picker change is
 not lost if the session patch is still in flight.
 
+Composer **添加文件** uploads into a session-scoped knowledge document (`source=session-upload`,
+tag `session:{id}`) via `POST /api/sessions/{session_id}/uploads`. Types follow
+`SUPPORTED_SUFFIXES` (~512KB). Grounding and `kb_search` for that session include these
+docs; other sessions do not see them. Chips on the composer revoke the upload. Files live
+under `data/session_uploads/{session_id}/` until the chip is removed or the session is
+deleted (`DELETE /api/sessions/{id}` also purges those docs). Adapters reject uploads over
+~512KB before proxying to the kernel.
+
 ### Dock (admin)
 
 Right dock tab **知识库** remains ingest/sync/reindex (Command Palette → 右坞):
@@ -116,6 +124,9 @@ Query/body may include `workspace_id` and `cwd` where relevant.
 - `POST /api/knowledge/weknora/search`
 - `POST /api/knowledge/weknora/push`
 - `POST /api/knowledge/weknora/sync`
+- `POST /api/sessions/{session_id}/uploads` — multipart session file → tagged KB doc
+- `GET /api/sessions/{session_id}/uploads`
+- `DELETE /api/sessions/{session_id}/uploads/{doc_id}`
 
 ## Workspace docs sync
 
@@ -164,7 +175,10 @@ Vectors are stored as JSON on chunks. After configuring embeddings on an existin
 | `KB_RERANK_URL` | off | Optional HTTP reranker (OpenAI/Cohere-shaped JSON) |
 | `KB_EMBEDDING_*` / `WEMM_*` | off | Optional hybrid + image vectors |
 
-Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape (not WeKnora anydoc). `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags.
+FTS5 has **no env switch**: `ensure_schema` tries trigram → unicode61 and keeps ILIKE if both fail.
+Existing databases get an empty FTS table **backfilled** from `knowledge_chunks` on first open.
+
+Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape (not WeKnora anydoc). `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags. Pass `session_id` on search to include that session’s temporary uploads.
 
 ## Optional WeKnora bridge
 
@@ -185,7 +199,7 @@ WEKNORA_KB_ID=...            # default knowledge-base id
 | Search | Prefer `POST /api/v1/knowledge-search`; tool `weknora_search` (+ `kb_id`). Requires a KB id — does not pick the first listed KB. Session-bound chat forces that `kb_id` even if the model omits or passes another. |
 | Turn grounding | Server-side search injected as `<knowledge_context>` (`src/core_kernel/kb_grounding.py`) |
 | Read | `weknora_read` / `GET /api/knowledge/weknora/item` for the full remote body |
-| Multi-KB | `weknora_list_kbs` / `GET /api/knowledge/weknora/kbs`; Dock KB picker |
+| Multi-KB | `weknora_list_kbs` / `GET /api/knowledge/weknora/kbs`; Dock / composer / Feishu `/知识库` picker |
 | Route | Explicit `kb_id` → session `weknora_kb_id` → `WEKNORA_KB_MAP[workspace]` → `WEKNORA_KB_ID` |
 | Push | `weknora_push` / `POST /api/knowledge/weknora/push`. If a remote id is already known, **update or skip** (no append-only second POST). Title+content push records local identity. |
 | Sync | `weknora_sync` direction=`push\|pull\|both` with content_hash skip. Dirty local (hash ≠ last pull/push) is a **conflict** — pull does not overwrite. |
@@ -206,7 +220,7 @@ Feishu / GitLab connectors: prefer ingesting into WeKnora first, then `weknora_s
 
 1. Start the stack (`nlm start` / `scripts/dev.bat`), open the workbench, bind a workspace.
 2. Topbar **知识库** (or composer picker → 在知识库中打开): choose 本地知识库 or a WeKnora KB, search, open a hit, then ask in the right-hand chat.
-3. On the main composer, the **知识库** chip is always visible; changing it binds the session.
-4. In chat (tools on): the turn is pre-retrieved against that KB; the agent should still `kb_read` / `weknora_read` and cite paths.
+3. On the main composer, the **知识库** chip is always visible; changing it binds the session. **添加文件** uploads a temporary doc for this session only.
+4. In chat (tools on): the turn is pre-retrieved against that KB (plus this session’s uploads); the agent should still `kb_read` / `weknora_read` and cite paths.
 5. Or: `curl "http://127.0.0.1:8000/api/knowledge/search?query=architecture"`
 6. Optional: set `KB_EMBEDDING_*`, sync/add docs, then Dock **回填向量** / `kb_reindex`.

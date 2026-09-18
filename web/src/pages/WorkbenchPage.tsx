@@ -704,6 +704,8 @@ export function WorkbenchPage({
                   knowledgeHealth={knowledgeCatalog.health}
                   onWeknoraKbChange={(id, name) => void bindKnowledgeBase(id, name)}
                   onOpenKnowledge={openKnowledgeView}
+                  sessionId={sessionId}
+                  workspaceId={workspaceId}
                 />
               );
 

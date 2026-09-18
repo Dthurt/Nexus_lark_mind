@@ -50,6 +50,11 @@ Python modules under:
 plugins_volume/extensions/*.py
 ```
 
+`<cwd>/.nlm/extensions` Python is loaded only after the workspace is **trusted**
+(VS Code-style folder trust). `plugins_volume/extensions` always loads.
+Markdown skills stay readable either way. `GET /api/extensions` lists skipped
+cwd modules with `skip_reason` when untrusted.
+
 ```python
 def register(api):
     api.on("tool_call", handler)           # may return block / arguments / command / cwd / env
@@ -158,6 +163,9 @@ PATCH /api/sessions/{id}/interaction  { "preset_name": "code-review", "cwd": "..
 <cwd>/.nlm/hooks/session_persist.py
 plugins_volume/hooks/*.py
 ```
+
+Workspace-folder hooks under `<cwd>/.nlm/hooks` run only when that workspace is
+trusted. Bundled `plugins_volume/hooks` always run.
 
 ```python
 def pre_tool(ctx: dict) -> dict | None:

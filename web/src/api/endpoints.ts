@@ -1,10 +1,4 @@
-import {
-  apiDelete,
-  apiGet,
-  apiPatch,
-  apiPost,
-  apiPut,
-} from "@/api/client";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, parseError } from "@/api/client";
 import type {
   AcceptPlanBody,
   AskAnswersBody,
@@ -281,6 +275,45 @@ export function postSessionFile(
   return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/files`, body);
 }
 
+export async function uploadSessionDoc(
+  sessionId: string,
+  file: File,
+  workspaceId = "",
+): Promise<SessionUploadDoc> {
+  const form = new FormData();
+  form.append("file", file);
+  if (workspaceId) form.append("workspace_id", workspaceId);
+  const qs = workspaceId
+    ? `?workspace_id=${encodeURIComponent(workspaceId)}`
+    : "";
+  const resp = await fetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/uploads${qs}`,
+    { method: "POST", body: form },
+  );
+  const json = await resp.json().catch(() => null);
+  if (!resp.ok || !json?.ok) {
+    throw new Error(parseError(json, `HTTP ${resp.status}`));
+  }
+  return json.data as SessionUploadDoc;
+}
+
+export function listSessionUploads(
+  sessionId: string,
+): Promise<{ docs: SessionUploadDoc[]; session_id?: string }> {
+  return apiGet(
+    `/api/sessions/${encodeURIComponent(sessionId)}/uploads`,
+  );
+}
+
+export function deleteSessionUpload(
+  sessionId: string,
+  docId: string,
+): Promise<{ ok?: boolean; doc_id?: string }> {
+  return apiDelete(
+    `/api/sessions/${encodeURIComponent(sessionId)}/uploads/${encodeURIComponent(docId)}`,
+  );
+}
+
 /** Chat file card + optional ``.nlm/deliveries/`` write on local cwd. */
 export function postSessionDelivery(
   sessionId: string,
@@ -394,6 +427,16 @@ export function createWorkspace(body: {
 export function deleteWorkspace(id: string): Promise<{ deleted: string }> {
   return apiDelete<{ deleted: string }>(
     `/api/workspaces/${encodeURIComponent(id)}`,
+  );
+}
+
+export function patchWorkspaceRecord(
+  id: string,
+  body: { trusted?: boolean },
+): Promise<Workspace> {
+  return apiPatch<Workspace>(
+    `/api/workspaces/${encodeURIComponent(id)}`,
+    body,
   );
 }
 
@@ -734,6 +777,14 @@ export type KnowledgeStats = {
   embeddings_configured: boolean;
   embedding_model?: string;
   hybrid_ready: boolean;
+  fts5?: boolean;
+  fts5_tokenizer?: string;
+};
+
+export type SessionUploadDoc = KnowledgeDoc & {
+  filename?: string;
+  bytes?: number;
+  session_id?: string;
 };
 
 export type KnowledgeSyncEntry = {

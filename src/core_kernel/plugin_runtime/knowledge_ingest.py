@@ -11,6 +11,7 @@ PDF_SUFFIXES = {".pdf"}
 OFFICE_SUFFIXES = {".docx", ".xlsx", ".pptx"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 SUPPORTED_SUFFIXES = TEXT_SUFFIXES | PDF_SUFFIXES | OFFICE_SUFFIXES | IMAGE_SUFFIXES
+MAX_INGEST_BYTES = 512_000
 
 
 def is_ingestible(path: Path) -> bool:
@@ -18,18 +19,31 @@ def is_ingestible(path: Path) -> bool:
 
 
 def read_file_as_text(
-    path: Path, *, max_bytes: int = 512_000
+    path: Path, *, max_bytes: int = MAX_INGEST_BYTES
 ) -> Tuple[str, str]:
     """Return (text, note). note is empty on success; non-empty explains degrade."""
     raw = path.read_bytes()
+    return read_bytes_as_text(raw, path.suffix, filename=path.name, max_bytes=max_bytes)
+
+
+def read_bytes_as_text(
+    raw: bytes,
+    suffix: str,
+    *,
+    filename: str = "",
+    max_bytes: int = MAX_INGEST_BYTES,
+) -> Tuple[str, str]:
+    """Same extractors as ``read_file_as_text`` but from in-memory bytes."""
     if len(raw) > max_bytes:
         raise ValueError(f"file too large ({len(raw)} bytes, max {max_bytes})")
-    suffix = path.suffix.lower()
+    suffix = (suffix or "").lower()
+    if not suffix.startswith("."):
+        suffix = f".{suffix}" if suffix else ""
+    name = filename or f"upload{suffix}"
     if suffix in IMAGE_SUFFIXES:
         return (
-            f"![image]({path.name})\n\n"
-            f"Visual document: {path.name}\n"
-            f"Path: {path.as_posix()}\n",
+            f"![image]({name})\n\n"
+            f"Visual document: {name}\n",
             "image-placeholder",
         )
     if suffix in PDF_SUFFIXES:
@@ -42,9 +56,7 @@ def read_file_as_text(
         if not text.strip():
             raise ValueError(note or f"{suffix} produced no extractable text")
         return text, note
-    # Plain / markdown family
     text = raw.decode("utf-8", errors="replace")
-    # Strip UTF-8 BOM
     if text.startswith("\ufeff"):
         text = text[1:]
     return text, ""
@@ -164,3 +176,7 @@ def default_tags_for_path(path: Path) -> str:
     if suf in {".txt", ".rst", ".org"}:
         return "file,text"
     return "file"
+
+
+def default_tags_for_name(filename: str) -> str:
+    return default_tags_for_path(Path(filename or "upload.txt"))

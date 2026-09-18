@@ -179,7 +179,9 @@ async def retrieve_bound_knowledge(
 
         kb = KnowledgeStore(get_session_factory())
         await kb.ensure_schema()
-    hits = await kb.search(q, workspace_id=workspace_id, limit=n)
+    hits = await kb.search(
+        q, workspace_id=workspace_id, limit=n, session_id=str(meta.get("session_id") or "")
+    )
     return {
         "ok": True,
         "source": "local",

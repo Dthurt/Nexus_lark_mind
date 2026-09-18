@@ -1586,12 +1586,32 @@ def build_kb_pick_card(
     session_id: str,
     chat_id: str,
     current_kb: str = "",
+    remote_kbs: Optional[Sequence[Dict[str, Any]]] = None,
+    offline_note: str = "",
 ) -> Dict[str, Any]:
     options = [{"label": "本地知识库", "value": "local"}]
     current = (current_kb or "").strip()
-    if current and current != "local":
+    seen = {"local"}
+    for row in list(remote_kbs or [])[:20]:
+        if not isinstance(row, dict):
+            continue
+        kid = str(row.get("id") or row.get("kb_id") or "").strip()
+        if not kid or kid in seen:
+            continue
+        seen.add(kid)
+        name = str(row.get("name") or row.get("title") or kid)
+        options.append({"label": truncate(name, 40), "value": kid})
+    if current and current != "local" and current not in seen:
         options.append({"label": truncate(f"当前绑定 · {current}", 40), "value": current})
-    note = "飞书侧不拉取远程 WeKnora 列表。可切回本地知识库；远程 KB 请在 Web 绑定。"
+    if offline_note:
+        note = offline_note
+    elif len(options) > 1:
+        note = "选择本地 SQLite 或远程 WeKnora 知识库。绑定后本对话检索走该库。"
+    else:
+        note = "未配置 WeKnora 或列表为空。可使用本地知识库；配置后可在此切换远程库。"
+    initial = "local"
+    if current and current != "local":
+        initial = current if any(o["value"] == current for o in options) else "local"
     return build_select_card(
         title="绑定知识库",
         markdown=note,
@@ -1602,7 +1622,7 @@ def build_kb_pick_card(
         chat_id=chat_id,
         placeholder="选择知识库",
         subtitle="本地优先",
-        initial="local",
+        initial=initial,
     )
 
 

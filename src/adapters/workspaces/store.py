@@ -44,6 +44,7 @@ class WorkspaceRecord(BaseModel):
     kind: str = "local"  # local | ssh
     ssh_host_id: str = ""
     session_ids: List[str] = Field(default_factory=list)
+    trusted: bool = False
     created_at: str = ""
     updated_at: str = ""
 
@@ -57,6 +58,7 @@ class WorkspaceRecord(BaseModel):
                 "ssh_host_id": self.ssh_host_id,
                 "exists": True,
                 "is_dir": True,
+                "trusted": bool(self.trusted),
                 "session_ids": list(self.session_ids),
                 "session_count": len(self.session_ids),
                 "created_at": self.created_at,
@@ -71,6 +73,7 @@ class WorkspaceRecord(BaseModel):
             "ssh_host_id": "",
             "exists": p.exists(),
             "is_dir": p.is_dir() if p.exists() else False,
+            "trusted": bool(self.trusted),
             "session_ids": list(self.session_ids),
             "session_count": len(self.session_ids),
             "created_at": self.created_at,
@@ -123,9 +126,11 @@ class WorkspaceStore:
         return self.workspaces.get(workspace_id)
 
     def find_by_path(self, path: Path) -> Optional[WorkspaceRecord]:
+        from src.core_kernel.workspace_trust import paths_equivalent
+
         key = str(path)
         for w in self.workspaces.values():
-            if w.kind == "local" and w.path == key:
+            if w.kind == "local" and paths_equivalent(w.path, key):
                 return w
         return None
 
@@ -187,6 +192,15 @@ class WorkspaceStore:
             updated_at=now,
         )
         self.workspaces[rec.id] = rec
+        self.save()
+        return rec
+
+    def set_trusted(self, workspace_id: str, trusted: bool) -> Optional[WorkspaceRecord]:
+        rec = self.workspaces.get(workspace_id)
+        if not rec:
+            return None
+        rec.trusted = bool(trusted)
+        rec.updated_at = _now()
         self.save()
         return rec
 

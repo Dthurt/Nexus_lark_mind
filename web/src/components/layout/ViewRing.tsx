@@ -51,6 +51,7 @@ export function ViewRing({
             aria-selected={active}
             title={v.label}
             aria-label={v.label}
+            data-testid={`view-ring-${v.id}`}
             className={cn(
               "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors",
               "hover:text-foreground",

@@ -150,6 +150,12 @@ class ExtensionRegistry:
     commands: Dict[str, CommandDef] = field(default_factory=dict)
     flags: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     loaded: List[str] = field(default_factory=list)
+    skipped: List[Dict[str, str]] = field(default_factory=list)
+    workspace_trusted: bool = False
+    skip_reason: str = ""
+    loaded_cwd: str = ""
+    loaded_allow_workspace_code: bool = False
+    _discover_key: str = ""
     _active_tools: Optional[Set[str]] = None
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
@@ -265,6 +271,12 @@ class ExtensionRegistry:
             self.commands.clear()
             self.flags.clear()
             self.loaded.clear()
+            self.skipped.clear()
+            self.workspace_trusted = False
+            self.skip_reason = ""
+            self.loaded_cwd = ""
+            self.loaded_allow_workspace_code = False
+            self._discover_key = ""
             self._active_tools = None
         self.bus.clear()
 
@@ -276,9 +288,11 @@ def get_extension_registry() -> ExtensionRegistry:
     return _GLOBAL
 
 
-def _extension_dirs(cwd: Optional[str] = None) -> List[Path]:
+def _extension_dirs(
+    cwd: Optional[str] = None, *, allow_workspace_code: bool = False
+) -> List[Path]:
     paths: List[Path] = []
-    if cwd:
+    if cwd and allow_workspace_code:
         paths.append(Path(cwd) / ".nlm" / "extensions")
     paths.append(Path("plugins_volume") / "extensions")
     root = Path(__file__).resolve().parents[2]
@@ -300,13 +314,41 @@ def discover_and_load_extensions(
     *,
     registry: Optional[ExtensionRegistry] = None,
     reload: bool = False,
+    allow_workspace_code: Optional[bool] = None,
 ) -> ExtensionRegistry:
     """Scan extension dirs and call register(api) on each module."""
+    from src.core_kernel.workspace_trust import is_workspace_code_allowed
+
     reg = registry or get_extension_registry()
-    if reload:
-        reg.reset()
+    cwd_key = (cwd or "").strip()
+    allowed = (
+        bool(allow_workspace_code)
+        if allow_workspace_code is not None
+        else is_workspace_code_allowed(cwd)
+    )
+    discover_key = f"{cwd_key}|{int(bool(allowed))}"
+    if not reload and reg._discover_key == discover_key:
+        return reg
+    # Cwd or trust flipped (or first load): drop previously exec'd cwd tools.
+    reg.reset()
+    reg.workspace_trusted = allowed
+    reg.loaded_cwd = cwd_key
+    reg.loaded_allow_workspace_code = allowed
+    if cwd and not allowed:
+        skipped_dir = Path(cwd) / ".nlm" / "extensions"
+        reason = "workspace not trusted"
+        reg.skip_reason = reason
+        if skipped_dir.is_dir():
+            try:
+                for path in sorted(skipped_dir.glob("*.py")):
+                    if path.name.startswith("_"):
+                        continue
+                    reg.skipped.append({"path": str(path), "reason": reason})
+            except OSError:
+                pass
+        logger.info("skipping untrusted workspace extensions under %s", skipped_dir)
     seen: Set[str] = set()
-    for directory in _extension_dirs(cwd):
+    for directory in _extension_dirs(cwd, allow_workspace_code=allowed):
         if not directory.is_dir():
             continue
         try:
@@ -337,6 +379,7 @@ def discover_and_load_extensions(
                 reg.loaded.append(str(path))
             except Exception as exc:
                 logger.warning("extension register failed (%s): %s", path, exc)
+    reg._discover_key = discover_key
     return reg
 
 

@@ -395,6 +395,20 @@ def test_preset_kb_selects_and_extract_stats():
     kb = build_kb_pick_card(session_id="s", chat_id="oc_1", current_kb="kb_demo")
     _assert_schema_v2(kb)
     assert {o["option"] for o in iter_select_options(kb)} >= {"local", "kb_demo"}
+    remote = build_kb_pick_card(
+        session_id="s",
+        chat_id="oc_1",
+        current_kb="kb_a",
+        remote_kbs=[{"id": "kb_a", "name": "Alpha"}, {"id": "kb_b", "name": "Beta"}],
+    )
+    _assert_schema_v2(remote)
+    assert {o["option"] for o in iter_select_options(remote)} >= {"local", "kb_a", "kb_b"}
+    offline = build_kb_pick_card(
+        session_id="s",
+        chat_id="oc_1",
+        offline_note="WeKnora 不可用：offline。可切回本地知识库。",
+    )
+    assert "WeKnora 不可用" in card_plain_text(offline)
     payload = {
         "name": "kb_stats",
         "success": True,

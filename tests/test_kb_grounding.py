@@ -182,6 +182,34 @@ def test_inject_skips_when_already_grounded():
     assert out[0].content == original.content
 
 
+@pytest.mark.asyncio
+async def test_retrieve_includes_session_upload_for_that_session(store):
+    await store.upsert(
+        doc_id="upl_sess",
+        title="Session note",
+        content="unique_session_grounding_token lives only in this upload",
+        tags="session-upload,session:s-ground",
+        source="session-upload",
+        workspace_id="ws1",
+        content_hash_value=content_hash("unique_session_grounding_token lives only in this upload"),
+    )
+    out = await retrieve_bound_knowledge(
+        "unique_session_grounding_token",
+        {"weknora_kb_id": "", "workspace_id": "ws1", "session_id": "s-ground"},
+        store=store,
+        weknora_search_fn=AsyncMock(side_effect=AssertionError("no weknora")),
+    )
+    assert out["hit_count"] >= 1
+    assert any(h.get("doc_id") == "upl_sess" for h in out["results"])
+    hidden = await retrieve_bound_knowledge(
+        "unique_session_grounding_token",
+        {"weknora_kb_id": "", "workspace_id": "ws1", "session_id": "other"},
+        store=store,
+        weknora_search_fn=AsyncMock(side_effect=AssertionError("no weknora")),
+    )
+    assert all(h.get("doc_id") != "upl_sess" for h in hidden["results"])
+
+
 def test_format_grounding_mentions_tools():
     text = format_grounding_block(
         {

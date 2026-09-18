@@ -177,12 +177,15 @@ class FeishuAdapter(BaseAdapter):
                 return None
             if is_kb_command(text):
                 session = await self._get_session(session_id)
+                kbs, offline = await self._fetch_weknora_kbs()
                 await self._deliver_pick_card(
                     msg.chat_id,
                     build_kb_pick_card(
                         session_id=session_id,
                         chat_id=msg.chat_id,
                         current_kb=str((session or {}).get("weknora_kb_id") or ""),
+                        remote_kbs=kbs,
+                        offline_note=offline,
                     ),
                 )
                 return None
@@ -243,6 +246,32 @@ class FeishuAdapter(BaseAdapter):
         except Exception:
             logger.exception("Failed to patch Feishu session %s", session_id)
             return {}
+
+    async def _fetch_weknora_kbs(self) -> tuple[list[Dict[str, Any]], str]:
+        """Return (knowledge_bases, offline_note). Note is empty when the list loaded."""
+        if self.kernel is None:
+            return [], "内核未连接，仅可切回本地知识库。"
+        try:
+            data = await self.kernel.call(
+                "GET", "/rpc/knowledge/weknora/kbs", params={"limit": 20}
+            )
+        except Exception:
+            logger.exception("Failed to list WeKnora KBs for Feishu pick")
+            return [], "无法拉取远程知识库列表。可切回本地；远程绑定请稍后重试。"
+        if not isinstance(data, dict):
+            return [], "远程知识库响应无效。可使用本地知识库。"
+        if data.get("skipped") or not data.get("ok", True):
+            err = str(data.get("error") or data.get("reason") or "").strip()
+            if err:
+                return [], f"WeKnora 不可用：{err}。可切回本地知识库。"
+            return [], "未配置 WeKnora。可使用本地知识库。"
+        rows = data.get("knowledge_bases") or []
+        if not isinstance(rows, list):
+            rows = []
+        kbs = [r for r in rows if isinstance(r, dict)]
+        if not kbs:
+            return [], "远程列表为空。可使用本地知识库。"
+        return kbs[:20], ""
 
     async def _fetch_catalog_choices(self) -> List[Dict[str, Any]]:
         if self.kernel is None:

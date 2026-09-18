@@ -75,11 +75,24 @@ def test_pre_compact_and_session_persist_hooks(tmp_path: Path) -> None:
         "def session_persist(ctx):\n    return {'entries': [{'kind': 'ping'}]}\n",
         encoding="utf-8",
     )
-    pre = run_pre_compact_hook(session_id="s1", cwd=str(tmp_path), model="x", message_count=3)
+    pre = run_pre_compact_hook(
+        session_id="s1",
+        cwd=str(tmp_path),
+        model="x",
+        message_count=3,
+        allow_workspace_code=True,
+    )
     assert pre.get("skip") is True
-    post = run_post_compact_hook(session_id="s1", cwd=str(tmp_path), compact_info={"via": "llm"})
+    post = run_post_compact_hook(
+        session_id="s1",
+        cwd=str(tmp_path),
+        compact_info={"via": "llm"},
+        allow_workspace_code=True,
+    )
     assert post.get("ok") is True
-    persist = run_session_persist_hook(session_id="s1", cwd=str(tmp_path), role="user")
+    persist = run_session_persist_hook(
+        session_id="s1", cwd=str(tmp_path), role="user", allow_workspace_code=True
+    )
     assert persist.get("entries") == [{"kind": "ping"}]
 
 
@@ -117,6 +130,7 @@ def test_pre_tool_hook_blocks_env(tmp_path: Path, monkeypatch) -> None:
         base="write_file",
         arguments={"path": "foo/.env", "content": "x"},
         cwd=str(tmp_path),
+        allow_workspace_code=True,
     )
     assert out.get("block") is True
     assert "env" in str(out.get("reason") or "").lower()
@@ -126,6 +140,7 @@ def test_pre_tool_hook_blocks_env(tmp_path: Path, monkeypatch) -> None:
         base="write_file",
         arguments={"path": "readme.md", "content": "x"},
         cwd=str(tmp_path),
+        allow_workspace_code=True,
     )
     assert ok.get("block") is False
 

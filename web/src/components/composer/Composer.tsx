@@ -15,6 +15,7 @@ import { motion, useReducedMotion } from "motion/react";
 
 import type { InboxItem } from "@/api/endpoints";
 import type { WeknoraHealth, WeknoraKb } from "@/api/endpoints";
+import { deleteSessionUpload, listSessionUploads, uploadSessionDoc } from "@/api/endpoints";
 import { ContextMeter } from "@/components/chat/ContextMeter";
 import { KnowledgeScopePicker } from "@/components/knowledge/KnowledgeScopePicker";
 import { MentionPopover } from "@/components/composer/MentionPopover";
@@ -107,6 +108,8 @@ export type ComposerProps = {
   knowledgeHealth?: WeknoraHealth | null;
   onWeknoraKbChange?: (kbId: string, kbName: string) => void;
   onOpenKnowledge?: () => void;
+  sessionId?: string;
+  workspaceId?: string;
   className?: string;
 };
 
@@ -172,6 +175,8 @@ export function Composer({
   knowledgeHealth = null,
   onWeknoraKbChange,
   onOpenKnowledge,
+  sessionId = "",
+  workspaceId = "",
   className,
 }: ComposerProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -181,6 +186,33 @@ export function Composer({
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [listening, setListening] = useState(false);
+  const [uploads, setUploads] = useState<Array<{ doc_id: string; title: string }>>([]);
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setUploads([]);
+      return;
+    }
+    let cancelled = false;
+    void listSessionUploads(sessionId)
+      .then((data) => {
+        if (cancelled) return;
+        const docs = data?.docs || [];
+        setUploads(
+          docs.map((d) => ({
+            doc_id: String(d.doc_id || ""),
+            title: String(d.title || d.filename || d.doc_id || "upload"),
+          })).filter((u) => u.doc_id),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setUploads([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
   const recognitionRef = useRef<any>(null);
   const voiceBaseRef = useRef("");
   const valueRef = useRef(value);
@@ -472,10 +504,30 @@ export function Composer({
     fileInputRef.current?.click();
   }
 
-  function onFilePicked(ev: ChangeEvent<HTMLInputElement>) {
+  async function onFilePicked(ev: ChangeEvent<HTMLInputElement>) {
     const file = ev.target.files?.[0];
     if (!file) return;
     const name = file.name || "file";
+    if (sessionId) {
+      setUploading(true);
+      try {
+        const row = await uploadSessionDoc(sessionId, file, workspaceId);
+        const title = String(row.title || name);
+        const docId = String(row.doc_id || "");
+        if (docId) {
+          setUploads((prev) => [...prev.filter((u) => u.doc_id !== docId), { doc_id: docId, title }]);
+        }
+        toast.success(`已上传 ${title}，本轮对话会检索该附件`);
+      } catch (err: any) {
+        toast.error(String(err?.message || err || "上传失败"));
+      } finally {
+        setUploading(false);
+        ev.target.value = "";
+        closeMenu();
+        requestAnimationFrame(() => plusBtnRef.current?.focus());
+      }
+      return;
+    }
     const pathHint = (file as any).path || name;
     onAddContextRef?.({ path: String(pathHint).replace(/\\/g, "/"), kind: "file", label: name });
     const base = value || "";
@@ -485,6 +537,16 @@ export function Composer({
     ev.target.value = "";
     closeMenu();
     requestAnimationFrame(() => plusBtnRef.current?.focus());
+  }
+
+  async function removeUpload(docId: string) {
+    if (!sessionId) return;
+    try {
+      await deleteSessionUpload(sessionId, docId);
+      setUploads((prev) => prev.filter((u) => u.doc_id !== docId));
+    } catch (err: any) {
+      toast.error(String(err?.message || err));
+    }
   }
 
   return (
@@ -583,10 +645,19 @@ export function Composer({
               title="附件 · 模式 · 权限 · 模型"
               aria-label="打开附件、模式与权限菜单"
               aria-expanded={menuOpen}
+              data-testid="composer-attach-btn"
               onClick={() => setMenuOpen((v) => !v)}
             >
               <Plus className="size-3.5" />
             </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              data-testid="composer-file-input"
+              accept=".md,.markdown,.mdx,.txt,.rst,.org,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.webp,.gif,.bmp"
+              onChange={onFilePicked}
+            />
 
             {menuOpen ? (
               <div
@@ -600,14 +671,8 @@ export function Composer({
                   onClick={pickFile}
                 >
                   <Paperclip className="size-3.5 text-muted-foreground" aria-hidden />
-                  <span className="font-medium">添加文件</span>
+                  <span className="font-medium">{uploading ? "上传中…" : "添加文件"}</span>
                 </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="hidden"
-                  onChange={onFilePicked}
-                />
 
                 <div className="my-1 h-px bg-border" />
                 <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -876,8 +941,21 @@ export function Composer({
               </div>
             ) : null}
 
-            {contextRefs.length ? (
+            {uploads.length || contextRefs.length ? (
               <div className="mb-1 flex flex-wrap gap-1">
+                {uploads.map((u) => (
+                  <button
+                    key={u.doc_id}
+                    type="button"
+                    data-testid="session-upload-chip"
+                    className="inline-flex max-w-[200px] items-center gap-1 rounded-md border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-900 dark:text-amber-200"
+                    title="点击移除会话附件"
+                    onClick={() => void removeUpload(u.doc_id)}
+                  >
+                    <span className="truncate">{u.title}</span>
+                    <span className="opacity-60">×</span>
+                  </button>
+                ))}
                 {contextRefs.map((r) => (
                   <button
                     key={`${r.kind}:${r.path}`}

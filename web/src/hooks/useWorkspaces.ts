@@ -8,6 +8,7 @@ import {
   listHosts,
   listSshConfigHosts,
   listWorkspaces,
+  patchWorkspaceRecord,
   testHost,
   upsertHost,
 } from "@/api/endpoints";
@@ -99,6 +100,15 @@ export function useWorkspaces() {
     return testHost(hostId);
   }, []);
 
+  const setTrusted = useCallback(
+    async (id: string, trusted: boolean) => {
+      const data = await patchWorkspaceRecord(id, { trusted });
+      await load();
+      return data;
+    },
+    [load],
+  );
+
   const remove = useCallback(
     async (id: string) => {
       await deleteWorkspace(id);
@@ -136,6 +146,7 @@ export function useWorkspaces() {
     createSsh,
     upsertSshHost,
     testSshHost,
+    setTrusted,
     remove,
     browsePath,
     browseSsh: browseSshPath,
