@@ -142,13 +142,9 @@ def read_bytes_as_text(
             raise ValueError("HTML produced no extractable text")
         return text, "extracted via html"
     if suffix in PDF_SUFFIXES:
-        text, note = _extract_pdf(raw)
+        text, note = _extract_pdf(raw, filename=name)
         if not text.strip():
-            ocr_text, ocr_note = _ocr_pdf(raw)
-            if ocr_text.strip():
-                joined = f"{ocr_note}; {note}".strip("; ")
-                return ocr_text, joined or "extracted via ocr"
-            raise ValueError(note or ocr_note or "PDF produced no extractable text")
+            raise ValueError(note or "PDF produced no extractable text")
         return text, note
     if suffix in OFFICE_SUFFIXES:
         text, note = _extract_office(raw, suffix)
@@ -161,38 +157,167 @@ def read_bytes_as_text(
     return text, ""
 
 
-def _extract_pdf(raw: bytes) -> Tuple[str, str]:
-    """Best-effort PDF text. Prefer pypdf if installed; else crude stream scrape."""
+_CID_TOKEN_RE = re.compile(r"\(cid:\d+\)", re.IGNORECASE)
+_MOJIBAKE_MARKERS = (
+    "锟斤拷",
+    "ä¸",
+    "äº",
+    "å­",
+    "æ–",
+    "çš",
+    "è¿",
+    "Ã©",
+    "Â\xa0",
+)
+
+
+def _is_cjk_char(ch: str) -> bool:
+    code = ord(ch)
+    return (
+        0x3400 <= code <= 0x4DBF
+        or 0x4E00 <= code <= 0x9FFF
+        or 0xF900 <= code <= 0xFAFF
+        or 0x3040 <= code <= 0x30FF
+        or 0xAC00 <= code <= 0xD7AF
+        or 0xFF00 <= code <= 0xFFEF
+    )
+
+
+def _cjk_count(text: str) -> int:
+    return sum(1 for ch in text if _is_cjk_char(ch))
+
+
+def _join_pdf_pages(parts: List[str]) -> str:
+    return "\n\n".join(p.strip() for p in parts if p and p.strip())
+
+
+def _pdf_text_is_garbled(text: str, *, hint: str = "") -> bool:
+    """True when extract looks like mojibake, CID leftovers, or binary scrape."""
+    blob = (text or "").strip()
+    if not blob:
+        return False
+    sample = blob[:12000]
+    n = len(sample)
+    if n < 8:
+        return False
+    repl = sample.count("\ufffd")
+    cjk = _cjk_count(sample)
+    pua = sum(1 for ch in sample if 0xE000 <= ord(ch) <= 0xF8FF)
+    cid_hits = len(_CID_TOKEN_RE.findall(sample))
+    if repl / n >= 0.04:
+        return True
+    if cid_hits >= 3:
+        return True
+    if pua / n >= 0.08:
+        return True
+    printable = sum(1 for ch in sample if ch.isprintable() or ch in "\n\t\r")
+    if printable / n < 0.75:
+        return True
+    high_latin = sum(
+        1 for ch in sample if 0x80 <= ord(ch) <= 0x024F and not _is_cjk_char(ch)
+    )
+    if n >= 40 and high_latin / n >= 0.12 and cjk / n < 0.02:
+        return True
+    moji = sum(sample.count(marker) for marker in _MOJIBAKE_MARKERS)
+    ascii_letters = sum(1 for ch in sample if "a" <= ch.lower() <= "z")
+    if moji >= 6 and cjk / n < 0.05 and ascii_letters / n < 0.45:
+        return True
+    hint_cjk = _cjk_count(hint or "")
+    if hint_cjk >= 2 and n >= 24 and cjk < 2 and ascii_letters / n < 0.35:
+        return True
+    return False
+
+
+def _accept_pdf_text(
+    text: str, note: str, *, hint: str, notes: List[str]
+) -> Optional[Tuple[str, str]]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        if note:
+            notes.append(note)
+        return None
+    if _pdf_text_is_garbled(cleaned, hint=hint):
+        notes.append(f"{note or 'extractor'} looked garbled")
+        return None
+    return cleaned, note
+
+
+def _pymupdf_mod():
+    try:
+        import pymupdf  # type: ignore
+
+        return pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf  # type: ignore
+
+            return pymupdf
+        except ImportError:
+            return None
+
+
+def _pypdf_extract(raw: bytes) -> Tuple[str, str]:
     try:
         from pypdf import PdfReader  # type: ignore
         import io
 
         reader = PdfReader(io.BytesIO(raw))
-        parts = []
+        parts: List[str] = []
         for page in reader.pages[: pdf_max_pages()]:
             try:
                 parts.append(page.extract_text() or "")
             except Exception:
                 continue
-        text = "\n\n".join(p.strip() for p in parts if p and p.strip())
-        if text.strip():
+        text = _join_pdf_pages(parts)
+        if text:
             return text, "extracted via pypdf"
+        return "", "pypdf produced no text"
     except ImportError:
-        pass
+        return "", "pypdf unavailable"
     except Exception as exc:
-        # Fall through to crude extractor
-        crude, _ = _crude_pdf_text(raw)
-        if crude.strip():
-            return crude, f"pypdf failed ({exc}); used crude extractor"
         return "", f"pypdf failed: {exc}"
 
-    crude, note = _crude_pdf_text(raw)
-    if crude.strip():
-        return crude, note or "extracted via crude PDF parser"
-    ocr_text, ocr_note = _ocr_pdf(raw)
-    if ocr_text.strip():
-        return ocr_text, ocr_note
-    return "", "PDF text extraction unavailable (install pypdf; scanned pages need OCR)"
+
+def _pymupdf_extract(raw: bytes) -> Tuple[str, str]:
+    """Embedded text via MuPDF (CID / CJK ToUnicode maps that pypdf often misses)."""
+    mod = _pymupdf_mod()
+    if mod is None:
+        return "", "pymupdf unavailable"
+    try:
+        doc = mod.open(stream=raw, filetype="pdf")
+    except Exception as exc:
+        return "", f"pymupdf open failed: {exc}"
+    try:
+        parts: List[str] = []
+        limit = pdf_max_pages()
+        for i, page in enumerate(doc):
+            if i >= limit:
+                break
+            try:
+                parts.append(page.get_text("text") or "")
+            except Exception:
+                continue
+        text = _join_pdf_pages(parts)
+        if text:
+            return text, "extracted via pymupdf"
+        return "", "pymupdf produced no text"
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+
+def _extract_pdf(raw: bytes, *, filename: str = "") -> Tuple[str, str]:
+    """pypdf → pymupdf text → language-like crude scrape → OCR last."""
+    hint = filename or ""
+    notes: List[str] = []
+    for extractor in (_pypdf_extract, _pymupdf_extract, _crude_pdf_text, _ocr_pdf):
+        accepted = _accept_pdf_text(*extractor(raw), hint=hint, notes=notes)
+        if accepted:
+            return accepted
+    detail = "; ".join(notes) if notes else "no extractor produced text"
+    return "", f"PDF produced no extractable text ({detail})"
 
 
 def _ocr_engine():
@@ -210,18 +335,17 @@ def _ocr_engine():
 
 
 def _ocr_pdf(raw: bytes) -> Tuple[str, str]:
-    """Render scanned PDF pages and OCR them when RapidOCR + PyMuPDF are installed."""
+    """Render scanned/outlined PDF pages and OCR them when RapidOCR + PyMuPDF exist."""
     if not ocr_enabled():
         return "", "ocr disabled"
-    try:
-        import fitz  # type: ignore
-    except ImportError:
+    mod = _pymupdf_mod()
+    if mod is None:
         return "", "ocr skipped (install pymupdf)"
     engine = _ocr_engine()
     if engine is None:
         return "", "ocr skipped (install rapidocr-onnxruntime)"
     try:
-        doc = fitz.open(stream=raw, filetype="pdf")
+        doc = mod.open(stream=raw, filetype="pdf")
     except Exception as exc:
         return "", f"ocr open failed: {exc}"
     pages: List[str] = []
@@ -231,7 +355,7 @@ def _ocr_pdf(raw: bytes) -> Tuple[str, str]:
             if i >= max_pages:
                 break
             try:
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                pix = page.get_pixmap(matrix=mod.Matrix(2, 2), alpha=False)
                 img = pix.tobytes("png")
             except Exception:
                 continue
@@ -275,6 +399,22 @@ def _ocr_lines(result: object) -> List[str]:
     return lines
 
 
+def _crude_chunk_is_text(inner: str) -> bool:
+    """Keep literal PDF strings that look like language, not compressed bytes."""
+    if len(inner.strip()) < 2:
+        return False
+    n = len(inner)
+    if sum(1 for ch in inner if ord(ch) < 32 and ch not in "\n\t") > n // 4:
+        return False
+    good = 0
+    for ch in inner:
+        if ch.isalnum() or ch.isspace() or _is_cjk_char(ch):
+            good += 1
+        elif ch in ".,;:!?-_/'\"()[]{}<>+=@#%&*$":
+            good += 1
+    return good / n >= 0.55
+
+
 def _crude_pdf_text(raw: bytes) -> Tuple[str, str]:
     """Pull readable Latin/CJK strings from PDF literal strings — lossy but dep-free."""
     try:
@@ -294,11 +434,10 @@ def _crude_pdf_text(raw: bytes) -> Tuple[str, str]:
             .replace("\\)", ")")
             .replace("\\\\", "\\")
         )
-        # Drop binary noise
-        if sum(1 for c in inner if ord(c) < 32 and c not in "\n\t") > len(inner) // 4:
+        # Drop binary / CID-stream noise (high-bit latin-1 is not CJK)
+        if not _crude_chunk_is_text(inner):
             continue
-        if len(inner.strip()) >= 2:
-            out.append(inner)
+        out.append(inner)
     text = " ".join(out)
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)

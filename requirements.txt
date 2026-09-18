@@ -20,7 +20,8 @@ anyio==4.7.0
 asyncssh==2.19.0
 cryptography==44.0.0
 pypdf>=5.1.0,<7
-# Optional scanned-PDF OCR (large): pymupdf>=1.24.14,<2  rapidocr-onnxruntime>=1.4.0,<2
+pymupdf>=1.24.14,<2
+# Optional scanned/outlined-PDF OCR (large): rapidocr-onnxruntime>=1.4.0,<2
 
 # Optional browser crawl (Crawl4AI) — also installable via `nlm` wizard:
 #   pip install -r requirements-crawl.txt && crawl4ai-setup

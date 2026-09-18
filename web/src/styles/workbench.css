@@ -177,6 +177,140 @@ html[data-theme="day"] {
   color: hsl(var(--teal));
 }
 
+.nlm-knowledge-shell {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: 168px minmax(0, 1.15fr) minmax(280px, 340px);
+}
+
+.nlm-knowledge-rail,
+.nlm-knowledge-docs,
+.nlm-knowledge-side {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.nlm-knowledge-rail {
+  gap: 0.2rem;
+  border-right: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.35);
+  padding: 0.65rem 0.55rem;
+  overflow-y: auto;
+}
+
+.nlm-knowledge-rail-label {
+  padding: 0.15rem 0.35rem 0.35rem;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.nlm-knowledge-rail-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 0.55rem;
+  background: transparent;
+  padding: 0.35rem 0.45rem;
+  text-align: left;
+  font-size: 12px;
+  color: hsl(var(--foreground) / 0.88);
+}
+
+.nlm-knowledge-rail-item:hover {
+  background: hsl(var(--muted) / 0.4);
+}
+
+.nlm-knowledge-rail-item.is-active {
+  border-color: hsl(var(--teal) / 0.4);
+  background: hsl(var(--teal) / 0.12);
+  color: hsl(var(--teal));
+}
+
+.nlm-knowledge-docs {
+  border-right: 1px solid hsl(var(--border));
+}
+
+.nlm-knowledge-side-tab,
+.nlm-knowledge-ingest-tab,
+.nlm-knowledge-format {
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  padding: 0.28rem 0.55rem;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nlm-knowledge-side-tab {
+  flex: 1;
+}
+
+.nlm-knowledge-side-tab.is-active,
+.nlm-knowledge-ingest-tab.is-active,
+.nlm-knowledge-format.is-on {
+  border-color: hsl(var(--teal) / 0.4);
+  background: hsl(var(--teal) / 0.12);
+  color: hsl(var(--teal));
+}
+
+.nlm-knowledge-ingest-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 0.45rem 0.65rem;
+}
+
+.nlm-knowledge-format {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-color: hsl(var(--border) / 0.8);
+  background: hsl(var(--background) / 0.55);
+}
+
+.nlm-knowledge-kind {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border) / 0.75);
+  background: hsl(var(--muted) / 0.4);
+  padding: 0 0.4rem;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nlm-knowledge-kind.is-pdf {
+  border-color: hsl(0 55% 50% / 0.35);
+  color: hsl(0 55% 48%);
+}
+
+.nlm-knowledge-kind.is-word {
+  border-color: hsl(210 70% 48% / 0.35);
+  color: hsl(210 70% 46%);
+}
+
+.nlm-knowledge-kind.is-ppt {
+  border-color: hsl(18 80% 48% / 0.35);
+  color: hsl(18 80% 44%);
+}
+
+.nlm-knowledge-kind.is-md,
+.nlm-knowledge-kind.is-paste {
+  border-color: hsl(var(--teal) / 0.4);
+  color: hsl(var(--teal));
+}
+
 .nlm-knowledge-drop {
   display: flex;
   align-items: center;
@@ -236,24 +370,6 @@ html[data-theme="day"] {
   background: hsl(var(--teal));
 }
 
-.nlm-knowledge-split {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.nlm-knowledge-split > :first-child {
-  min-height: 160px;
-  flex: 1 1 auto;
-}
-
-.nlm-knowledge-preview {
-  min-height: 120px;
-  max-height: 42%;
-  flex: 0 1 auto;
-}
-
 .nlm-knowledge-card {
   border-radius: 0.7rem;
   border: 1px solid hsl(var(--border) / 0.55);
@@ -270,18 +386,21 @@ html[data-theme="day"] {
   background: hsl(var(--teal) / 0.1);
 }
 
-@media (min-width: 1100px) {
-  .nlm-knowledge-split {
-    flex-direction: row;
+@media (max-width: 1099px) {
+  .nlm-knowledge-shell {
+    grid-template-columns: 1fr;
+    overflow: auto;
   }
-  .nlm-knowledge-split > :first-child {
-    min-width: 0;
-    flex: 1.15 1 0;
+  .nlm-knowledge-rail,
+  .nlm-knowledge-docs,
+  .nlm-knowledge-side {
+    min-height: 220px;
+    overflow: visible;
   }
-  .nlm-knowledge-preview {
-    max-height: none;
-    min-width: 240px;
-    flex: 0.85 1 0;
+  .nlm-knowledge-rail,
+  .nlm-knowledge-docs {
+    border-right: 0;
+    border-bottom: 1px solid hsl(var(--border));
   }
 }
 

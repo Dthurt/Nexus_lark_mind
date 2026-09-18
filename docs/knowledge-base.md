@@ -77,8 +77,9 @@ Once open:
 - Local libraries (`local:…` ids in `weknora_kb_id`; empty / `local:default` = 默认知识库).
 - Dropzone / 多文件 / 文件夹 / URL 抓取 enqueue ingest jobs (`pending → processing → completed|failed`)
   via `POST /api/knowledge/ingest`. PDF / Office / Markdown / HTML extracted to text
-  (default ~20MB, `KB_INGEST_MAX_BYTES`; PDF pages `KB_PDF_MAX_PAGES`). Scanned PDFs try OCR
-  when `pymupdf` + `rapidocr-onnxruntime` are installed (`KB_OCR=1`).
+  (default ~20MB, `KB_INGEST_MAX_BYTES`; PDF pages `KB_PDF_MAX_PAGES`). PDF text uses
+  `pypdf`, then PyMuPDF when pypdf is empty or CJK looks garbled; scanned/outlined
+  pages try OCR when `rapidocr-onnxruntime` is installed (`KB_OCR=1`).
 - Document preview includes **分块预览 / 编辑** (`PATCH /api/knowledge/chunks/{id}`).
 - **去对话** / row **提问** returns to the main chat with that KB already bound.
 - One session ↔ one bound KB (`weknora_kb_id`; empty / `local:*` = local, other ids = WeKnora).
@@ -151,7 +152,7 @@ Ignores `.git`, `node_modules`, `.venv`, `.nlm`, etc. Indexes `docs/**` and shal
 
 - `.md` / `.markdown` / `.mdx`
 - `.txt` / `.rst` / `.org`
-- `.pdf` (`pypdf`; crude scrape only if extraction fails)
+- `.pdf` (`pypdf`; PyMuPDF if empty/garbled CJK; crude scrape only if it looks like real text; scanned/outlined pages need OCR)
 
 Upsert key is a stable `file_<sha1(rel)>` id plus `content_hash` skip-if-unchanged.
 
@@ -189,7 +190,7 @@ Vectors are stored as JSON on chunks. After configuring embeddings on an existin
 | `KB_PARENT_CHILD` | on | Parent/child chunks for long docs |
 | `KB_INGEST_MAX_BYTES` | 20MB | Library file ingest + workspace docs sync (session chips stay 512KB) |
 | `KB_PDF_MAX_PAGES` | 400 | Pages extracted per PDF |
-| `KB_OCR` | on | Scanned PDF OCR when pymupdf + rapidocr-onnxruntime are installed |
+| `KB_OCR` | on | Scanned/outlined PDF OCR when pymupdf + rapidocr-onnxruntime are installed |
 | `KB_QUERY_EXPAND` | on | Local query variants when first pass is thin |
 | `KB_RERANK` | on | Second-stage token rerank of the candidate pool |
 | `KB_RERANK_URL` | off | Optional HTTP reranker (OpenAI/Cohere-shaped JSON) |
@@ -198,7 +199,7 @@ Vectors are stored as JSON on chunks. After configuring embeddings on an existin
 FTS5 has **no env switch**: `ensure_schema` tries trigram → unicode61 and keeps ILIKE if both fail.
 Existing databases get an empty FTS table **backfilled** from `knowledge_chunks` on first open.
 
-Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape, **html**, and **URL fetch** (`POST /api/knowledge/ingest`). Scanned PDFs use RapidOCR when those extras are installed. `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags. Pass `session_id` on search to include that session’s temporary uploads. Local libraries are listed at `GET /api/knowledge/kbs`.
+Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape, **html**, and **URL fetch** (`POST /api/knowledge/ingest`). Outlined or scanned PDFs use RapidOCR when those extras are installed. `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags. Pass `session_id` on search to include that session’s temporary uploads. Local libraries are listed at `GET /api/knowledge/kbs`.
 
 ## Optional WeKnora bridge
 

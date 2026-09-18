@@ -30,6 +30,8 @@ test.describe("knowledge base", () => {
   test("add document then search hits", async ({ page, request }) => {
     await requireAdapters(request);
     await page.goto("/knowledge", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("knowledge-library-rail")).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId("knowledge-ingest-paste").click();
     await expect(page.getByTestId("knowledge-add-content")).toBeVisible({ timeout: 20_000 });
 
     const token = `nlm_e2e_kb_${Date.now()}`;
@@ -69,6 +71,10 @@ test.describe("knowledge base", () => {
     await expect(page.getByTestId("knowledge-search-input")).toBeVisible();
     await expect(page.getByTestId("knowledge-go-chat")).toBeVisible();
     await expect(page.getByTestId("knowledge-import-file")).toBeVisible();
+    await expect(page.getByTestId("knowledge-library-rail")).toBeVisible();
+    await expect(page.getByTestId("knowledge-ingest-files")).toBeVisible();
+    await expect(page.getByTestId("knowledge-ingest-paste")).toBeVisible();
+    await expect(page.getByTestId("knowledge-format-pdf")).toBeVisible();
     await expect(page.getByTestId("composer-open-knowledge")).toHaveCount(0);
   });
 });

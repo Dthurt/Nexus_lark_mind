@@ -639,7 +639,12 @@ export function WorkbenchPage({
           knowledgeActive={centerView === "knowledge"}
         />
 
-        <main className={cn("nlm-workspace", canvas.open && "nlm-workspace--canvas")}>
+        <main
+          className={cn(
+            "nlm-workspace",
+            (canvas.open || centerView === "knowledge") && "nlm-workspace--canvas",
+          )}
+        >
           <Topbar
             title={chatTitle}
             centerView={centerView}
