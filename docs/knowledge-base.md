@@ -193,6 +193,7 @@ WEKNORA_KB_ID=...            # default knowledge-base id
 Kernel helper: `weknora_client.py`. Optional MCP stubs (disabled): `plugins_volume/mcp/weknora_http.json` and `weknora_mcp.json` (`WEKNORA_MCP_URL` → WeKnora's `hybrid_search` / `list_knowledge` / `get_knowledge`). Prefer the first-class `weknora_*` tools.
 
 Feishu / GitLab connectors: prefer ingesting into WeKnora first, then `weknora_sync` pull.
+
 ## Feishu knowledge sync
 
 `FeishuWikiConnector` remains an incremental-design **stub**. Prefer paste / file sync; wiki OpenAPI fetch is TODO.

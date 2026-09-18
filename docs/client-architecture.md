@@ -8,13 +8,14 @@ The Web UI is **React + TypeScript + Vite** under `web/` (built assets land in `
 nlm-app
 ├── Sidebar (sessions / workspaces)
 ├── main.nlm-workspace
-│   ├── Topbar (Chat|Trajectory ring, Canvas toggle, theme, …)
+│   ├── Topbar (Chat|Trajectory|知识库 ring, Canvas toggle, KB chip, theme, …)
 │   └── nlm-chat-panel
+│       ├── KnowledgeView when view=knowledge (search + same-session chat)
 │       ├── [optional] nlm-center-split
-│       │   ├── nlm-chat-column (messages + docks + Composer)
+│       │   ├── nlm-chat-column (messages + docks + Composer + KB picker)
 │       │   └── CanvasPane
 │       └── or flat chat stack when Canvas closed
-└── RightDock (plugins / Delivery / activity / usage / inspector / …)
+└── RightDock (知识库 admin / plugins / Delivery / activity / …)
 ```
 
 - Canvas open → `nlm-workspace--canvas` widens the center column; grid ≈ `1fr | 42%`.
@@ -56,8 +57,14 @@ Ledger (DSH-inspired, Nexus-lite):
 `useRightDock` + `RightDock`:
 
 - Collapse / expand rail  
-- Tabs: plugins (市场 / 扩展槽), Delivery, activity, jobs, usage, inspector, …  
+- Tabs: **知识库** (ingest / sync / remote import), plugins (市场 / 扩展槽), Delivery, activity, jobs, usage, inspector, …  
 - Optional 2-pane split  
+
+## Knowledge page
+
+Topbar **知识库** (`/?view=knowledge`): left pane search / citations / body; right pane the same workbench chat bound to that KB. Composer always shows a **知识库** picker (`weknora_kb_id`; empty = local). See [knowledge-base.md](./knowledge-base.md).
+
+Stream failures persist as `metadata.kind=error` assistant bubbles so refresh still shows them.
 
 ## Canvas (P1–P3)
 

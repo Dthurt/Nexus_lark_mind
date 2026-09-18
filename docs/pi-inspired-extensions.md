@@ -27,8 +27,9 @@ allowed-tools: read_file, grep, glob, list_dir, run_shell
 # body …
 ```
 
-- System prompt lists **name + description + path** only.
-- Model should `read_file` the skill path when relevant.
+- System prompt lists **name + description** (and path when it is inside the workspace).
+- `/skill:<name>` **injects the SKILL.md body** into the system prompt so builtins
+  like `weknora-research` work even when cwd is another repo (`read_file` is not required).
 - User / Command Palette can insert `/skill:<name> …`.
 - When `/skill:name` is used and `allowed-tools` is set, the agent **converges**
   the OpenAI tool list to that subset for the turn (Dynamic Tool Loading).

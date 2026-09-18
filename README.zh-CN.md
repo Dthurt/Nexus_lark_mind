@@ -21,10 +21,11 @@
 ## 特性
 
 - ✅ 多渠道适配 — 飞书 / 钉钉 / 企业微信 / Web SSE 对话页
+- ✅ 飞书 Card Kit 2.0 — 同条消息流式更新、折叠思考、选择卡、统计图（[docs/channels.md](docs/channels.md)）
+- ✅ 本地知识库 — SQLite RAG、知识库页检索+对话、可选 WeKnora / WeMM（[docs/knowledge-base.md](docs/knowledge-base.md)）
 - ✅ 分层架构 — Adapters → Orchestrator → Core Kernel（仅 Kernel 读写 SQLite）
-- ✅ 插件运行时 — CLI 脚本、MCP 配置、RPC 加载/卸载/调用
-- ✅ React 工作台 — 主题、Canvas 侧栏、工具视图、工作区绑定（本机 + SSH）
-- ✅ 本地知识库 — SQLite 分块检索、Dock 面板、可选 embeddings / WeKnora 桥（见 [docs/knowledge-base.md](docs/knowledge-base.md)）
+- ✅ 插件运行时 — CLI、MCP、Skills、扩展、预设（[docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md)）
+- ✅ React 工作台 — 主题、Canvas、知识库页、工作区绑定（本机 + SSH）
 - ✅ Docker 或本地开发 — memory broker 快速迭代，无需 Redis
 
 ## 目录
@@ -76,7 +77,7 @@ graph LR
 
 | 方式 | 适用 | 说明 |
 |------|------|------|
-| **`./nlm` / `nlm.cmd` / `nlm start`** | **推荐本机一键** | Rich TUI（Windows + Linux）：环境检查、依赖安装、模型配置、Crawl4AI、启动与自动修复 |
+| **`./nlm` / `nlm.cmd` / `nlm start`** | **推荐本机一键** | Rich TUI（Windows + Linux）：环境检查、**缺 Python 3.11–3.13 时提示/安装**、依赖、模型配置、Crawl4AI、启动与自动修复 |
 | `scripts/start_local.bat` | Windows 无菜单轻量启动 | 三服务 + memory broker，**不需要 Docker / Redis**，UI 为 `web-static` |
 | `scripts/dev.bat` | **改前端** | 后端 + Vite HMR（打开 :5173） |
 | `docker compose` | 联调 / 服务器 / Docker Desktop 部署 | 4 个容器（redis + kernel + orchestrator + adapters） |
@@ -215,10 +216,11 @@ docker compose up --build -d
 - 飞书：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` / …
 - 钉钉：`DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / …
 - 企业微信：`WECOM_CORP_ID` / `WECOM_AGENT_ID` / `WECOM_SECRET` / …
+- 知识库（可选）：`WEKNORA_*` / `KB_EMBEDDING_*` / `WEMM_*`
 - 压缩策略：`COMPACTION_AGGRESSIVENESS=conservative|balanced|aggressive`
 - 工作区挂载：`NLM_HOST_WORKSPACE=...`
 
-详见 [docs/architecture.md](docs/architecture.md)、[docs/workspaces.md](docs/workspaces.md)、[docs/interaction-modes.md](docs/interaction-modes.md)、[docs/canvas.md](docs/canvas.md)、[docs/context-and-diff.md](docs/context-and-diff.md)、[docs/diagrams.md](docs/diagrams.md)、[docs/client-architecture.md](docs/client-architecture.md)、[docs/knowledge-base.md](docs/knowledge-base.md)（本地知识库）、[docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md)（Skills / Fork / Hooks / JSONL）。
+文档索引：[docs/README.md](docs/README.md)。常用：[docs/quickstart.md](docs/quickstart.md) · [docs/local-start.md](docs/local-start.md) · [docs/knowledge-base.md](docs/knowledge-base.md) · [docs/channels.md](docs/channels.md) · [docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md)。
 
 ## 插件
 
@@ -237,6 +239,8 @@ chmod +x nlm && ./nlm start
 # Windows
 nlm start
 ```
+
+需要 **Python 3.11–3.13**。若未安装（或只有商店占位 `python.exe`），`nlm` 会停住并给出 `[1]` 自动安装 / `[2]` 打开下载页 / `[3]` 退出，不会一闪就关。非交互：`nlm start --yes` 只打印安装命令并以退出码 1 结束。
 
 也可用：`./nlm` · `nlm status` · `nlm doctor` · `nlm stop` · `nlm repair` · `nlm logs` · `nlm update`
 
@@ -286,7 +290,7 @@ npm test
 
 主题：`day` / `gray` / `night` / `ocean` / `rose`（Topbar 循环，localStorage `nlm-theme`）。
 
-工作台旁侧 **Canvas**（Chat∥Canvas、图表编辑、Agent `open_canvas`）：见 [docs/canvas.md](docs/canvas.md)。工具卡 / Canvas 视图扩展说明在 `web/docs/`。
+工作台：**知识库**页（`/?view=knowledge`）检索 + 针对该库对话；输入框常驻知识库选择器；旁侧 **Canvas** — [docs/knowledge-base.md](docs/knowledge-base.md)、[docs/canvas.md](docs/canvas.md)。工具卡 / Canvas 视图说明在 `web/docs/`。
 
 ## 测试
 

@@ -202,4 +202,4 @@ scripts\start_local.bat status
 
 本地脚本会覆盖会话内环境变量（`REDIS_URL=memory://local`、本机 RPC URL），**不会改写** `.env` 里的密钥。
 
-更完整的架构见 [architecture.md](./architecture.md)；无头控制见 [headless-sdk.md](./headless-sdk.md)。
+更完整的架构见 [architecture.md](./architecture.md)；知识库见 [knowledge-base.md](./knowledge-base.md)；飞书卡片见 [channels.md](./channels.md)；无头控制见 [headless-sdk.md](./headless-sdk.md)。

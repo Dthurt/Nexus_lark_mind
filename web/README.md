@@ -29,8 +29,8 @@ Optional: `NLM_API_PROXY=http://127.0.0.1:8000` overrides the Vite proxy target.
 
 ## Layout
 
-Sidebar · center Chat/Trajectory (+ optional **Canvas** split) · RightDock.  
-See [docs/client-architecture.md](../docs/client-architecture.md) and [docs/canvas.md](../docs/canvas.md).
+Sidebar · center Chat / Trajectory / **知识库** (+ optional **Canvas** split) · RightDock.  
+See [docs/client-architecture.md](../docs/client-architecture.md), [docs/knowledge-base.md](../docs/knowledge-base.md), [docs/canvas.md](../docs/canvas.md).
 
 ## Extension docs (this folder)
 

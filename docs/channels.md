@@ -80,17 +80,19 @@ POST /api/settings/channels/feishu|dingtalk|wecom/reload
 
 对话与交互走官方 **interactive / Card Kit schema 2.0**（`schema: "2.0"`，正文在 `body.elements`，按钮 `behaviors.callback`）：
 
-| 卡片 | 用途 |
-|------|------|
-| 生成中 | 同一条消息 `PATCH` 更新；工具进度 / 状态 / 引用写在卡片内，流式 delta **防抖**（约 450ms）避免触达更新频控 |
-| 对话 / 知识库 | 最终回复；有 `citations_md` 时改用青绿「知识库」头 |
-| 工具审批 / 询问 / 计划审阅 | 独立交互卡，回调进 Kernel `/rpc/gates/resolve` |
-| 错误 / 限流 | 红色或黄色卡，去掉 traceback；可「再问一次」 |
-| Provider / 模型 | 会话首次绑定；回复卡上也可「切换模型」 |
+| 类型 | 卡片 | 用途 |
+|------|------|------|
+| `thinking` | 思考过程 | `collapsible_panel` 折叠推理 / 工具轨迹；生成中默认展开，完成后折叠 |
+| `answer` | 对话 / 知识库 | 最终 markdown + 引用；有 `citations_md` 时改用青绿「知识库」头 |
+| `select` | 选择 | `select_static` 选 Provider / 模型 / 权限预设 / 本地知识库；选项过多时不再铺 6 个按钮 |
+| `stats` / `chart` | 统计图 | `chart` + VChart spec（由小型 ECharts option 转换）；失败时退化为指标列 |
+| `error` / `confirm` | 错误 / 确认 | 红/黄错误卡去 traceback；审批与确认带 note |
 
-按钮：再问一次（重提原文）、切换模型、清空会话（二次确认）。不另发一堆碎消息。
+流式：同一条消息 `PATCH` 更新，delta **防抖**（约 450ms）。完成后折叠思考过程，突出答案。`kb_stats` / `kb_sync_docs` 会再发一张小统计卡（本地数据，不请求 WeKnora）。
 
-限制（开放平台）：交互卡片 JSON 约 **30 KB**、markdown 子集、更新接口有 QPS 限制。超长正文会被截断；图表未使用。
+回复卡按钮：再问一次、清空会话（二次确认）。模型 / 预设 / 知识库走「会话设置」下拉。命令：`切换模型`、`权限预设`、`切换知识库`。
+
+限制（开放平台）：交互卡片 JSON 约 **30 KB**、markdown 子集、更新接口有 QPS 限制。超长正文会被截断。图表走 `chart` + VChart（不是浏览器 ECharts）；旧客户端或超大 spec 退化为列指标。`collapsible_panel` 内不能嵌 form。`select_static` 的选项 `value` 必须是字符串，真实选项在回调的 `action.option`。
 
 ## Env fallback
 

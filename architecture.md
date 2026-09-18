@@ -1,6 +1,6 @@
 # Nexus-Lark-Mind 架构图（速览）
 
-详细文字说明见 [docs/architecture.md](docs/architecture.md)。工作台 / Canvas 见 [docs/client-architecture.md](docs/client-architecture.md)、[docs/canvas.md](docs/canvas.md)。
+详细文字说明见 [docs/architecture.md](docs/architecture.md)。工作台 / 知识库 / Canvas 见 [docs/client-architecture.md](docs/client-architecture.md)、[docs/knowledge-base.md](docs/knowledge-base.md)、[docs/canvas.md](docs/canvas.md)。
 
 > 前端已为 **React**（`web/`），下图中旧 Vue 命名仅作历史示意；进程分层仍准确。
 
@@ -8,6 +8,7 @@
 flowchart TB
     subgraph WebFrontend["Web 前端 (React + Vite)"]
         WebApp["App / WorkbenchPage"]
+        Knowledge["KnowledgeView"]
         Canvas["CanvasPane"]
         Dock["RightDock"]
     end
@@ -26,7 +27,7 @@ flowchart TB
     subgraph CoreKernel["Core Kernel (端口 8001)"]
         KernelApp["app.py"]
         AgentRunner["agent_runner.py"]
-        WorkspaceTools["workspace tools / open_canvas"]
+        WorkspaceTools["workspace / knowledge / open_canvas"]
     end
 
     subgraph Infrastructure["Infrastructure"]
@@ -35,6 +36,7 @@ flowchart TB
     end
 
     WebApp --> AdapterApp
+    WebApp --> Knowledge
     WebApp --> Canvas
     WebApp --> Dock
     AdapterApp --> OrchApp
@@ -49,9 +51,9 @@ flowchart TB
 
 | 层级 | 服务 | 端口 | 职责 |
 |------|------|------|------|
-| **Adapters** | 飞书/Web 入口 | 8000 | 飞书、Web SSE、会话 REST（含 `/canvas` `/delivery`） |
+| **Adapters** | 飞书/Web 入口 | 8000 | 飞书 Card Kit、Web SSE、知识库 REST、会话 REST（含 `/canvas` `/delivery`） |
 | **Orchestrator** | 任务编排 | 8002 | 队列、会话缓存、事件转发（含 `task.canvas_open`） |
-| **Core Kernel** | 核心引擎 | 8001 | 模型网关、插件、`open_canvas`、SQLite |
+| **Core Kernel** | 核心引擎 | 8001 | 模型网关、插件、知识库 / WeKnora、`open_canvas`、SQLite |
 | **Infrastructure** | 基础设施 | - | Redis / memory broker、存储 |
 
 ## 关键设计

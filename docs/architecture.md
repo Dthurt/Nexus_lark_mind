@@ -24,8 +24,8 @@
 
 ### 2.1 Adapters（`:8000`）
 
-- 飞书：事件验签、加密解密、消息/卡片解析、流式卡片增量更新、按钮交互、可选长连接
-- Web：`POST /api/chat` 入队 + `GET /api/chat/stream` SSE 订阅会话事件
+- 飞书：事件验签、加密解密、消息/卡片解析、**Card Kit 2.0** 同条消息流式 PATCH、选择/折叠思考/统计图、可选长连接（见 [channels.md](./channels.md)）
+- Web：`POST /api/chat` 入队 + `GET /api/chat/stream` SSE；`/api/knowledge/*` 知识库 REST
 - 将外部差异全部收敛为 `StandardTask`
 
 ### 2.2 Orchestrator（`:8002`）
@@ -37,8 +37,9 @@
 
 ### 2.3 Core Kernel（`:8001`）
 
-- **Model Gateway**：OpenAI 兼容（OpenAI/DeepSeek）、Anthropic；统一重试/熔断/审计入库
+- **Model Gateway**：OpenAI 兼容（OpenAI/DeepSeek/GLM）、Anthropic；统一重试/熔断/审计入库
 - **Plugin Runtime**：`init → ready → invoke → teardown`；故障隔离与自愈
+- **Knowledge**：本地 SQLite RAG（`knowledge_*`）+ 可选 WeKnora / WeMM；回合前 `kb_grounding`
 - **Storage**：SQLAlchemy + SQLite，自动 `create_all`
 - 对外仅暴露 HTTP RPC
 
@@ -63,7 +64,7 @@
 | 验签 / challenge | `adapters/feishu/crypto.py` + webhook |
 | 消息解析 | `adapters/feishu/events.py` |
 | 流式卡片更新 | Card JSON 2.0 `cards.py` + 防抖 `update_message_card`（同一条消息） |
-| 按钮交互 | schema 2.0 `behaviors.callback` → `parse_card_action` / HITL resolve / retry·clear |
+| 按钮 / 下拉 | schema 2.0 `behaviors.callback` + `select_static` `option` → `parse_card_action` / HITL / retry·clear / 会话设置 |
 | 长连接 | `long_connection.py`（凭证齐全时启用） |
 
 ## 5. 扩展新模型
@@ -100,6 +101,7 @@
 - `plugin_calls` — 插件调用审计
 - `model_calls` — 模型调用审计
 - `system_logs` — 系统日志（可扩展）
+- `knowledge_docs` / `knowledge_chunks` / `knowledge_sync_log` — 本地知识库
 
 ## 8. 安全边界
 
@@ -140,8 +142,8 @@ flowchart LR
         W1["WorkbenchPage"]
         W2["CanvasPane"]
         W3["RightDock"]
-        W4["Hooks / SSE"]
-        W5["pluginSlots"]
+        W4["KnowledgeView"]
+        W5["Hooks / SSE"]
     end
 
     subgraph Adapters["Adapters (Port 8000)"]
@@ -167,7 +169,7 @@ flowchart LR
         K3["RPC Server"]
         K4["Model Gateway"]
         K5["Plugin Runtime"]
-        K6["Subagent"]
+        K6["KnowledgeStore"]
     end
 
     subgraph Infra["Infrastructure"]
@@ -225,6 +227,9 @@ flowchart LR
 
 - [README（文档索引）](./README.md)
 - [client-architecture.md](./client-architecture.md) — React 工作台
+- [knowledge-base.md](./knowledge-base.md) — 本地知识库 / WeKnora / WeMM
+- [channels.md](./channels.md) — 通道与飞书卡片
+- [pi-inspired-extensions.md](./pi-inspired-extensions.md) — Skills / 扩展
 - [canvas.md](./canvas.md) — 旁侧 Canvas
 - [diagrams.md](./diagrams.md) — 聊天内图表
 - [workspaces.md](./workspaces.md) — 工作区与 `.nlm/`

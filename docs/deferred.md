@@ -11,6 +11,9 @@ Original “full DSH port” items:
 | Experience tier slider (Codex-like) | **Done** (Wave D) — Composer + session `experience_tier` + Fast Draw.io gate |
 | Offline / bundled Draw.io viewer | **Partial** — offline SVG preview by default; optional `/drawio/` bundle ([diagrams.md](./diagrams.md)) |
 | Feishu cards for tool approval / ask_user | **Done** (Wave E) — interactive cards + gate resolve |
+| Feishu Card Kit 2.0 (stream / think / select / chart) | **Done** — [channels.md](./channels.md) |
+| Local KB + WeKnora / WeMM bridge | **Done** — [knowledge-base.md](./knowledge-base.md); Wiki / GraphRAG **not** planned |
+| `nlm` missing-Python prompt / install | **Done** — [local-start.md](./local-start.md) |
 | Feishu plan review cards | **Done** — `build_plan_review_card` + `task.plan_review` |
 | Delivery artifact (Plan→Diagram→Changes) | **Done** — RightDock Delivery + session file |
 | Full Anthropic Messages path | **Done** — builtin + custom `anthropic-messages` providers; thinking on supporting models |

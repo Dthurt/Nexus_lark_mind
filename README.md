@@ -21,9 +21,11 @@
 ## Features
 
 - ✅ Multi-channel adapters — Feishu / DingTalk / WeCom / Web SSE chat UI
+- ✅ Feishu Card Kit 2.0 — streamed cards, folded thinking, selects, charts ([docs/channels.md](docs/channels.md))
+- ✅ Local knowledge base — SQLite RAG + optional WeKnora / WeMM ([docs/knowledge-base.md](docs/knowledge-base.md))
 - ✅ Layered architecture — Adapters → Orchestrator → Core Kernel (SQLite only in kernel)
-- ✅ Plugin runtime — CLI scripts, MCP configs, RPC load/unload/invoke
-- ✅ React workbench — themes, Canvas pane, tool views, workspace binding (local + SSH)
+- ✅ Plugin runtime — CLI, MCP, Skills, extensions, presets ([docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md))
+- ✅ React workbench — themes, Canvas, Knowledge page, workspace binding (local + SSH)
 - ✅ Docker or local dev — memory broker for quick iteration without Redis
 
 ## Table of Contents
@@ -75,7 +77,7 @@ Dependency direction is one-way: Adapters → Orchestrator → Kernel → Infras
 
 | Method | Best for | Notes |
 |--------|----------|-------|
-| **`./nlm` / `nlm.cmd` / `nlm start`** | **Recommended local one-shot** | Rich TUI (Windows + Linux): env check, deps, model config, Crawl4AI, start + auto-repair |
+| **`./nlm` / `nlm.cmd` / `nlm start`** | **Recommended local one-shot** | Rich TUI (Windows + Linux): env check, **Python 3.11–3.13 prompt/install if missing**, deps, model config, Crawl4AI, start + auto-repair |
 | `scripts/start_local.bat` | Windows lightweight (no menu) | All-in-one + memory broker; **no Docker / Redis**; serves `web-static` |
 | `scripts/dev.bat` | **UI development** | Backend + Vite HMR (open :5173) |
 | `docker compose` | Integration / server / Docker Desktop | 4 containers (`redis` + `kernel` + `orchestrator` + `adapters`) |
@@ -214,10 +216,11 @@ Edit `.env` (see `.env.example`):
 - Feishu/Lark: `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / …
 - DingTalk: `DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / …
 - WeCom: `WECOM_CORP_ID` / `WECOM_AGENT_ID` / `WECOM_SECRET` / …
+- Knowledge (optional): `WEKNORA_*` / `KB_EMBEDDING_*` / `WEMM_*`
 - Compaction: `COMPACTION_AGGRESSIVENESS=conservative|balanced|aggressive`
 - Workspace mount: `NLM_HOST_WORKSPACE=...`
 
-More detail: [docs/architecture.md](docs/architecture.md), [docs/workspaces.md](docs/workspaces.md), [docs/interaction-modes.md](docs/interaction-modes.md), [docs/canvas.md](docs/canvas.md), [docs/context-and-diff.md](docs/context-and-diff.md), [docs/diagrams.md](docs/diagrams.md), [docs/client-architecture.md](docs/client-architecture.md), [docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md) (Skills / Fork / Hooks / JSONL).
+Docs index: [docs/README.md](docs/README.md). Start here: [docs/quickstart.md](docs/quickstart.md) · [docs/local-start.md](docs/local-start.md) · [docs/knowledge-base.md](docs/knowledge-base.md) · [docs/channels.md](docs/channels.md) · [docs/pi-inspired-extensions.md](docs/pi-inspired-extensions.md).
 
 ## Plugins
 
@@ -238,6 +241,8 @@ chmod +x nlm && ./nlm start
 # Windows
 nlm start
 ```
+
+Need **Python 3.11–3.13**. If it is missing (or only the Microsoft Store stub), `nlm` stops and offers `[1]` install / `[2]` download page / `[3]` quit — it will not flash-close. Non-interactive: `nlm start --yes` prints the install command and exits 1.
 
 Also: `./nlm` · `nlm status` · `nlm doctor` · `nlm stop` · `nlm repair` · `nlm logs` · `nlm update`
 
@@ -287,7 +292,7 @@ npm test
 
 Themes: `day` / `gray` / `night` / `ocean` / `rose` (Topbar cycles; `localStorage` key `nlm-theme`).
 
-Workbench extras: **Canvas** side pane (Chat∥Canvas; Mermaid/ECharts/Draw.io editors; Agent `open_canvas`) — [docs/canvas.md](docs/canvas.md). Tool / Canvas view extension notes under `web/docs/`.
+Workbench extras: **知识库** page (`/?view=knowledge`) for search + KB-scoped chat; composer **知识库** picker; **Canvas** side pane — [docs/knowledge-base.md](docs/knowledge-base.md), [docs/canvas.md](docs/canvas.md). Tool / Canvas view notes under `web/docs/`.
 
 ## Tests
 

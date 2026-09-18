@@ -163,4 +163,4 @@ Interactive cards for **tool approval**, **ask_user**, and **plan_review** are s
 
 Streaming reply cards use **Card JSON 2.0**: one message is patched in place (debounced). Tool traces and model reasoning sit in a `collapsible_panel` (展开看思考过程); the final answer + citations stay outside the fold. Provider / model / preset / KB use `select_static` (plus `card.action.trigger` `option`). `kb_stats` / sync emit a small chart card (VChart spec, local counts). Retry / 清空会话 remain buttons; 切换模型 is under 会话设置.
 
-See also: [channels.md](./channels.md), [experience-tiers.md](./experience-tiers.md), [canvas.md](./canvas.md), [diagrams.md](./diagrams.md), [deferred.md](./deferred.md), [subagents.md](./subagents.md).
+See also: [channels.md](./channels.md), [knowledge-base.md](./knowledge-base.md), [experience-tiers.md](./experience-tiers.md), [canvas.md](./canvas.md), [diagrams.md](./diagrams.md), [deferred.md](./deferred.md), [subagents.md](./subagents.md).
