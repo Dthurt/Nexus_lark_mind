@@ -806,6 +806,7 @@ export type LocalKnowledgeBase = {
   name: string;
   description?: string;
   source?: string;
+  chunk_strategy?: string;
   doc_count?: number | null;
   updated_at?: string | null;
 };
@@ -844,15 +845,28 @@ export type KnowledgeSyncEntry = {
   created_at?: string | null;
 };
 
+export type KnowledgeChunkPreview = {
+  index: number;
+  heading?: string;
+  context_header?: string;
+  chunk_type?: string;
+  content?: string;
+  chars?: number;
+  char_start?: number;
+  char_end?: number;
+};
+
 export function listKnowledgeDocs(params?: {
   workspace_id?: string;
   limit?: number;
   kb_id?: string;
+  tag?: string;
 }): Promise<{ docs: KnowledgeDoc[] }> {
   const q = new URLSearchParams();
   if (params?.workspace_id) q.set("workspace_id", params.workspace_id);
   if (params?.limit != null) q.set("limit", String(params.limit));
   if (params?.kb_id) q.set("kb_id", params.kb_id);
+  if (params?.tag) q.set("tag", params.tag);
   const qs = q.toString();
   return apiGet(`/api/knowledge/docs${qs ? `?${qs}` : ""}`);
 }
@@ -862,12 +876,14 @@ export function searchKnowledge(params: {
   workspace_id?: string;
   limit?: number;
   kb_id?: string;
+  tag?: string;
 }): Promise<{ query: string; results: KnowledgeHit[]; citations_md?: string }> {
   const q = new URLSearchParams();
   q.set("query", params.query);
   if (params.workspace_id) q.set("workspace_id", params.workspace_id);
   if (params.limit != null) q.set("limit", String(params.limit));
   if (params.kb_id) q.set("kb_id", params.kb_id);
+  if (params.tag) q.set("tag", params.tag);
   return apiGet(`/api/knowledge/search?${q.toString()}`);
 }
 
@@ -936,6 +952,11 @@ export async function ingestKnowledgeFiles(
   for (const file of files) {
     form.append("file", file, file.name);
   }
+  const rels = files.map((file) => {
+    const rel = String((file as File & { webkitRelativePath?: string }).webkitRelativePath || "").trim();
+    return rel || file.name;
+  });
+  form.append("relative_paths", JSON.stringify(rels));
   if (opts?.workspaceId) form.append("workspace_id", opts.workspaceId);
   if (opts?.kbId) form.append("kb_id", opts.kbId);
   const qs = new URLSearchParams();
@@ -987,8 +1008,16 @@ export function createLocalKnowledgeBase(body: {
   name: string;
   workspace_id?: string;
   description?: string;
+  chunk_strategy?: string;
 }): Promise<LocalKnowledgeBase> {
   return apiPost("/api/knowledge/kbs", body);
+}
+
+export function patchLocalKnowledgeBase(
+  kbId: string,
+  body: { name?: string; description?: string; chunk_strategy?: string },
+): Promise<LocalKnowledgeBase> {
+  return apiPatch(`/api/knowledge/kbs/${encodeURIComponent(kbId)}`, body);
 }
 
 export function deleteLocalKnowledgeBase(
@@ -1025,6 +1054,7 @@ export function deleteKnowledgeDoc(
 
 export function reindexKnowledge(body?: {
   workspace_id?: string;
+  kb_id?: string;
   limit?: number;
 }): Promise<{
   ok?: boolean;
@@ -1036,9 +1066,44 @@ export function reindexKnowledge(body?: {
   return apiPost("/api/knowledge/reindex", body || {});
 }
 
+export function previewKnowledgeChunks(body: {
+  text: string;
+  strategy?: string;
+  target?: number;
+  child_size?: number;
+  parent_size?: number;
+  overlap_ratio?: number;
+  limit?: number;
+}): Promise<{
+  strategy?: string;
+  count?: number;
+  shown?: number;
+  params?: Record<string, number>;
+  chunks?: KnowledgeChunkPreview[];
+}> {
+  return apiPost("/api/knowledge/chunker/preview", body);
+}
+
+export function rechunkKnowledgeDoc(docId: string): Promise<KnowledgeDoc> {
+  return apiPost(`/api/knowledge/docs/${encodeURIComponent(docId)}/rechunk`, {});
+}
+
+export function rechunkKnowledgeLibrary(body?: {
+  kb_id?: string;
+  workspace_id?: string;
+  limit?: number;
+}): Promise<{ ok?: boolean; scanned?: number; updated?: number; errors?: string[] }> {
+  return apiPost("/api/knowledge/rechunk", body || {});
+}
+
+export function retryKnowledgeJob(jobId: string): Promise<KnowledgeIngestJob> {
+  return apiPost(`/api/knowledge/ingest/jobs/${encodeURIComponent(jobId)}/retry`, {});
+}
+
 export function syncKnowledgeDocs(body: {
   cwd: string;
   workspace_id?: string;
+  kb_id?: string;
   max_files?: number;
 }): Promise<{
   scanned?: number;
@@ -1046,6 +1111,9 @@ export function syncKnowledgeDocs(body: {
   updated?: number;
   skipped?: number;
   errors?: string[];
+  noop?: boolean;
+  reason?: string;
+  kb_id?: string;
 }> {
   return apiPost("/api/knowledge/sync/docs", body);
 }

@@ -106,10 +106,31 @@ async def sync_workspace_docs(
     cwd: str,
     *,
     workspace_id: str = "",
+    kb_id: str = "",
     max_files: int = 400,
     max_bytes: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Scan docs under cwd into KB with content_hash upsert (.md/.txt/.rst/.pdf)."""
+    """Scan docs under cwd into the bound local KB with content_hash upsert."""
+    from src.core_kernel.plugin_runtime.knowledge_scope import (
+        DEFAULT_LOCAL_KB_ID,
+        is_remote_kb_id,
+        normalize_local_kb_id,
+    )
+
+    if is_remote_kb_id(kb_id):
+        return {
+            "ok": True,
+            "noop": True,
+            "reason": "workspace sync is local-only; refuse writing into WeKnora",
+            "cwd": cwd,
+            "scanned": 0,
+            "added": 0,
+            "updated": 0,
+            "skipped": 0,
+            "errors": [],
+            "kb_id": kb_id,
+        }
+    local_id = normalize_local_kb_id(kb_id)
     limit = library_ingest_max_bytes() if max_bytes is None else max_bytes
     root = Path(cwd).resolve()
     added = 0
@@ -125,7 +146,8 @@ async def sync_workspace_docs(
         try:
             text, note = read_file_as_text(path, max_bytes=limit)
             digest = content_hash(text)
-            doc_id = stable_doc_id_for_path(rel)
+            id_key = rel if local_id == DEFAULT_LOCAL_KB_ID else f"{local_id}:{rel}"
+            doc_id = stable_doc_id_for_path(id_key)
             title = _title_from_md(text, rel)
             tags = default_tags_for_path(path)
             if Path(rel).parts and Path(rel).parts[0] == "docs":
@@ -139,6 +161,7 @@ async def sync_workspace_docs(
                 source=f"file:{rel}",
                 source_uri=rel,
                 workspace_id=workspace_id,
+                kb_id=local_id,
                 content_hash_value=digest,
                 skip_if_unchanged=True,
             )
@@ -174,6 +197,7 @@ async def sync_workspace_docs(
     return {
         "ok": True,
         "cwd": str(root),
+        "kb_id": local_id,
         "scanned": len(files),
         "added": added,
         "updated": updated,

@@ -220,3 +220,103 @@ async def test_rpc_local_kb_and_ingest(store, tmp_path, monkeypatch):
         )
         assert patched.json()["ok"] is True
         assert "edited chunk body" in patched.json()["data"]["content"]
+        strat = await client.patch(
+            f"/rpc/knowledge/kbs/{kb['id']}", json={"chunk_strategy": "heading"}
+        )
+        assert strat.json()["ok"] is True
+        assert strat.json()["data"]["chunk_strategy"] == "heading"
+
+
+@pytest.mark.asyncio
+async def test_sync_workspace_docs_uses_bound_kb(store, tmp_path):
+    from src.core_kernel.plugin_runtime.knowledge_sync import sync_workspace_docs
+
+    other = await store.create_local_kb(name="SyncLib", workspace_id="ws-sync")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("# Guide\n\nsync-kb-marker-unique\n", encoding="utf-8")
+    result = await sync_workspace_docs(
+        store, str(tmp_path), workspace_id="ws-sync", kb_id=other["kb_id"]
+    )
+    assert result["ok"] is True
+    assert result["kb_id"] == other["kb_id"]
+    assert result["added"] >= 1
+    listed = await store.list_docs(workspace_id="ws-sync", kb_id=other["kb_id"])
+    default_docs = await store.list_docs(workspace_id="ws-sync", kb_id=DEFAULT_LOCAL_KB_ID)
+    other_ids = {row["doc_id"] for row in listed}
+    default_ids = {row["doc_id"] for row in default_docs}
+    assert other_ids
+    assert not other_ids.intersection(default_ids)
+    remote = await sync_workspace_docs(
+        store, str(tmp_path), workspace_id="ws-sync", kb_id="wk-remote-1"
+    )
+    assert remote.get("noop") is True
+
+
+@pytest.mark.asyncio
+async def test_chunker_preview_relative_path_and_retry(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("KB_INGEST_SYNC", "1")
+    monkeypatch.chdir(tmp_path)
+    app = FastAPI()
+    register_knowledge_rpc(app, {"session_factory": store.session_factory})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        preview = await client.post(
+            "/rpc/knowledge/chunker/preview",
+            json={
+                "text": "# One\n\n" + ("alpha " * 80) + "\n\n# Two\n\n" + ("beta " * 80),
+                "strategy": "heading",
+            },
+        )
+        assert preview.status_code == 200
+        pdata = preview.json()
+        assert pdata["ok"] is True
+        assert pdata["data"]["count"] >= 1
+        assert pdata["data"]["chunks"]
+        assert pdata["data"]["strategy"] == "heading"
+
+        rel = await client.post(
+            "/rpc/knowledge/ingest",
+            json={
+                "filename": "docs/api/note.md",
+                "content_b64": base64.b64encode(b"# Rel\n\nrelative path body").decode("ascii"),
+                "workspace_id": "ws-rel",
+                "kb_id": DEFAULT_LOCAL_KB_ID,
+            },
+        )
+        assert rel.json()["ok"] is True
+        job = rel.json()["data"]["jobs"][0]
+        assert job["status"] == "completed"
+        stored = await store.get(job["doc_id"])
+        assert stored["source_uri"] == "docs/api/note.md"
+        assert "dir:docs/api" in (stored.get("tags") or "")
+
+        await store.create_ingest_job(
+            job_id="job_retry_me",
+            kind="file",
+            filename="retry.md",
+            source_uri="retry.md",
+            kb_id=DEFAULT_LOCAL_KB_ID,
+            workspace_id="ws-rel",
+            status="failed",
+            progress=100,
+            message="failed",
+        )
+        await store.update_ingest_job("job_retry_me", error="boom")
+        from src.core_kernel.plugin_runtime.knowledge_jobs import INGEST_ROOT
+
+        INGEST_ROOT.mkdir(parents=True, exist_ok=True)
+        (INGEST_ROOT / "job_retry_me").write_bytes(b"# Retry\n\nretry body here")
+        again = await client.post("/rpc/knowledge/ingest/jobs/job_retry_me/retry")
+        assert again.json()["ok"] is True
+        row = again.json()["data"]
+        assert row["status"] == "completed"
+        doc = await store.get(row["doc_id"])
+        assert doc and "retry body" in doc["content"]
+        meta = await client.patch(
+            f"/rpc/knowledge/docs/{row['doc_id']}",
+            json={"title": "Retried note", "tags": "retry,manual"},
+        )
+        assert meta.json()["ok"] is True
+        assert meta.json()["data"]["title"] == "Retried note"
+        assert "retry" in meta.json()["data"]["tags"]

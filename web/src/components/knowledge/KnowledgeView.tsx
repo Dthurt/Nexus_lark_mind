@@ -13,6 +13,7 @@ import {
   Plus,
   Presentation,
   RefreshCw,
+  RotateCcw,
   Search,
   Trash2,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import {
   addKnowledgeDoc,
   createLocalKnowledgeBase,
   deleteKnowledgeDoc,
+  deleteLocalKnowledgeBase,
   getKnowledgeDoc,
   getKnowledgeStats,
   getWeknoraKnowledge,
@@ -30,16 +32,26 @@ import {
   ingestKnowledgeUrl,
   listKnowledgeDocs,
   listKnowledgeJobs,
+  listKnowledgeSyncLog,
   listWeknoraKnowledge,
   patchKnowledgeChunk,
+  patchKnowledgeDoc,
+  patchLocalKnowledgeBase,
+  previewKnowledgeChunks,
+  rechunkKnowledgeDoc,
+  rechunkKnowledgeLibrary,
+  reindexKnowledge,
+  retryKnowledgeJob,
   searchKnowledge,
   searchWeknora,
   syncKnowledgeDocs,
   type KnowledgeChunk,
+  type KnowledgeChunkPreview,
   type KnowledgeDoc,
   type KnowledgeHit,
   type KnowledgeIngestJob,
   type KnowledgeStats,
+  type KnowledgeSyncEntry,
   type LocalKnowledgeBase,
   type WeknoraHealth,
   type WeknoraHit,
@@ -75,7 +87,15 @@ export type KnowledgeViewProps = {
 type BrowseRow = KnowledgeHit & { content?: string; kb_id?: string; tags?: string };
 type IngestMode = "files" | "folder" | "url" | "paste" | "sync";
 type SideTab = "ingest" | "preview";
+type IngestAux = "jobs" | "sync" | "chunk";
 type FileKindId = "all" | "pdf" | "word" | "ppt" | "excel" | "md" | "html";
+type ChunkStrategyId = "heading" | "parent_child" | "fixed";
+
+const CHUNK_STRATEGIES: { id: ChunkStrategyId; label: string; hint: string }[] = [
+  { id: "heading", label: "标题分层", hint: "按 Markdown 标题切分，约 512 字" },
+  { id: "parent_child", label: "父子块", hint: "父块 2048 / 子块 384，检索子块、阅读父块" },
+  { id: "fixed", label: "固定长度", hint: "按约 512 字滑动窗口，不看标题" },
+];
 
 const FILE_KINDS: {
   id: FileKindId;
@@ -135,6 +155,26 @@ function jobTone(status?: string) {
   return "wait";
 }
 
+function pathPrefixOf(row: BrowseRow): string {
+  const uri = String(row.source_uri || "").replace(/\\/g, "/");
+  const slash = uri.lastIndexOf("/");
+  return slash > 0 ? uri.slice(0, slash) : "";
+}
+
+function tagsOf(row: { tags?: string }): string[] {
+  return String(row.tags || "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function normalizeStrategy(raw?: string): ChunkStrategyId {
+  const s = String(raw || "").trim().replace(/-/g, "_");
+  if (s === "heading" || s === "headings" || s === "markdown") return "heading";
+  if (s === "fixed" || s === "fixed_size") return "fixed";
+  return "parent_child";
+}
+
 function partitionFiles(files: File[], accept: string): { ok: File[]; bad: File[] } {
   const allow = new Set(
     accept
@@ -191,7 +231,20 @@ export function KnowledgeView({
   const [dragOver, setDragOver] = useState(false);
   const [ingestMode, setIngestMode] = useState<IngestMode>("files");
   const [sideTab, setSideTab] = useState<SideTab>("ingest");
+  const [ingestAux, setIngestAux] = useState<IngestAux>("jobs");
   const [fileKind, setFileKind] = useState<FileKindId>("all");
+  const [tagFilter, setTagFilter] = useState("");
+  const [syncLog, setSyncLog] = useState<KnowledgeSyncEntry[]>([]);
+  const [chunkStrategy, setChunkStrategy] = useState<ChunkStrategyId>("parent_child");
+  const [chunkPreviewText, setChunkPreviewText] = useState("");
+  const [chunkPreview, setChunkPreview] = useState<KnowledgeChunkPreview[]>([]);
+  const [chunkPreviewCount, setChunkPreviewCount] = useState(0);
+  const [chunkBusy, setChunkBusy] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
+  const [retryingJob, setRetryingJob] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [savingMeta, setSavingMeta] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -206,6 +259,38 @@ export function KnowledgeView({
   const extraLocal = localKbs.filter((kb) => kb.id && kb.id !== DEFAULT_LOCAL_KB_ID);
   const localActive = !boundKbId || boundKbId === DEFAULT_LOCAL_KB_ID;
   const remoteReady = Boolean(health?.configured && !health?.skipped);
+  const currentLocalKb = localKbs.find((kb) => kb.id === (localKbId || DEFAULT_LOCAL_KB_ID));
+
+  const groupedRows = useMemo(() => {
+    const groups: { prefix: string; items: BrowseRow[] }[] = [];
+    const index = new Map<string, BrowseRow[]>();
+    for (const row of rows) {
+      const prefix = pathPrefixOf(row);
+      let bucket = index.get(prefix);
+      if (!bucket) {
+        bucket = [];
+        index.set(prefix, bucket);
+        groups.push({ prefix, items: bucket });
+      }
+      bucket.push(row);
+    }
+    return groups;
+  }, [rows]);
+
+  const visibleTags = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const row of rows) {
+      for (const tag of tagsOf(row)) {
+        if (tag.startsWith("session:")) continue;
+        if (seen.has(tag)) continue;
+        seen.add(tag);
+        out.push(tag);
+        if (out.length >= 8) return out;
+      }
+    }
+    return out;
+  }, [rows]);
 
   const activeJobs = useMemo(
     () => jobs.filter((j) => j.status === "pending" || j.status === "processing"),
@@ -254,6 +339,7 @@ export function KnowledgeView({
           listKnowledgeDocs({
             workspace_id: workspaceId || undefined,
             kb_id: localKbId,
+            tag: tagFilter || undefined,
             limit: 60,
           }),
           getKnowledgeStats({ workspace_id: workspaceId || undefined, kb_id: localKbId }),
@@ -268,16 +354,39 @@ export function KnowledgeView({
     } finally {
       setLoading(false);
     }
-  }, [boundKbId, localKbId, remote, workspaceId]);
+  }, [boundKbId, localKbId, remote, tagFilter, workspaceId]);
+
+  const loadSyncLog = useCallback(async () => {
+    if (remote) return;
+    try {
+      const data = await listKnowledgeSyncLog({
+        workspace_id: workspaceId || undefined,
+        limit: 8,
+      });
+      setSyncLog(data.entries || []);
+    } catch {
+      setSyncLog([]);
+    }
+  }, [remote, workspaceId]);
+
+  useEffect(() => {
+    setSelected(null);
+    setChunks([]);
+    setQuery("");
+    setTagFilter("");
+    setChunkPreview([]);
+    setSideTab(remote ? "preview" : "ingest");
+  }, [boundKbId, localKbId, remote]);
 
   useEffect(() => {
     void loadList();
     void loadJobs();
-    setSelected(null);
-    setChunks([]);
-    setQuery("");
-    setSideTab(remote ? "preview" : "ingest");
-  }, [loadList, loadJobs, remote]);
+    void loadSyncLog();
+  }, [loadList, loadJobs, loadSyncLog]);
+
+  useEffect(() => {
+    setChunkStrategy(normalizeStrategy(currentLocalKb?.chunk_strategy));
+  }, [currentLocalKb?.chunk_strategy, localKbId]);
 
   useEffect(() => {
     if (!activeJobs.length) return;
@@ -366,6 +475,7 @@ export function KnowledgeView({
           query: q,
           workspace_id: workspaceId || undefined,
           kb_id: localKbId,
+          tag: tagFilter || undefined,
           limit: 12,
         });
         setRows(data.results || []);
@@ -397,6 +507,8 @@ export function KnowledgeView({
       }
       const doc = await getKnowledgeDoc(id, true);
       setSelected(doc);
+      setEditTitle(doc.title || "");
+      setEditTags(doc.tags || "");
       setChunks((doc.chunks || []).filter((c) => (c.chunk_type || "text") !== "parent"));
       setEditingChunk("");
       setSideTab("preview");
@@ -470,17 +582,29 @@ export function KnowledgeView({
   };
 
   const onSync = async () => {
+    if (remote) {
+      toast.error("工作区同步只写入本机库，不会导入 WeKnora。请先切到左侧本机库。");
+      return;
+    }
     if (!cwd) {
       toast.error("请先绑定工作区");
       return;
     }
     setSyncing(true);
     try {
-      const data = await syncKnowledgeDocs({ cwd, workspace_id: workspaceId || undefined });
+      const data = await syncKnowledgeDocs({
+        cwd,
+        workspace_id: workspaceId || undefined,
+        kb_id: localKbId,
+      });
+      if (data.noop) {
+        toast.message(data.reason || "已跳过：工作区同步仅写入本机库");
+        return;
+      }
       toast.success(
         `同步完成 · 扫描 ${data.scanned ?? 0} · 新增 ${data.added ?? 0} · 更新 ${data.updated ?? 0}`,
       );
-      await loadList();
+      await Promise.all([loadList(), loadSyncLog()]);
     } catch (err: any) {
       toast.error(String(err?.message || err));
     } finally {
@@ -550,6 +674,145 @@ export function KnowledgeView({
     }
   };
 
+  const onDeleteKb = async (kb: LocalKnowledgeBase) => {
+    if (kb.id === DEFAULT_LOCAL_KB_ID) return;
+    if (!window.confirm(`删除知识库「${kb.name || kb.id}」及其文档？此操作不可撤销。`)) return;
+    try {
+      await deleteLocalKnowledgeBase(kb.id);
+      toast.success("已删除本地库");
+      if (boundKbId === kb.id) {
+        onBindKb?.(LOCAL_KB_ID, defaultLocal?.name || "本地知识库");
+      }
+      onCatalogRefresh?.();
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "删除失败"));
+    }
+  };
+
+  const onReindex = async () => {
+    setReindexing(true);
+    try {
+      const data = await reindexKnowledge({
+        workspace_id: workspaceId || undefined,
+        kb_id: localKbId,
+        limit: 200,
+      });
+      if (data.error) toast.error(data.error);
+      else toast.success(`向量回填 · 更新 ${data.updated ?? 0} / 扫描 ${data.scanned ?? 0}`);
+      await loadList();
+    } catch (err: any) {
+      toast.error(String(err?.message || err));
+    } finally {
+      setReindexing(false);
+    }
+  };
+
+  const onRetryJob = async (jobId: string) => {
+    setRetryingJob(jobId);
+    try {
+      await retryKnowledgeJob(jobId);
+      toast.success("已重新排队");
+      await loadJobs();
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "重试失败"));
+    } finally {
+      setRetryingJob("");
+    }
+  };
+
+  const onSaveDocMeta = async () => {
+    if (!selected || remote) return;
+    const nextTitle = editTitle.trim();
+    const nextTags = editTags.trim();
+    if (!nextTitle) {
+      toast.error("标题不能为空");
+      return;
+    }
+    setSavingMeta(true);
+    try {
+      const row = await patchKnowledgeDoc(selected.doc_id, {
+        title: nextTitle,
+        tags: nextTags,
+      });
+      setSelected((prev) => (prev ? { ...prev, ...row } : row));
+      toast.success("标题与标签已更新");
+      await loadList();
+    } catch (err: any) {
+      toast.error(String(err?.message || err));
+    } finally {
+      setSavingMeta(false);
+    }
+  };
+
+  const onSaveStrategy = async (next: ChunkStrategyId) => {
+    setChunkStrategy(next);
+    try {
+      await patchLocalKnowledgeBase(localKbId || DEFAULT_LOCAL_KB_ID, {
+        chunk_strategy: next,
+      });
+      toast.success("已保存切片策略，新导入将使用该策略");
+      onCatalogRefresh?.();
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "保存策略失败"));
+    }
+  };
+
+  const onPreviewChunks = async () => {
+    const sample = chunkPreviewText.trim() || (selected?.content || "").slice(0, 4000);
+    if (!sample.trim()) {
+      toast.error("请先粘贴样例，或打开一篇文档再预览");
+      return;
+    }
+    setChunkBusy(true);
+    try {
+      const data = await previewKnowledgeChunks({
+        text: sample,
+        strategy: chunkStrategy,
+      });
+      setChunkPreview(data.chunks || []);
+      setChunkPreviewCount(Number(data.count || 0));
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "预览失败"));
+    } finally {
+      setChunkBusy(false);
+    }
+  };
+
+  const onRechunkSelected = async () => {
+    if (!selected?.doc_id || remote) return;
+    setChunkBusy(true);
+    try {
+      const row = await rechunkKnowledgeDoc(selected.doc_id);
+      toast.success("已按当前策略重切该文档");
+      const doc = await getKnowledgeDoc(row.doc_id || selected.doc_id, true);
+      setSelected(doc);
+      setChunks((doc.chunks || []).filter((c) => (c.chunk_type || "text") !== "parent"));
+      await loadList();
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "重切失败"));
+    } finally {
+      setChunkBusy(false);
+    }
+  };
+
+  const onRechunkLibrary = async () => {
+    if (!window.confirm("按当前策略重切本库已有文档？最多处理 40 篇。")) return;
+    setChunkBusy(true);
+    try {
+      const data = await rechunkKnowledgeLibrary({
+        kb_id: localKbId,
+        workspace_id: workspaceId || undefined,
+        limit: 40,
+      });
+      toast.success(`已重切 ${data.updated ?? 0} / ${data.scanned ?? 0} 篇`);
+      await loadList();
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "重切失败"));
+    } finally {
+      setChunkBusy(false);
+    }
+  };
+
   const ingestCopy = {
     files: {
       title: `导入${fileKind === "all" ? "文件" : fileKindMeta.label}`,
@@ -557,7 +820,7 @@ export function KnowledgeView({
     },
     folder: {
       title: "导入文件夹",
-      body: "按文件后缀分别解析；不支持的类型会跳过。",
+      body: "保留相对路径便于列表分组；不支持的类型会跳过。",
     },
     url: {
       title: "抓取网页 / PDF 链接",
@@ -584,9 +847,11 @@ export function KnowledgeView({
             <div className="flex items-center gap-1.5 text-[14px] font-semibold tracking-tight">
               <BookOpen className="size-4 text-teal" />
               知识库
+              <span className="font-normal text-muted-foreground">›</span>
+              <span className="truncate font-medium">{label}</span>
             </div>
             <p className="m-0 mt-0.5 text-[12px] text-foreground/80">
-              {remote ? "远程 WeKnora" : "本机 SQLite"} · 「{label}」
+              {remote ? "远程 WeKnora" : "本机 SQLite"}
             </p>
             <div className="mt-1.5 flex flex-wrap gap-1">
               <span className="nlm-knowledge-pill">{hybridLabel}</span>
@@ -632,16 +897,29 @@ export function KnowledgeView({
             <span className="text-[10px] text-muted-foreground">{defaultLocal?.doc_count ?? 0}</span>
           </button>
           {extraLocal.map((kb) => (
-            <button
-              key={kb.id}
-              type="button"
-              className={cn("nlm-knowledge-rail-item", boundKbId === kb.id && "is-active")}
-              data-testid={`knowledge-rail-kb-${kb.id}`}
-              onClick={() => onBindKb?.(kb.id, kb.name || kb.id)}
-            >
-              <span className="min-w-0 flex-1 truncate">{kb.name || kb.id}</span>
-              <span className="text-[10px] text-muted-foreground">{kb.doc_count ?? 0}</span>
-            </button>
+            <div key={kb.id} className="nlm-knowledge-rail-row">
+              <button
+                type="button"
+                className={cn("nlm-knowledge-rail-item", boundKbId === kb.id && "is-active")}
+                data-testid={`knowledge-rail-kb-${kb.id}`}
+                onClick={() => onBindKb?.(kb.id, kb.name || kb.id)}
+              >
+                <span className="min-w-0 flex-1 truncate">{kb.name || kb.id}</span>
+                <span className="text-[10px] text-muted-foreground">{kb.doc_count ?? 0}</span>
+              </button>
+              <button
+                type="button"
+                className="nlm-knowledge-rail-x"
+                title="删除该本地库"
+                data-testid={`knowledge-delete-kb-${kb.id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void onDeleteKb(kb);
+                }}
+              >
+                <Trash2 className="size-3" />
+              </button>
+            </div>
           ))}
           <div className="mt-1.5 space-y-1">
             <Input
@@ -666,6 +944,20 @@ export function KnowledgeView({
               <Plus className="mr-1 size-3" />
               新建本地库
             </Button>
+            {!remote && stats?.embeddings_configured ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 w-full px-2 text-[11px]"
+                data-testid="knowledge-reindex"
+                disabled={reindexing}
+                onClick={() => void onReindex()}
+              >
+                <RefreshCw className={cn("mr-1 size-3", reindexing && "animate-spin")} />
+                {reindexing ? "回填中…" : "回填向量"}
+              </Button>
+            ) : null}
           </div>
 
           <div className="nlm-knowledge-rail-label mt-3">WeKnora</div>
@@ -698,28 +990,56 @@ export function KnowledgeView({
         </aside>
 
         <section className="nlm-knowledge-docs min-h-0">
-          <div className="flex shrink-0 gap-1 border-b border-border px-2 py-2">
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={`在「${label}」中搜索…`}
-              className="h-8 text-[12px]"
-              data-testid="knowledge-search-input"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void onSearch();
-              }}
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="h-8 px-2"
-              data-testid="knowledge-search-submit"
-              disabled={loading || catalogLoading}
-              onClick={() => void onSearch()}
-            >
-              <Search className="size-3.5" />
-            </Button>
+          <div className="flex shrink-0 flex-col gap-1 border-b border-border px-2 py-2">
+            <div className="flex gap-1">
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`在「${label}」中搜索…`}
+                className="h-8 text-[12px]"
+                data-testid="knowledge-search-input"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void onSearch();
+                }}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-8 px-2"
+                data-testid="knowledge-search-submit"
+                disabled={loading || catalogLoading}
+                onClick={() => void onSearch()}
+              >
+                <Search className="size-3.5" />
+              </Button>
+            </div>
+            {!remote && (visibleTags.length || tagFilter) ? (
+              <div className="flex flex-wrap gap-1">
+                {tagFilter ? (
+                  <button
+                    type="button"
+                    className="nlm-knowledge-tag is-on"
+                    data-testid="knowledge-tag-filter"
+                    onClick={() => setTagFilter("")}
+                  >
+                    {tagFilter} ×
+                  </button>
+                ) : null}
+                {visibleTags
+                  .filter((t) => t !== tagFilter)
+                  .map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      className="nlm-knowledge-tag"
+                      onClick={() => setTagFilter(tag)}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+              </div>
+            ) : null}
           </div>
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-2">
             {loading && !rows.length ? (
@@ -736,10 +1056,16 @@ export function KnowledgeView({
                     : "从右侧选择一种导入方式：PDF / Word / PPT / Markdown 或网页、粘贴。"}
               </div>
             ) : null}
-            {rows.map((row) => {
+            {groupedRows.map((group) => (
+              <div key={group.prefix || "__root"} className="space-y-1">
+                {group.prefix ? (
+                  <div className="nlm-knowledge-group">{group.prefix}</div>
+                ) : null}
+                {group.items.map((row) => {
               const id = String(row.doc_id || row.source_uri || row.title || "row");
               const isRemote = remote || row.source === "weknora";
               const kind = inferEntryKind(row);
+              const rowTags = tagsOf(row).filter((t) => !t.startsWith("session:")).slice(0, 3);
               return (
                 <div
                   key={id + (row.chunk_id || "")}
@@ -754,6 +1080,15 @@ export function KnowledgeView({
                       <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
                         {row.citation || row.source_uri || row.source || id}
                       </div>
+                      {rowTags.length ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {rowTags.map((tag) => (
+                            <span key={tag} className="nlm-knowledge-tag">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       {row.snippet ? (
                         <p className="m-0 mt-1 line-clamp-2 text-[11px] text-muted-foreground">{row.snippet}</p>
                       ) : null}
@@ -799,7 +1134,9 @@ export function KnowledgeView({
                   </div>
                 </div>
               );
-            })}
+                })}
+              </div>
+            ))}
           </div>
         </section>
 
@@ -842,7 +1179,42 @@ export function KnowledgeView({
                   关闭
                 </button>
               </div>
-              {selected.source_uri ? (
+              {!remote ? (
+                <div className="mb-2 space-y-1">
+                  <Input
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="标题"
+                    className="h-7 text-[12px]"
+                    data-testid="knowledge-doc-title"
+                  />
+                  <Input
+                    value={editTags}
+                    onChange={(e) => setEditTags(e.target.value)}
+                    placeholder="标签，逗号分隔"
+                    className="h-7 text-[12px]"
+                    data-testid="knowledge-doc-tags"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void onSaveDocMeta();
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 w-full text-[11px]"
+                    disabled={savingMeta}
+                    onClick={() => void onSaveDocMeta()}
+                  >
+                    {savingMeta ? "保存中…" : "保存标题 / 标签"}
+                  </Button>
+                </div>
+              ) : selected.source_uri ? (
+                <div className="mb-1 truncate font-mono text-[10px] text-muted-foreground">
+                  {selected.source_uri}
+                </div>
+              ) : null}
+              {selected.source_uri && !remote ? (
                 <div className="mb-1 truncate font-mono text-[10px] text-muted-foreground">
                   {selected.source_uri}
                 </div>
@@ -1112,26 +1484,158 @@ export function KnowledgeView({
                   </Button>
                 ) : null}
 
-                {jobs.length ? (
-                  <div className="nlm-knowledge-jobs" data-testid="knowledge-jobs">
-                    {jobs.slice(0, 6).map((job) => (
-                      <div key={job.job_id} className={cn("nlm-knowledge-job", `is-${jobTone(job.status)}`)}>
-                        <div className="min-w-0 flex-1 truncate">
-                          <span className="font-medium">{job.filename || job.source_uri || job.job_id}</span>
-                          <span className="text-muted-foreground">
-                            {" "}
-                            · {job.status}
-                            {job.message ? ` · ${job.message}` : ""}
+                <div className="nlm-knowledge-aux" role="tablist" aria-label="库务">
+                  {(
+                    [
+                      { id: "jobs", label: "任务" },
+                      { id: "sync", label: "记录" },
+                      { id: "chunk", label: "切片" },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      className={cn("nlm-knowledge-aux-tab", ingestAux === tab.id && "is-active")}
+                      data-testid={`knowledge-aux-${tab.id}`}
+                      onClick={() => setIngestAux(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {ingestAux === "jobs" ? (
+                  jobs.length ? (
+                    <div className="nlm-knowledge-jobs" data-testid="knowledge-jobs">
+                      {jobs.slice(0, 8).map((job) => (
+                        <div key={job.job_id} className={cn("nlm-knowledge-job", `is-${jobTone(job.status)}`)}>
+                          <div className="min-w-0 flex-1 truncate">
+                            <span className="font-medium">{job.filename || job.source_uri || job.job_id}</span>
+                            <span className="text-muted-foreground">
+                              {" "}
+                              · {job.status}
+                              {job.message ? ` · ${job.message}` : ""}
+                            </span>
+                          </div>
+                          <div className="nlm-knowledge-job-bar">
+                            <i style={{ width: `${Math.max(6, Number(job.progress || 0))}%` }} />
+                          </div>
+                          {job.status === "failed" ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 px-1.5 text-[10px]"
+                              data-testid={`knowledge-job-retry-${job.job_id}`}
+                              disabled={retryingJob === job.job_id}
+                              onClick={() => void onRetryJob(job.job_id)}
+                            >
+                              <RotateCcw className="mr-0.5 size-3" />
+                              {retryingJob === job.job_id ? "…" : "重试"}
+                            </Button>
+                          ) : null}
+                          {job.error ? (
+                            <div className="w-full truncate text-[10px] text-destructive">{job.error}</div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="m-0 text-[11px] text-muted-foreground">暂无导入任务。</p>
+                  )
+                ) : null}
+
+                {ingestAux === "sync" ? (
+                  <div className="nlm-knowledge-sync-log" data-testid="knowledge-sync-log">
+                    {syncLog.length ? (
+                      syncLog.map((entry) => (
+                        <div key={String(entry.id || entry.source_uri || entry.created_at)} className="nlm-knowledge-sync-row">
+                          <span className={cn("nlm-knowledge-pill", entry.status === "error" && "nlm-knowledge-pill--live")}>
+                            {entry.status || "ok"}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">
+                            {entry.source} · {entry.source_uri || entry.message || ""}
                           </span>
                         </div>
-                        <div className="nlm-knowledge-job-bar">
-                          <i style={{ width: `${Math.max(6, Number(job.progress || 0))}%` }} />
+                      ))
+                    ) : (
+                      <p className="m-0 text-[11px] text-muted-foreground">暂无同步记录。可在「工作区」页签扫描绑定文件夹。</p>
+                    )}
+                  </div>
+                ) : null}
+
+                {ingestAux === "chunk" ? (
+                  <div className="space-y-1.5" data-testid="knowledge-chunk-strategy">
+                    <p className="m-0 text-[11px] text-muted-foreground">
+                      {CHUNK_STRATEGIES.find((s) => s.id === chunkStrategy)?.hint}
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {CHUNK_STRATEGIES.map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          className={cn("nlm-knowledge-format", chunkStrategy === s.id && "is-on")}
+                          onClick={() => void onSaveStrategy(s.id)}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                    <Textarea
+                      value={chunkPreviewText}
+                      onChange={(e) => setChunkPreviewText(e.target.value)}
+                      placeholder="粘贴样例预览切片（也可打开一篇文档）"
+                      rows={4}
+                      className="font-mono text-[11px]"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="h-7 w-full text-[11px]"
+                      disabled={chunkBusy}
+                      onClick={() => void onPreviewChunks()}
+                    >
+                      {chunkBusy ? "预览中…" : "预览切片"}
+                    </Button>
+                    {chunkPreview.length ? (
+                      <div className="space-y-1">
+                        <div className="text-[10px] text-muted-foreground">
+                          {chunkPreviewCount} 块 · 显示 {chunkPreview.length}
                         </div>
-                        {job.error ? (
-                          <div className="w-full truncate text-[10px] text-destructive">{job.error}</div>
-                        ) : null}
+                        {chunkPreview.slice(0, 6).map((chunk) => (
+                          <div key={chunk.index} className="rounded-md border border-border/60 p-1.5 text-[11px]">
+                            <div className="text-[10px] text-muted-foreground">
+                              #{chunk.index}
+                              {chunk.heading ? ` · ${chunk.heading}` : ""}
+                              {chunk.chunk_type ? ` · ${chunk.chunk_type}` : ""}
+                              {chunk.chars ? ` · ${chunk.chars} 字` : ""}
+                            </div>
+                            <p className="m-0 mt-0.5 line-clamp-3 whitespace-pre-wrap text-foreground/80">
+                              {chunk.content}
+                            </p>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 w-full text-[11px]"
+                      disabled={chunkBusy || !selected}
+                      onClick={() => void onRechunkSelected()}
+                    >
+                      重切当前文档
+                    </Button>
+                    <button
+                      type="button"
+                      className="w-full text-left text-[10px] text-muted-foreground hover:text-foreground"
+                      disabled={chunkBusy}
+                      onClick={() => void onRechunkLibrary()}
+                    >
+                      对本库已有文档重切（最多 40 篇）
+                    </button>
                   </div>
                 ) : null}
               </div>

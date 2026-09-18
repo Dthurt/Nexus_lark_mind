@@ -17,6 +17,7 @@ from src.common.schemas import RpcEnvelope
 from src.core_kernel.plugin_runtime.knowledge_ingest import (
     MAX_SESSION_UPLOAD_BYTES,
     library_ingest_max_bytes,
+    normalize_ingest_relpath,
 )
 
 SESSION_UPLOAD_ROOT = Path("data") / "session_uploads"
@@ -232,7 +233,7 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             body = {}
         if not isinstance(body, dict):
             body = {}
-        filename = Path(str(body.get("filename") or "upload.txt")).name
+        filename = normalize_ingest_relpath(str(body.get("filename") or "upload.txt"))
         suffix = Path(filename).suffix.lower()
         if suffix not in SUPPORTED_SUFFIXES:
             return RpcEnvelope(
@@ -329,6 +330,7 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             body = {}
         data = await store.reindex_embeddings(
             workspace_id=str(body.get("workspace_id") or ""),
+            kb_id=str(body.get("kb_id") or ""),
             limit=int(body.get("limit") or 200),
         )
         return RpcEnvelope(ok=True, data=data)
@@ -349,11 +351,13 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         if not cwd:
             return RpcEnvelope(ok=False, error={"code": "NO_CWD", "message": "cwd required"})
         workspace_id = str(body.get("workspace_id") or "")
+        kb_id = str(body.get("kb_id") or "")
         max_files = int(body.get("max_files") or 400)
         data = await sync_workspace_docs(
             store,
             cwd,
             workspace_id=workspace_id,
+            kb_id=kb_id,
             max_files=max(1, min(max_files, 2000)),
         )
         return RpcEnvelope(ok=True, data=data)
@@ -409,7 +413,28 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             name=str(body.get("name") or ""),
             workspace_id=str(body.get("workspace_id") or ""),
             description=str(body.get("description") or ""),
+            chunk_strategy=str(body.get("chunk_strategy") or ""),
         )
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.patch("/rpc/knowledge/kbs/{kb_id}")
+    async def kb_patch_local(kb_id: str, request: Request):
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        row = await store.update_local_kb(
+            kb_id,
+            name=str(body["name"]) if "name" in body else None,
+            description=str(body["description"]) if "description" in body else None,
+            chunk_strategy=str(body["chunk_strategy"]) if "chunk_strategy" in body else None,
+        )
+        if not row:
+            return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"kb not found: {kb_id}"})
         return RpcEnvelope(ok=True, data=row)
 
     @app.delete("/rpc/knowledge/kbs/{kb_id}")
@@ -440,6 +465,79 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"job not found: {job_id}"})
         return RpcEnvelope(ok=True, data=row)
 
+    @app.post("/rpc/knowledge/ingest/jobs/{job_id}/retry")
+    async def kb_retry_job(job_id: str):
+        from src.core_kernel.plugin_runtime.knowledge_jobs import retry_ingest_job
+
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            row = await retry_ingest_job(store, job_id)
+        except ValueError as exc:
+            return RpcEnvelope(ok=False, error={"code": "INGEST", "message": str(exc)})
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.post("/rpc/knowledge/ingest/resume")
+    async def kb_resume_jobs():
+        from src.core_kernel.plugin_runtime.knowledge_jobs import resume_incomplete_jobs
+
+        store = _kb_store()
+        await store.ensure_schema()
+        await resume_incomplete_jobs(store)
+        return RpcEnvelope(ok=True, data={"ok": True})
+
+    @app.post("/rpc/knowledge/chunker/preview")
+    async def kb_chunker_preview(request: Request):
+        from src.core_kernel.plugin_runtime.knowledge_store import preview_chunks
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        text = str(body.get("text") or body.get("content") or "")
+        if not text.strip():
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "text required"})
+        if len(text) > 80_000:
+            text = text[:80_000]
+        data = preview_chunks(
+            text,
+            strategy=str(body.get("strategy") or ""),
+            target=int(body.get("target") or 512),
+            child_size=int(body.get("child_size") or 384),
+            parent_size=int(body.get("parent_size") or 2048),
+            overlap_ratio=float(body.get("overlap_ratio") or 0.15),
+            limit=int(body.get("limit") or 40),
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/rpc/knowledge/docs/{doc_id}/rechunk")
+    async def kb_rechunk_doc(doc_id: str):
+        store = _kb_store()
+        await store.ensure_schema()
+        row = await store.rechunk_doc(doc_id)
+        if not row:
+            return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"doc not found: {doc_id}"})
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.post("/rpc/knowledge/rechunk")
+    async def kb_rechunk_library(request: Request):
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        data = await store.rechunk_library(
+            kb_id=str(body.get("kb_id") or ""),
+            workspace_id=str(body.get("workspace_id") or ""),
+            limit=int(body.get("limit") or 40),
+        )
+        return RpcEnvelope(ok=True, data=data)
+
     @app.post("/rpc/knowledge/ingest")
     async def kb_ingest(request: Request):
         from src.core_kernel.plugin_runtime.knowledge_jobs import enqueue_file_job, enqueue_url_job
@@ -462,7 +560,7 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
                     store, url=url, kb_id=kb_id, workspace_id=workspace_id, title=title
                 )
                 return RpcEnvelope(ok=True, data={"jobs": [job]})
-            filename = Path(str(body.get("filename") or "upload.txt")).name
+            filename = normalize_ingest_relpath(str(body.get("filename") or "upload.txt"))
             raw_b64 = str(body.get("content_b64") or "")
             raw = base64.b64decode(raw_b64, validate=False)
             job = await enqueue_file_job(
@@ -501,7 +599,7 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         for item in files[:80]:
             if not isinstance(item, dict):
                 continue
-            filename = Path(str(item.get("filename") or "upload.txt")).name
+            filename = normalize_ingest_relpath(str(item.get("filename") or "upload.txt"))
             try:
                 raw = base64.b64decode(str(item.get("content_b64") or ""), validate=False)
                 job = await enqueue_file_job(

@@ -70,6 +70,10 @@ export function useRightDock() {
     setState((s) => ({ ...s, collapsed: false }));
   }, []);
 
+  const setCollapsed = useCallback((collapsed: boolean) => {
+    setState((s) => (s.collapsed === collapsed ? s : { ...s, collapsed }));
+  }, []);
+
   const openTab = useCallback(
     (
       kind: string,
@@ -201,6 +205,7 @@ export function useRightDock() {
     inspectorPayload,
     toggleCollapsed,
     expand,
+    setCollapsed,
     openTab,
     closeTab,
     focusTab,

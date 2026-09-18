@@ -67,6 +67,7 @@ test.describe("knowledge base", () => {
 
     await page.getByTestId("empty-open-knowledge").click();
     await expect(page).toHaveURL(/\/knowledge/);
+    await expect(page).toHaveURL(/\/knowledge\/local(%3A|:)default/);
     await expect(page.getByTestId("knowledge-page")).toBeVisible();
     await expect(page.getByTestId("knowledge-search-input")).toBeVisible();
     await expect(page.getByTestId("knowledge-go-chat")).toBeVisible();
@@ -76,6 +77,21 @@ test.describe("knowledge base", () => {
     await expect(page.getByTestId("knowledge-ingest-paste")).toBeVisible();
     await expect(page.getByTestId("knowledge-format-pdf")).toBeVisible();
     await expect(page.getByTestId("composer-open-knowledge")).toHaveCount(0);
+  });
+
+  test("switching local library updates nested knowledge url", async ({ page, request }) => {
+    await requireAdapters(request);
+    await page.goto("/knowledge", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("knowledge-page")).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(/\/knowledge\/local(%3A|:)default/);
+    await expect(page.getByTestId("knowledge-import-file")).toBeVisible();
+    await expect(page.getByTestId("knowledge-ingest-paste")).toBeVisible();
+    const name = `E2E库${Date.now()}`;
+    await page.getByTestId("knowledge-create-kb-name").fill(name);
+    await page.getByTestId("knowledge-create-kb").click();
+    await expect(page).toHaveURL(/\/knowledge\/local(%3A|:)[0-9a-f]+/, { timeout: 15_000 });
+    await page.getByTestId("knowledge-scope-local").click();
+    await expect(page).toHaveURL(/\/knowledge\/local(%3A|:)default/);
   });
 });
 

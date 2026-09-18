@@ -24,3 +24,34 @@ export function kbScopeLabel(id?: string, name?: string): string {
 export function composerKbPlaceholder(id?: string, name?: string): string {
   return `基于「${kbScopeLabel(id, name)}」提问 · @ 附加文件 · Enter 发送`;
 }
+
+export function canonicalKbId(id?: string): string {
+  const kid = String(id || "").trim();
+  return !kid || kid === DEFAULT_LOCAL_KB_ID ? DEFAULT_LOCAL_KB_ID : kid;
+}
+
+export function sameKnowledgeId(a?: string, b?: string): boolean {
+  return canonicalKbId(a) === canonicalKbId(b);
+}
+
+export function knowledgePath(kbId?: string): string {
+  return `/knowledge/${encodeURIComponent(canonicalKbId(kbId))}`;
+}
+
+export function parseKnowledgePath(pathname: string): string | null {
+  const path = String(pathname || "");
+  if (path === "/knowledge" || path === "/knowledge/") return "";
+  if (!path.startsWith("/knowledge/")) return null;
+  const raw = path.slice("/knowledge/".length).split("/").filter(Boolean)[0] || "";
+  if (!raw) return "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+export function isKnowledgeRoute(pathname: string): boolean {
+  const path = String(pathname || "");
+  return path === "/knowledge" || path.startsWith("/knowledge/");
+}

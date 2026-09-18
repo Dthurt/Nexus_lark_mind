@@ -130,6 +130,7 @@ class KnowledgeBase(Base):
     name: Mapped[str] = mapped_column(String(256), default="")
     description: Mapped[str] = mapped_column(String(1024), default="")
     workspace_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    chunk_strategy: Mapped[str] = mapped_column(String(32), default="parent_child")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -276,11 +277,27 @@ def _push_heading(stack: List[Tuple[int, str]], level: int, title: str) -> List[
     return next_stack
 
 
+CHUNK_STRATEGIES = ("heading", "parent_child", "fixed")
+
+
 def parent_child_enabled() -> bool:
     import os
 
     v = (os.getenv("KB_PARENT_CHILD") or "1").strip().lower()
     return v not in {"0", "false", "no", "off"}
+
+
+def normalize_chunk_strategy(strategy: str = "") -> str:
+    s = (strategy or "").strip().lower().replace("-", "_")
+    if s in {"heading", "headings", "markdown"}:
+        return "heading"
+    if s in {"fixed", "fixed_size", "size"}:
+        return "fixed"
+    if s in {"parent_child", "parent", "weknora"}:
+        return "parent_child"
+    if not s:
+        return "parent_child" if parent_child_enabled() else "heading"
+    return "parent_child"
 
 
 def chunk_embedding_text(piece: Dict[str, Any]) -> str:
@@ -481,10 +498,131 @@ def chunk_parent_child(
     return out
 
 
-def split_document(content: str) -> List[Dict[str, Any]]:
-    if parent_child_enabled() and len(content or "") > PARENT_CHUNK_TARGET // 2:
-        return chunk_parent_child(content)
-    return chunk_markdown(content)
+def chunk_fixed(
+    content: str,
+    *,
+    target: int = CHUNK_TARGET,
+    overlap_ratio: float = CHUNK_OVERLAP_RATIO,
+) -> List[Dict[str, Any]]:
+    """Fixed-size windows with soft punctuation cuts (no heading awareness)."""
+    text_body = content or ""
+    if not text_body.strip():
+        return []
+    size = max(64, int(target or CHUNK_TARGET))
+    overlap = max(32, int(size * overlap_ratio))
+    chunks: List[Dict[str, Any]] = []
+    start = 0
+    n = len(text_body)
+    while start < n:
+        window = text_body[start:]
+        if len(window) <= size:
+            piece = window.rstrip()
+            if piece.strip():
+                chunks.append(
+                    {
+                        "heading": "",
+                        "context_header": "",
+                        "content": piece,
+                        "char_start": start,
+                        "char_end": start + len(piece),
+                        "chunk_type": "text",
+                    }
+                )
+            break
+        cut = _soft_cut(window, size)
+        piece = window[:cut].rstrip()
+        if piece.strip():
+            chunks.append(
+                {
+                    "heading": "",
+                    "context_header": "",
+                    "content": piece,
+                    "char_start": start,
+                    "char_end": start + len(piece),
+                    "chunk_type": "text",
+                }
+            )
+        nxt = start + max(1, cut - overlap)
+        if nxt <= start:
+            nxt = start + cut
+        start = nxt
+    return chunks
+
+
+def split_document(
+    content: str,
+    *,
+    strategy: str = "",
+    target: int = CHUNK_TARGET,
+    child_size: int = CHILD_CHUNK_TARGET,
+    parent_size: int = PARENT_CHUNK_TARGET,
+    overlap_ratio: float = CHUNK_OVERLAP_RATIO,
+) -> List[Dict[str, Any]]:
+    kind = normalize_chunk_strategy(strategy)
+    size = max(64, int(target or CHUNK_TARGET))
+    child = max(64, int(child_size or CHILD_CHUNK_TARGET))
+    parent = max(child, int(parent_size or PARENT_CHUNK_TARGET))
+    overlap = float(overlap_ratio or CHUNK_OVERLAP_RATIO)
+    if kind == "fixed":
+        return chunk_fixed(content, target=size, overlap_ratio=overlap)
+    if kind == "heading":
+        return chunk_markdown(content, target=size, overlap_ratio=overlap)
+    if len(content or "") > parent // 2:
+        return chunk_parent_child(
+            content, parent_size=parent, child_size=child, overlap_ratio=overlap
+        )
+    return chunk_markdown(content, target=size, overlap_ratio=overlap)
+
+
+def preview_chunks(
+    text: str,
+    *,
+    strategy: str = "",
+    target: int = CHUNK_TARGET,
+    child_size: int = CHILD_CHUNK_TARGET,
+    parent_size: int = PARENT_CHUNK_TARGET,
+    overlap_ratio: float = CHUNK_OVERLAP_RATIO,
+    limit: int = 40,
+) -> Dict[str, Any]:
+    """In-memory chunker preview — no embeddings or SQLite writes."""
+    body = text or ""
+    kind = normalize_chunk_strategy(strategy)
+    pieces = split_document(
+        body,
+        strategy=kind,
+        target=target,
+        child_size=child_size,
+        parent_size=parent_size,
+        overlap_ratio=overlap_ratio,
+    )
+    cap = max(1, min(int(limit or 40), 80))
+    rows = []
+    for i, piece in enumerate(pieces[:cap]):
+        content = str(piece.get("content") or "")
+        rows.append(
+            {
+                "index": i,
+                "heading": piece.get("heading") or "",
+                "context_header": piece.get("context_header") or "",
+                "chunk_type": piece.get("chunk_type") or "text",
+                "content": content,
+                "chars": len(content),
+                "char_start": int(piece.get("char_start") or 0),
+                "char_end": int(piece.get("char_end") or 0),
+            }
+        )
+    return {
+        "strategy": kind,
+        "count": len(pieces),
+        "shown": len(rows),
+        "params": {
+            "target": max(64, int(target or CHUNK_TARGET)),
+            "child_size": max(64, int(child_size or CHILD_CHUNK_TARGET)),
+            "parent_size": max(64, int(parent_size or PARENT_CHUNK_TARGET)),
+            "overlap_ratio": float(overlap_ratio or CHUNK_OVERLAP_RATIO),
+        },
+        "chunks": rows,
+    }
 
 
 def _soft_cut(s: str, target: int) -> int:
@@ -540,6 +678,7 @@ class KnowledgeStore:
             "ALTER TABLE knowledge_chunks ADD COLUMN chunk_type VARCHAR(32) DEFAULT 'text'",
             "ALTER TABLE knowledge_chunks ADD COLUMN context_header VARCHAR(1024) DEFAULT ''",
             "ALTER TABLE knowledge_chunks ADD COLUMN kb_id VARCHAR(80) DEFAULT ''",
+            "ALTER TABLE knowledge_bases ADD COLUMN chunk_strategy VARCHAR(32) DEFAULT 'parent_child'",
         ):
             try:
                 async with self.session_factory() as session:
@@ -590,6 +729,7 @@ class KnowledgeStore:
                     name=DEFAULT_LOCAL_KB_NAME,
                     description="本机 SQLite 默认库",
                     workspace_id=workspace_id or "",
+                    chunk_strategy="parent_child",
                 )
                 session.add(row)
                 await session.commit()
@@ -603,6 +743,9 @@ class KnowledgeStore:
             "name": row.name or DEFAULT_LOCAL_KB_NAME,
             "description": row.description or "",
             "workspace_id": row.workspace_id or "",
+            "chunk_strategy": normalize_chunk_strategy(
+                getattr(row, "chunk_strategy", "") or "parent_child"
+            ),
             "source": "local",
             "doc_count": doc_count,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -762,6 +905,7 @@ class KnowledgeStore:
         body = content or ""
         digest = content_hash_value or content_hash(body)
         local_id = normalize_local_kb_id(kb_id)
+        chunk_cfg = await self.get_chunk_settings(local_id)
         async with self.session_factory() as session:
             row = (
                 await session.execute(select(KnowledgeDoc).where(KnowledgeDoc.doc_id == doc_id))
@@ -790,7 +934,14 @@ class KnowledgeStore:
             await session.flush()
 
             await session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.doc_id == doc_id))
-            pieces = split_document(body)
+            pieces = split_document(
+                body,
+                strategy=str(chunk_cfg.get("strategy") or ""),
+                target=int(chunk_cfg.get("target") or CHUNK_TARGET),
+                child_size=int(chunk_cfg.get("child_size") or CHILD_CHUNK_TARGET),
+                parent_size=int(chunk_cfg.get("parent_size") or PARENT_CHUNK_TARGET),
+                overlap_ratio=float(chunk_cfg.get("overlap_ratio") or CHUNK_OVERLAP_RATIO),
+            )
             parent_ids: Dict[int, str] = {}
             for i, piece in enumerate(pieces):
                 if str(piece.get("chunk_type") or "") == "parent":
@@ -1014,6 +1165,7 @@ class KnowledgeStore:
                         "name": DEFAULT_LOCAL_KB_NAME,
                         "description": "本机 SQLite 默认库",
                         "workspace_id": workspace_id or "",
+                        "chunk_strategy": "parent_child",
                         "source": "local",
                         "doc_count": int(counts.get(DEFAULT_LOCAL_KB_ID, 0) + counts.get("", 0)),
                         "updated_at": None,
@@ -1022,20 +1174,88 @@ class KnowledgeStore:
             return out
 
     async def create_local_kb(
-        self, *, name: str, workspace_id: str = "", description: str = ""
+        self,
+        *,
+        name: str,
+        workspace_id: str = "",
+        description: str = "",
+        chunk_strategy: str = "",
     ) -> Dict[str, Any]:
         label = (name or "").strip() or "未命名知识库"
         kb_id = f"local:{uuid4().hex[:10]}"
+        strategy = normalize_chunk_strategy(chunk_strategy or "parent_child")
         async with self.session_factory() as session:
             row = KnowledgeBase(
                 kb_id=kb_id,
                 name=label[:256],
                 description=(description or "")[:1024],
                 workspace_id=workspace_id or "",
+                chunk_strategy=strategy,
             )
             session.add(row)
             await session.commit()
             return self._kb_public(row, doc_count=0)
+
+    async def get_local_kb(self, kb_id: str) -> Optional[Dict[str, Any]]:
+        nid = normalize_local_kb_id(kb_id)
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(KnowledgeBase).where(KnowledgeBase.kb_id == nid))
+            ).scalar_one_or_none()
+            return self._kb_public(row) if row else None
+
+    async def get_chunk_settings(self, kb_id: str = "") -> Dict[str, Any]:
+        nid = normalize_local_kb_id(kb_id)
+        strategy = ""
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(KnowledgeBase).where(KnowledgeBase.kb_id == nid))
+            ).scalar_one_or_none()
+            if row is not None:
+                strategy = getattr(row, "chunk_strategy", "") or ""
+        kind = normalize_chunk_strategy(strategy)
+        return {
+            "strategy": kind,
+            "target": CHUNK_TARGET,
+            "child_size": CHILD_CHUNK_TARGET,
+            "parent_size": PARENT_CHUNK_TARGET,
+            "overlap_ratio": CHUNK_OVERLAP_RATIO,
+        }
+
+    async def update_local_kb(
+        self,
+        kb_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        chunk_strategy: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        nid = normalize_local_kb_id(kb_id)
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(KnowledgeBase).where(KnowledgeBase.kb_id == nid))
+            ).scalar_one_or_none()
+            if row is None:
+                if nid != DEFAULT_LOCAL_KB_ID:
+                    return None
+                row = KnowledgeBase(
+                    kb_id=DEFAULT_LOCAL_KB_ID,
+                    name=DEFAULT_LOCAL_KB_NAME,
+                    description="本机 SQLite 默认库",
+                    chunk_strategy="parent_child",
+                )
+                session.add(row)
+            if name is not None:
+                label = str(name).strip()
+                if label:
+                    row.name = label[:256]
+            if description is not None:
+                row.description = str(description)[:1024]
+            if chunk_strategy is not None:
+                row.chunk_strategy = normalize_chunk_strategy(chunk_strategy)
+            row.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+            return self._kb_public(row)
 
     async def delete_local_kb(self, kb_id: str) -> bool:
         nid = normalize_local_kb_id(kb_id)
@@ -1654,7 +1874,7 @@ class KnowledgeStore:
         )
 
     async def reindex_embeddings(
-        self, *, workspace_id: str = "", limit: int = 200
+        self, *, workspace_id: str = "", kb_id: str = "", limit: int = 200
     ) -> Dict[str, Any]:
         """Embed chunks missing vectors when KB_EMBEDDING_* is configured."""
         if not embeddings_configured():
@@ -1679,6 +1899,8 @@ class KnowledgeStore:
                         KnowledgeChunk.workspace_id == "",
                     )
                 )
+            if kb_id:
+                stmt = stmt.where(KnowledgeChunk.kb_id.in_(self._kb_values(kb_id)))
             rows = list((await session.execute(stmt)).scalars().all())
             if not rows:
                 return {"ok": True, "updated": 0, "scanned": 0}
@@ -1715,6 +1937,53 @@ class KnowledgeStore:
             "scanned": len(rows),
             "updated": updated,
             "errors": errors[:10],
+        }
+
+    async def rechunk_doc(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        """Re-split one document using the bound library's current chunk strategy."""
+        existing = await self.get(doc_id)
+        if not existing:
+            return None
+        body = str(existing.get("content") or "")
+        return await self.upsert(
+            doc_id=doc_id,
+            title=str(existing.get("title") or doc_id),
+            content=body,
+            tags=str(existing.get("tags") or ""),
+            source=str(existing.get("source") or ""),
+            source_uri=str(existing.get("source_uri") or ""),
+            workspace_id=str(existing.get("workspace_id") or ""),
+            kb_id=str(existing.get("kb_id") or ""),
+            parse_status=str(existing.get("parse_status") or "completed"),
+            content_hash_value=str(existing.get("content_hash") or content_hash(body)),
+            skip_if_unchanged=False,
+        )
+
+    async def rechunk_library(
+        self, *, kb_id: str = "", workspace_id: str = "", limit: int = 40
+    ) -> Dict[str, Any]:
+        docs = await self.list_docs(
+            workspace_id=workspace_id,
+            limit=max(1, min(int(limit or 40), 80)),
+            kb_id=kb_id,
+        )
+        updated = 0
+        errors: List[str] = []
+        for doc in docs:
+            did = str(doc.get("doc_id") or "")
+            if not did:
+                continue
+            try:
+                row = await self.rechunk_doc(did)
+                if row:
+                    updated += 1
+            except Exception as exc:
+                errors.append(f"{did}: {exc}")
+        return {
+            "ok": True,
+            "scanned": len(docs),
+            "updated": updated,
+            "errors": errors[:20],
         }
 
     async def log_sync(

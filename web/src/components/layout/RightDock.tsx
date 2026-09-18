@@ -116,6 +116,8 @@ export type RightDockProps = {
   sessionId?: string;
   workspaceId?: string;
   onBoundKbChange?: (kbId: string, kbName?: string) => void;
+  knowledgeCenterOpen?: boolean;
+  onOpenKnowledgeCenter?: () => void;
   onTogglePlugin?: (pluginId: string, enabled: boolean) => void | Promise<void>;
   onReload?: () => void | Promise<void>;
   onReloadOne?: (pluginId: string) => void | Promise<void>;
@@ -172,6 +174,8 @@ export function RightDock({
   sessionId = "",
   workspaceId = "",
   onBoundKbChange,
+  knowledgeCenterOpen = false,
+  onOpenKnowledgeCenter,
   onTogglePlugin,
   onReload,
   onReloadOne,
@@ -420,12 +424,28 @@ export function RightDock({
                   />
                 )}
                 {kind === "knowledge" && (
+                  knowledgeCenterOpen ? (
+                    <div className="flex min-h-0 flex-1 flex-col gap-2 p-3 text-[12px] text-muted-foreground">
+                      <p className="m-0">
+                        知识库中心已在主栏打开。侧栏不再重复文档列表。
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-8"
+                        onClick={() => onOpenKnowledgeCenter?.()}
+                      >
+                        打开知识库中心
+                      </Button>
+                    </div>
+                  ) : (
                   <KnowledgePanel
                     cwd={cwd}
                     workspaceId={workspaceId}
                     sessionId={sessionId}
                     onBoundKbChange={onBoundKbChange}
                   />
+                  )
                 )}
                 {kind === "teams" && <TeamsPanel teamId={teamId} />}
                 {kind === "delivery" && delivery ? (

@@ -484,6 +484,37 @@ def _extract_office(raw: bytes, suffix: str) -> Tuple[str, str]:
     return body, f"extracted via OOXML ({suffix})"
 
 
+def normalize_ingest_relpath(filename: str) -> str:
+    """Keep folder-relative paths (webkitRelativePath) without flattening to basename."""
+    raw = (filename or "").replace("\\", "/").strip()
+    if not raw:
+        return "upload.txt"
+    if len(raw) >= 2 and raw[1] == ":":
+        raw = raw[2:]
+    raw = raw.lstrip("/")
+    parts: List[str] = []
+    for part in raw.split("/"):
+        piece = part.strip()
+        if not piece or piece in {".", ".."}:
+            continue
+        parts.append(piece)
+    if not parts:
+        return "upload.txt"
+    return "/".join(parts)[:1024]
+
+
+def folder_tags_for_relpath(rel: str) -> str:
+    posix = normalize_ingest_relpath(rel)
+    if "/" not in posix:
+        return ""
+    folder = posix.rsplit("/", 1)[0]
+    tags = [f"dir:{folder}"]
+    top = folder.split("/", 1)[0]
+    if top and top != folder:
+        tags.append(f"dir:{top}")
+    return ",".join(tags)
+
+
 def default_tags_for_path(path: Path) -> str:
     suf = path.suffix.lower()
     if suf in {".md", ".markdown", ".mdx"}:

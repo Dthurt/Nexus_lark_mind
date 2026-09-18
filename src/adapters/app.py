@@ -177,6 +177,10 @@ def create_adapters_app() -> FastAPI:
         await orchestrator.start()
         kernel = RpcClient(settings.kernel_rpc_url)
         await kernel.start()
+        try:
+            await kernel.call("POST", "/rpc/knowledge/ingest/resume", json={})
+        except Exception:
+            logger.debug("knowledge ingest resume via kernel skipped", exc_info=True)
 
         feishu = FeishuAdapter(orchestrator, redis_client, settings, kernel=kernel)
         web = WebAdapter(orchestrator, redis_client, settings)

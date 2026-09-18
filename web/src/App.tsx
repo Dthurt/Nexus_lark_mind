@@ -46,6 +46,17 @@ function AppRoutes() {
             </div>
           }
         />
+        <Route
+          path="/knowledge/*"
+          element={
+            <div className="h-screen overflow-hidden bg-background text-foreground">
+              <WorkbenchPage
+                catalogTick={catalogTick}
+                onOpenSettings={() => navigate("/settings")}
+              />
+            </div>
+          }
+        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

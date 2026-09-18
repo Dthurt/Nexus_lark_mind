@@ -13,8 +13,10 @@ from uuid import uuid4
 from src.core_kernel.plugin_runtime.knowledge_ingest import (
     SUPPORTED_SUFFIXES,
     default_tags_for_name,
+    folder_tags_for_relpath,
     html_to_text,
     library_ingest_max_bytes,
+    normalize_ingest_relpath,
     read_bytes_as_text,
 )
 from src.core_kernel.plugin_runtime.knowledge_scope import normalize_local_kb_id
@@ -46,7 +48,8 @@ async def enqueue_file_job(
     title: str = "",
 ) -> Dict[str, Any]:
     limit = library_ingest_max_bytes()
-    name = Path(filename or "upload.txt").name
+    rel = normalize_ingest_relpath(filename)
+    name = Path(rel).name
     suffix = Path(name).suffix.lower()
     if suffix not in SUPPORTED_SUFFIXES:
         raise ValueError(f"unsupported type: {suffix or name}")
@@ -60,8 +63,8 @@ async def enqueue_file_job(
     job = await store.create_ingest_job(
         job_id=job_id,
         kind="file",
-        filename=name,
-        source_uri=name,
+        filename=rel,
+        source_uri=rel,
         kb_id=normalize_local_kb_id(kb_id),
         workspace_id=workspace_id,
         bytes_len=len(raw),
@@ -160,11 +163,14 @@ async def process_ingest_job(store: KnowledgeStore, job_id: str) -> Dict[str, An
             if not path.is_file():
                 return await _fail(store, job_id, "uploaded bytes missing")
             raw = path.read_bytes()
-            filename = str(job.get("filename") or "upload.txt")
+            filename = normalize_ingest_relpath(str(job.get("filename") or "upload.txt"))
             suffix = Path(filename).suffix.lower()
             source = f"upload:{filename}"
             source_uri = filename
             tags_extra = "upload,manual"
+            folder_tags = folder_tags_for_relpath(filename)
+            if folder_tags:
+                tags_extra = f"{tags_extra},{folder_tags}"
             ctype = ""
 
         await store.update_ingest_job(job_id, progress=45, message="extracting text")
@@ -250,3 +256,28 @@ async def resume_incomplete_jobs(store: KnowledgeStore) -> None:
         jid = str(job.get("job_id") or "")
         if jid:
             await kick_job(store, jid)
+
+
+async def retry_ingest_job(store: KnowledgeStore, job_id: str) -> Dict[str, Any]:
+    """Re-queue a failed job without deleting an existing indexed document first."""
+    jid = (job_id or "").strip()
+    job = await store.get_ingest_job(jid)
+    if not job:
+        raise ValueError("job not found")
+    status = str(job.get("status") or "")
+    if status != "failed":
+        raise ValueError("only failed jobs can be retried")
+    kind = str(job.get("kind") or "file")
+    if kind != "url":
+        path = _job_path(jid)
+        if not path.is_file():
+            raise ValueError("原始文件已丢失，请重新导入")
+    await store.update_ingest_job(
+        jid,
+        status="pending",
+        progress=0,
+        message="retry queued",
+        error="",
+    )
+    await kick_job(store, jid)
+    return (await store.get_ingest_job(jid)) or job

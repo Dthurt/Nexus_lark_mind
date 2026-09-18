@@ -230,9 +230,103 @@ html[data-theme="day"] {
 }
 
 .nlm-knowledge-rail-item.is-active {
-  border-color: hsl(var(--teal) / 0.4);
+  border-color: hsl(var(--teal) / 0.45);
+  background: hsl(var(--teal) / 0.1);
+}
+
+.nlm-knowledge-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.nlm-knowledge-rail-row .nlm-knowledge-rail-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.nlm-knowledge-rail-x {
+  display: inline-flex;
+  size: 1.4rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+.nlm-knowledge-rail-x:hover {
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+}
+
+.nlm-knowledge-group {
+  padding: 0.35rem 0.35rem 0.1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nlm-knowledge-tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 999px;
+  background: hsl(var(--background) / 0.65);
+  padding: 0.05rem 0.4rem;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nlm-knowledge-tag.is-on {
+  border-color: hsl(var(--teal) / 0.5);
   background: hsl(var(--teal) / 0.12);
   color: hsl(var(--teal));
+}
+
+.nlm-knowledge-aux {
+  display: flex;
+  gap: 0.2rem;
+  border-top: 1px solid hsl(var(--border) / 0.7);
+  padding-top: 0.45rem;
+}
+
+.nlm-knowledge-aux-tab {
+  flex: 1;
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  background: transparent;
+  padding: 0.2rem 0.35rem;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nlm-knowledge-aux-tab.is-active {
+  border-color: hsl(var(--teal) / 0.4);
+  background: hsl(var(--teal) / 0.12);
+  color: hsl(var(--foreground));
+}
+
+.nlm-knowledge-sync-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.nlm-knowledge-sync-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
 }
 
 .nlm-knowledge-docs {

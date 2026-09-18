@@ -91,6 +91,15 @@ def create_kernel_app() -> FastAPI:
         state["gateway"] = gateway
         state["plugins"] = plugins
         state["session_factory"] = session_factory
+        try:
+            from src.core_kernel.plugin_runtime.knowledge_jobs import resume_incomplete_jobs
+            from src.core_kernel.plugin_runtime.knowledge_store import KnowledgeStore
+
+            kb_store = KnowledgeStore(session_factory)
+            await kb_store.ensure_schema()
+            await resume_incomplete_jobs(kb_store)
+        except Exception:
+            logger.exception("knowledge ingest job resume skipped")
         logger.info("Core Kernel ready — providers=%s plugins=%s", gateway.registry.list_providers(), len(plugins.plugins))
         yield
         for plugin_id in list(plugins.plugins.keys()):

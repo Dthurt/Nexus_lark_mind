@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -113,7 +114,7 @@ def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
         upload = form.get("file")
         if upload is None:
             raise ValidationAppError("file required")
-        filename = Path(str(getattr(upload, "filename", None) or "upload.txt")).name
+        filename = Path(str(getattr(upload, "filename", None) or "upload.txt")).as_posix()
         raw = await upload.read()  # type: ignore[misc]
         if len(raw) > limit:
             raise ValidationAppError(f"file too large ({len(raw)} bytes, max {limit})")
@@ -208,6 +209,20 @@ def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
         )
         return RpcEnvelope(ok=True, data=data)
 
+    @app.patch("/api/knowledge/kbs/{kb_id}")
+    async def knowledge_patch_kb(kb_id: str, request: Request):
+        kernel: RpcClient = state["kernel"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await kernel.call(
+            "PATCH",
+            f"/rpc/knowledge/kbs/{kb_id}",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
     @app.delete("/api/knowledge/kbs/{kb_id}")
     async def knowledge_delete_kb(kb_id: str):
         kernel: RpcClient = state["kernel"]
@@ -234,6 +249,52 @@ def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
         data = await kernel.call("GET", f"/rpc/knowledge/ingest/jobs/{job_id}")
         return RpcEnvelope(ok=True, data=data)
 
+    @app.post("/api/knowledge/ingest/jobs/{job_id}/retry")
+    async def knowledge_retry_job(job_id: str):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call("POST", f"/rpc/knowledge/ingest/jobs/{job_id}/retry")
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/ingest/resume")
+    async def knowledge_resume_jobs():
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call("POST", "/rpc/knowledge/ingest/resume")
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/chunker/preview")
+    async def knowledge_chunker_preview(request: Request):
+        kernel: RpcClient = state["kernel"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await kernel.call(
+            "POST",
+            "/rpc/knowledge/chunker/preview",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/docs/{doc_id}/rechunk")
+    async def knowledge_rechunk_doc(doc_id: str):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call("POST", f"/rpc/knowledge/docs/{doc_id}/rechunk")
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/rechunk")
+    async def knowledge_rechunk_library(request: Request):
+        kernel: RpcClient = state["kernel"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await kernel.call(
+            "POST",
+            "/rpc/knowledge/rechunk",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
     @app.post("/api/knowledge/ingest")
     async def knowledge_ingest(request: Request, workspace_id: str = "", kb_id: str = ""):
         kernel: RpcClient = state["kernel"]
@@ -252,6 +313,15 @@ def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
             kid = kb_id or str(form.get("kb_id") or "")
             url = str(form.get("url") or "").strip()
             errors: list[str] = []
+            rel_list: list[str] = []
+            rel_raw = str(form.get("relative_paths") or "").strip()
+            if rel_raw:
+                try:
+                    parsed = json.loads(rel_raw)
+                    if isinstance(parsed, list):
+                        rel_list = [str(x).replace("\\", "/") for x in parsed]
+                except Exception:
+                    rel_list = []
             if url:
                 data = await kernel.call(
                     "POST",
@@ -265,10 +335,12 @@ def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
                 )
                 return RpcEnvelope(ok=True, data=data)
             batch = []
-            for upload in files:
+            for idx, upload in enumerate(files):
                 if upload is None or not hasattr(upload, "read"):
                     continue
                 filename = Path(str(getattr(upload, "filename", None) or "upload.txt")).as_posix()
+                if idx < len(rel_list) and rel_list[idx].strip():
+                    filename = rel_list[idx].strip()
                 raw = await upload.read()  # type: ignore[misc]
                 if len(raw) > limit:
                     errors.append(f"{filename}: too large")

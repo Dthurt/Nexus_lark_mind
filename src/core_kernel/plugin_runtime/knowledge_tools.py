@@ -229,6 +229,7 @@ TOOLS: List[Dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "max_files": {"type": "integer", "default": 400},
+                "kb_id": {"type": "string"},
             },
         },
     },
@@ -372,15 +373,22 @@ class KnowledgeToolsPlugin(BasePlugin):
             if not cwd:
                 raise PluginError("No workspace cwd — bind a workspace first")
             max_files = int(arguments.get("max_files") or 400)
+            raw_kb = str(arguments.get("kb_id") or meta.get("weknora_kb_id") or "")
+            from src.core_kernel.plugin_runtime.knowledge_scope import is_local_kb_id
+
             return await sync_workspace_docs(
-                store, cwd, workspace_id=ws, max_files=max(1, min(max_files, 2000))
+                store,
+                cwd,
+                workspace_id=ws,
+                kb_id=raw_kb if is_local_kb_id(raw_kb) else "",
+                max_files=max(1, min(max_files, 2000)),
             )
         if tool_name == "kb_stats":
             return {"ok": True, **(await store.stats(workspace_id=ws))}
         if tool_name == "kb_reindex":
             limit = int(arguments.get("limit") or 200)
             return await store.reindex_embeddings(
-                workspace_id=ws, limit=max(1, min(limit, 500))
+                workspace_id=ws, kb_id=str(arguments.get("kb_id") or ""), limit=max(1, min(limit, 500))
             )
         if tool_name == "kb_sync_feishu":
             connector = FeishuWikiConnector(

@@ -31,7 +31,7 @@ import { DiffDock } from "@/components/chat/DiffDock";
 import { useCanvasSession } from "@/hooks/useCanvasSession";
 import { useDiffReview } from "@/hooks/useDiffReview";
 import { cn } from "@/lib/utils";
-import { kbScopeLabel } from "@/lib/knowledgeScope";
+import { DEFAULT_LOCAL_KB_ID, kbScopeLabel, knowledgePath, parseKnowledgePath, sameKnowledgeId } from "@/lib/knowledgeScope";
 import type { Workspace } from "@/types/api";
 import { toast } from "sonner";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -62,25 +62,13 @@ export function WorkbenchPage({
   const [gitDeletions, setGitDeletions] = useState(0);
   const [toolsEnabled, setToolsEnabled] = useState(true);
   const viewParam = (searchParams.get("view") || "").trim();
+  const knowledgeRoute = parseKnowledgePath(location.pathname);
   const centerView: CenterViewId =
-    location.pathname === "/knowledge" || viewParam === "knowledge"
+    knowledgeRoute !== null || viewParam === "knowledge"
       ? "knowledge"
       : viewParam === "trajectory"
         ? "trajectory"
         : "chat";
-  const setCenterView = useCallback(
-    (view: CenterViewId) => {
-      if (view === "knowledge") {
-        navigate("/knowledge", { replace: true });
-        return;
-      }
-      const next = new URLSearchParams();
-      if (view && view !== "chat") next.set("view", String(view));
-      const search = next.toString();
-      navigate({ pathname: "/", search: search ? `?${search}` : "" }, { replace: true });
-    },
-    [navigate],
-  );
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [activeApprovalCallId, setActiveApprovalCallId] = useState<string | null>(null);
   const [layout, setLayout] = useState<LayoutState>({
@@ -131,6 +119,20 @@ export function WorkbenchPage({
     forkCurrent,
     reforkCurrent,
   } = useSessions();
+
+  const setCenterView = useCallback(
+    (view: CenterViewId) => {
+      if (view === "knowledge") {
+        navigate(knowledgePath(weknoraKbId), { replace: true });
+        return;
+      }
+      const next = new URLSearchParams();
+      if (view && view !== "chat") next.set("view", String(view));
+      const search = next.toString();
+      navigate({ pathname: "/", search: search ? `?${search}` : "" }, { replace: true });
+    },
+    [navigate, weknoraKbId],
+  );
 
   const canvas = useCanvasSession(sessionId);
 
@@ -261,7 +263,11 @@ export function WorkbenchPage({
   }, [knowledgeCatalog.kbs, knowledgeCatalog.localKbs, setWeknoraKbName, weknoraKbId, weknoraKbName]);
 
   const bindKnowledgeBase = useCallback(
-    async (kbId: string, kbName?: string) => {
+    async (
+      kbId: string,
+      kbName?: string,
+      opts?: { silent?: boolean; updateUrl?: boolean },
+    ) => {
       const id = String(kbId || "").trim();
       setWeknoraKbId(id);
       setWeknoraKbName(id ? kbName || kbScopeLabel(id, kbName) : "");
@@ -269,21 +275,71 @@ export function WorkbenchPage({
         await ensureSessionOnServer();
         if (!id) {
           await patchInteraction(sessionId, { clear_weknora_kb_id: true });
-          toast.success("已切换到本地知识库");
+          if (!opts?.silent) toast.success("已切换到本地知识库");
         } else {
           await patchInteraction(sessionId, { weknora_kb_id: id });
-          toast.success(`已绑定「${kbScopeLabel(id, kbName)}」`);
+          if (!opts?.silent) toast.success(`已绑定「${kbScopeLabel(id, kbName)}」`);
         }
       } catch (err: any) {
         toast.error(String(err?.message || err || "绑定知识库失败"));
       }
+      if (opts?.updateUrl !== false && knowledgeRoute !== null) {
+        const next = knowledgePath(id);
+        if (location.pathname !== next) navigate(next, { replace: true });
+      }
     },
-    [ensureSessionOnServer, sessionId, setWeknoraKbId, setWeknoraKbName],
+    [
+      ensureSessionOnServer,
+      knowledgeRoute,
+      location.pathname,
+      navigate,
+      sessionId,
+      setWeknoraKbId,
+      setWeknoraKbName,
+    ],
   );
+
+  useEffect(() => {
+    if (knowledgeRoute === null) {
+      if (viewParam === "knowledge") {
+        navigate(knowledgePath(weknoraKbId), { replace: true });
+      }
+      return;
+    }
+    if (knowledgeRoute === "") {
+      navigate(knowledgePath(weknoraKbId), { replace: true });
+      return;
+    }
+    if (sameKnowledgeId(knowledgeRoute, weknoraKbId)) return;
+    const hit =
+      knowledgeCatalog.kbs.find((kb) => kb.id === knowledgeRoute) ||
+      knowledgeCatalog.localKbs.find((kb) => kb.id === knowledgeRoute);
+    const bindId = knowledgeRoute === DEFAULT_LOCAL_KB_ID ? "" : knowledgeRoute;
+    void bindKnowledgeBase(bindId, hit?.name || knowledgeRoute, {
+      silent: true,
+      updateUrl: false,
+    });
+  }, [
+    bindKnowledgeBase,
+    knowledgeCatalog.kbs,
+    knowledgeCatalog.localKbs,
+    knowledgeRoute,
+    navigate,
+    viewParam,
+    weknoraKbId,
+  ]);
 
   const openKnowledgeView = useCallback(() => {
     setCenterView("knowledge");
   }, [setCenterView]);
+
+  const prevCenterView = useRef(centerView);
+  useEffect(() => {
+    if (centerView === "knowledge" && prevCenterView.current !== "knowledge") {
+      dock.setCollapsed(true);
+    }
+    prevCenterView.current = centerView;
+  }, [centerView, dock.setCollapsed]);
 
   const loadActivityFromServer = useCallback(async () => {
     try {
@@ -831,6 +887,8 @@ export function WorkbenchPage({
           dock={dock}
           collapsed={narrowUi ? !layout.railOpen : dock.state.collapsed}
           onToggleCollapse={toggleRail}
+          knowledgeCenterOpen={centerView === "knowledge"}
+          onOpenKnowledgeCenter={openKnowledgeView}
           plugins={plugins}
           tools={tools}
           activity={timeline.activityLog}
