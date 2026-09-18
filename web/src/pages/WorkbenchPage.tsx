@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 import { kbScopeLabel } from "@/lib/knowledgeScope";
 import type { Workspace } from "@/types/api";
 import { toast } from "sonner";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import "@/styles/workbench.css";
 
 export type WorkbenchPageProps = {
@@ -52,7 +52,9 @@ export function WorkbenchPage({
   catalogTick = 0,
   onOpenSettings,
 }: WorkbenchPageProps) {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [status, setStatus] = useState("ready");
   const [busy, setBusy] = useState(false);
   const [gitBranch, setGitBranch] = useState("");
@@ -61,20 +63,23 @@ export function WorkbenchPage({
   const [toolsEnabled, setToolsEnabled] = useState(true);
   const viewParam = (searchParams.get("view") || "").trim();
   const centerView: CenterViewId =
-    viewParam === "knowledge" || viewParam === "trajectory" ? viewParam : "chat";
+    location.pathname === "/knowledge" || viewParam === "knowledge"
+      ? "knowledge"
+      : viewParam === "trajectory"
+        ? "trajectory"
+        : "chat";
   const setCenterView = useCallback(
     (view: CenterViewId) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (!view || view === "chat") next.delete("view");
-          else next.set("view", String(view));
-          return next;
-        },
-        { replace: true },
-      );
+      if (view === "knowledge") {
+        navigate("/knowledge", { replace: true });
+        return;
+      }
+      const next = new URLSearchParams();
+      if (view && view !== "chat") next.set("view", String(view));
+      const search = next.toString();
+      navigate({ pathname: "/", search: search ? `?${search}` : "" }, { replace: true });
     },
-    [setSearchParams],
+    [navigate],
   );
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [activeApprovalCallId, setActiveApprovalCallId] = useState<string | null>(null);
@@ -650,7 +655,7 @@ export function WorkbenchPage({
             activeTools={activeTools}
           />
 
-          <section className="nlm-chat-panel" aria-label="对话">
+          <section className="nlm-chat-panel" aria-label={centerView === "knowledge" ? "知识库" : "对话"}>
             {(() => {
               const composer = (
                 <Composer
@@ -740,7 +745,6 @@ export function WorkbenchPage({
                         void actions.acceptPlan();
                       }}
                       onOpenKnowledge={openKnowledgeView}
-                      knowledgeViewActive={centerView === "knowledge"}
                     />
                   )}
 
@@ -774,23 +778,22 @@ export function WorkbenchPage({
 
               if (centerView === "knowledge") {
                 return (
-                  <div className="nlm-knowledge-split" data-testid="knowledge-split">
-                    <KnowledgeView
-                      cwd={cwd}
-                      workspaceId={workspaceId}
-                      sessionId={sessionId}
-                      boundKbId={weknoraKbId}
-                      boundKbName={weknoraKbName}
-                      kbs={knowledgeCatalog.kbs}
-                      health={knowledgeCatalog.health}
-                      catalogLoading={knowledgeCatalog.loading}
-                      onBindKb={(id, name) => void bindKnowledgeBase(id, name)}
-                      onAskAbout={(text) => {
-                        actions.setInput(text);
-                      }}
-                    />
-                    <div className="nlm-chat-column">{chatColumn}</div>
-                  </div>
+                  <KnowledgeView
+                    className="min-h-0 flex-1"
+                    cwd={cwd}
+                    workspaceId={workspaceId}
+                    sessionId={sessionId}
+                    boundKbId={weknoraKbId}
+                    boundKbName={weknoraKbName}
+                    kbs={knowledgeCatalog.kbs}
+                    health={knowledgeCatalog.health}
+                    catalogLoading={knowledgeCatalog.loading}
+                    onBindKb={(id, name) => void bindKnowledgeBase(id, name)}
+                    onAskAbout={(text) => {
+                      if (text) actions.setInput(text);
+                      setCenterView("chat");
+                    }}
+                  />
                 );
               }
 

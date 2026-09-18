@@ -147,7 +147,7 @@ export function Sidebar({
 
           {onOpenKnowledge ? (
             <RailIconButton
-              title="知识库对话"
+              title="知识库"
               testId="sidebar-knowledge-entry"
               onClick={onOpenKnowledge}
               className={cn(knowledgeActive && "bg-teal/15 text-teal")}
@@ -224,7 +224,7 @@ export function Sidebar({
               onClick={onOpenKnowledge}
             >
               <BookOpen className="size-3.5" />
-              知识库对话
+              知识库
             </Button>
           ) : null}
 

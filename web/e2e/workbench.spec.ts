@@ -29,7 +29,7 @@ test.describe("workspace trust", () => {
 test.describe("knowledge base", () => {
   test("add document then search hits", async ({ page, request }) => {
     await requireAdapters(request);
-    await page.goto("/?view=knowledge", { waitUntil: "domcontentloaded" });
+    await page.goto("/knowledge", { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("knowledge-add-content")).toBeVisible({ timeout: 20_000 });
 
     const token = `nlm_e2e_kb_${Date.now()}`;
@@ -59,15 +59,16 @@ test.describe("knowledge base", () => {
     await openWorkbench(page);
 
     await expect(page.getByTestId("view-ring-knowledge")).toContainText("知识库");
-    await expect(page.getByTestId("topbar-knowledge-entry")).toContainText("知识库对话");
+    await expect(page.getByTestId("topbar-knowledge-entry")).toContainText("知识库");
     await expect(page.getByTestId("empty-open-knowledge")).toBeVisible();
     await expect(page.getByTestId("composer-open-knowledge")).toBeVisible();
 
     await page.getByTestId("empty-open-knowledge").click();
-    await expect(page).toHaveURL(/view=knowledge/);
-    await expect(page.getByTestId("knowledge-split")).toBeVisible();
+    await expect(page).toHaveURL(/\/knowledge/);
+    await expect(page.getByTestId("knowledge-page")).toBeVisible();
     await expect(page.getByTestId("knowledge-search-input")).toBeVisible();
-    await expect(page.getByText("知识库单独对话").first()).toBeVisible();
+    await expect(page.getByTestId("knowledge-go-chat")).toBeVisible();
+    await expect(page.getByTestId("composer-open-knowledge")).toHaveCount(0);
   });
 });
 

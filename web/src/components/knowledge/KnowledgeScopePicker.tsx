@@ -117,7 +117,7 @@ export function KnowledgeScopePicker({
                 onSelect={() => onOpenKnowledge()}
               >
                 <ExternalLink className="size-3.5 text-muted-foreground" />
-                打开知识库单独对话
+                打开知识库
               </DropdownMenuItem>
             </>
           ) : null}
@@ -130,10 +130,10 @@ export function KnowledgeScopePicker({
           size="sm"
           data-testid="composer-open-knowledge"
           className="h-6 shrink-0 px-1.5 text-[11px] text-teal hover:bg-teal/10 hover:text-teal"
-          title="打开知识库单独对话（左侧检索，右侧针对该库提问）"
+          title="打开知识库（检索与管理文档）"
           onClick={onOpenKnowledge}
         >
-          知识库对话
+          打开知识库
         </Button>
       ) : null}
     </div>

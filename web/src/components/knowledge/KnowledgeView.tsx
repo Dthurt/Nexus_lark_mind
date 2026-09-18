@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, FilePlus2, RefreshCw, Search, Trash2 } from "lucide-react";
+import { BookOpen, FilePlus2, MessageSquare, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -265,38 +265,56 @@ export function KnowledgeView({
   };
 
   return (
-    <div className={cn("nlm-knowledge-browse flex min-h-0 flex-col bg-card/30", className)}>
+    <div
+      className={cn("nlm-knowledge-browse flex min-h-0 flex-1 flex-col bg-card/30", className)}
+      data-testid="knowledge-page"
+    >
       <header className="shrink-0 space-y-2 border-b border-border px-3 py-2.5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
               <BookOpen className="size-3.5 text-teal" />
-              知识库单独对话
+              知识库
             </div>
             <p className="m-0 mt-0.5 text-[12px] text-foreground/90">
-              检索并提问 · 当前「{label}」
+              检索与管理 · 当前「{label}」
             </p>
             <p className="m-0 mt-0.5 text-[11px] text-muted-foreground">
               {remote
-                ? "右侧对话会基于该 WeKnora 库检索后作答"
+                ? "主对话会基于该 WeKnora 库检索后作答"
                 : stats
                   ? `${stats.docs} 篇 · ${stats.chunks} 块${stats.hybrid_ready ? " · hybrid" : ""}`
                   : "本地 SQLite，未选择远程库时的默认范围"}
             </p>
           </div>
-          {!remote ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 shrink-0 px-2"
-              disabled={syncing || !cwd}
-              onClick={() => void onSync()}
-            >
-              <RefreshCw className={cn("mr-1 size-3", syncing && "animate-spin")} />
-              同步文档
-            </Button>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1">
+            {onAskAbout ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-7 px-2"
+                data-testid="knowledge-go-chat"
+                onClick={() => onAskAbout("")}
+              >
+                <MessageSquare className="mr-1 size-3" />
+                去对话
+              </Button>
+            ) : null}
+            {!remote ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2"
+                disabled={syncing || !cwd}
+                onClick={() => void onSync()}
+              >
+                <RefreshCw className={cn("mr-1 size-3", syncing && "animate-spin")} />
+                同步文档
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         <KnowledgeScopePicker
@@ -487,7 +505,7 @@ export function KnowledgeView({
       ) : null}
 
       <p className="m-0 shrink-0 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
-        右侧输入即针对「{label}」提问，与主对话同一会话。
+        针对「{label}」提问请回到对话页；主输入框已绑定该库。
       </p>
     </div>
   );

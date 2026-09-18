@@ -49,7 +49,7 @@ export function ViewRing({
             type="button"
             role="tab"
             aria-selected={active}
-            title={v.id === "knowledge" ? "知识库单独对话：左侧检索，右侧针对该库提问" : v.label}
+            title={v.id === "knowledge" ? "知识库：检索与管理文档" : v.label}
             aria-label={v.label}
             data-testid={`view-ring-${v.id}`}
             className={cn(

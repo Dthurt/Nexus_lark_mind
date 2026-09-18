@@ -128,7 +128,7 @@ export function Topbar({
             <button
               type="button"
               data-testid="topbar-knowledge-entry"
-              title="打开知识库单独对话（左侧检索，右侧针对该库提问）"
+              title="打开知识库（检索与管理文档）"
               aria-pressed={centerView === "knowledge"}
               className={cn(
                 "inline-flex max-w-[220px] items-center gap-1 truncate rounded-md border px-1.5 py-0.5 text-[11px]",
@@ -139,7 +139,7 @@ export function Topbar({
               onClick={() => onWeknoraKbClick?.()}
             >
               <BookOpen className="size-3 shrink-0" aria-hidden />
-              {weknoraKbId ? `知识库对话 · ${weknoraKbName || weknoraKbId}` : "知识库对话"}
+              {weknoraKbId ? `知识库 · ${weknoraKbName || weknoraKbId}` : "知识库"}
             </button>
             {activeTools && activeTools.length ? (
               <span

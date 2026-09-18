@@ -10,7 +10,7 @@ nlm-app
 ├── main.nlm-workspace
 │   ├── Topbar (Chat|Trajectory|知识库 ring, Canvas toggle, KB chip, theme, …)
 │   └── nlm-chat-panel
-│       ├── KnowledgeView when view=knowledge (search + same-session chat)
+│       ├── KnowledgeView when /knowledge (library only)
 │       ├── [optional] nlm-center-split
 │       │   ├── nlm-chat-column (messages + docks + Composer + KB picker)
 │       │   └── CanvasPane
@@ -62,7 +62,7 @@ Ledger (DSH-inspired, Nexus-lite):
 
 ## Knowledge page
 
-Topbar **知识库** (`/?view=knowledge`): left pane search / citations / body; right pane the same workbench chat bound to that KB. Composer always shows a **知识库** picker (`weknora_kb_id`; empty = local). See [knowledge-base.md](./knowledge-base.md).
+Topbar **知识库** (`/knowledge`): full-page library (search / citations / body). Chat stays on the main workbench; Composer always shows a **知识库** picker (`weknora_kb_id`; empty = local). See [knowledge-base.md](./knowledge-base.md).
 
 Stream failures persist as `metadata.kind=error` assistant bubbles so refresh still shows them.
 

@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel
 
 from src.adapters.channels import (
@@ -126,6 +127,18 @@ class DrawioRepairRequest(BaseModel):
     error: str = ""
     model_provider: Optional[str] = None
     model_name: Optional[str] = None
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve index.html for client routes like /knowledge and /settings."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or Path(path).suffix:
+                raise
+            return await super().get_response("index.html", scope)
 
 
 _MERMAID_REPAIR_SYSTEM = (
@@ -1703,6 +1716,6 @@ def create_adapters_app() -> FastAPI:
 
     static_dir = Path(settings.web_static_dir)
     if static_dir.exists():
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        app.mount("/", SPAStaticFiles(directory=str(static_dir), html=True), name="static")
 
     return app
