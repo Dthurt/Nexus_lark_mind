@@ -5,28 +5,48 @@ from __future__ import annotations
 import json
 
 from src.adapters.feishu.cards import (
+    CARD_CATALOG,
     CARD_JSON_MAX_BYTES,
+    CARD_TYPE_ANSWER,
+    CARD_TYPE_CHART,
+    CARD_TYPE_CONFIRM,
+    CARD_TYPE_ERROR,
+    CARD_TYPE_SELECT,
+    CARD_TYPE_STATS,
+    CARD_TYPE_THINKING,
     TEMPLATE_APPROVAL,
     TEMPLATE_ERROR,
     TEMPLATE_NLM,
     TEMPLATE_STREAM,
     build_approval_card,
     build_ask_card,
+    build_chart_card,
+    build_confirm_card,
     build_error_card,
     build_interactive_card,
+    build_kb_pick_card,
     build_no_provider_card,
     build_plan_review_card,
+    build_preset_pick_card,
     build_reply_card,
+    build_select_card,
     build_session_cleared_card,
+    build_stats_card,
     build_streaming_card,
     build_text_card,
+    build_thinking_card,
     card_elements,
+    card_plain_text,
     default_reply_buttons,
+    default_reply_selects,
     extract_citations,
+    extract_stats_payload,
     feishu_markdown,
     iter_card_actions,
+    iter_select_options,
     sanitize_error,
     summarize_tool_result,
+    to_vchart_spec,
 )
 from src.adapters.feishu.events import classify_payload, parse_card_action
 
@@ -62,10 +82,13 @@ def test_streaming_card_cursor_and_note():
     _assert_schema_v2(card)
     assert card["header"]["template"] == TEMPLATE_STREAM
     assert card["config"]["streaming_mode"] is True
-    joined = "\n".join(str(el.get("content") or "") for el in card_elements(card))
+    joined = card_plain_text(card)
     assert "▌" in joined
     assert "kb_search" in joined
     assert "生成中" in joined or "正在回复" in joined
+    think = next(el for el in card_elements(card) if el.get("tag") == "collapsible_panel")
+    assert think["expanded"] is True
+    assert think["element_id"] == "nlm_think"
 
 
 def test_reply_card_citations_and_buttons():
@@ -78,18 +101,25 @@ def test_reply_card_citations_and_buttons():
             chat_id="oc_1",
             retry_text="原始问题",
         ),
+        selects=default_reply_selects(session_id="feishu:oc_1:ou_1", chat_id="oc_1"),
     )
     _assert_schema_v2(card)
     actions = iter_card_actions(card)
     kinds = {a["action"] for a in actions}
-    assert {"retry", "clear", "back_providers"} <= kinds
+    assert {"retry", "clear", "session_setting"} <= kinds
     retry = next(a for a in actions if a["action"] == "retry")
     assert retry["payload"] == "原始问题"
     assert retry["kind"] == "conversation"
-    joined = "\n".join(str(el.get("content") or "") for el in card_elements(card))
+    joined = card_plain_text(card)
     assert "引用来源" in joined
+    assert "kb_search" in joined
+    think = next(el for el in card_elements(card) if el.get("tag") == "collapsible_panel")
+    assert think["expanded"] is False
+    opts = {o["option"] for o in iter_select_options(card)}
+    assert {"back_providers", "open_preset", "kb:local"} <= opts
     assert any(el.get("tag") == "hr" for el in card_elements(card))
     assert any(el.get("tag") == "column_set" for el in card_elements(card))
+    assert any(el.get("tag") == "select_static" for el in card_elements(card))
 
 
 def test_error_card_strips_traceback():
@@ -211,3 +241,166 @@ def test_parse_schema2_card_action_trigger():
     kind, data = classify_payload(payload)
     assert kind == "card_action"
     assert data.payload == "原始问题"
+
+
+def test_catalog_types_are_registered():
+    assert set(CARD_CATALOG) >= {
+        CARD_TYPE_THINKING,
+        CARD_TYPE_ANSWER,
+        CARD_TYPE_SELECT,
+        CARD_TYPE_STATS,
+        CARD_TYPE_CHART,
+        CARD_TYPE_ERROR,
+        CARD_TYPE_CONFIRM,
+    }
+
+
+def test_select_card_options_and_callback():
+    card = build_select_card(
+        title="选择模型",
+        markdown="请选择",
+        options=[{"label": "GLM-4", "value": "glm-4"}, {"label": "GPT", "value": "gpt"}],
+        action="pick_model",
+        kind="model_pick",
+        session_id="feishu:oc_1:ou_1",
+        chat_id="oc_1",
+        extra_value={"provider_id": "glm"},
+    )
+    _assert_schema_v2(card)
+    sel = next(el for el in card_elements(card) if el.get("tag") == "select_static")
+    values = [o["value"] for o in sel["options"]]
+    assert values == ["glm-4", "gpt"]
+    assert sel["behaviors"][0]["type"] == "callback"
+    assert sel["behaviors"][0]["value"]["action"] == "pick_model"
+    assert sel["behaviors"][0]["value"]["provider_id"] == "glm"
+    parsed = parse_card_action(
+        {
+            "header": {"event_type": "card.action.trigger"},
+            "event": {
+                "operator": {"open_id": "ou_1"},
+                "action": {
+                    "tag": "select_static",
+                    "option": "glm-4",
+                    "value": sel["behaviors"][0]["value"],
+                },
+                "context": {"open_message_id": "om_s", "open_chat_id": "oc_1"},
+            },
+        }
+    )
+    assert parsed is not None
+    assert parsed.action == "pick_model"
+    assert parsed.option == "glm-4"
+    assert parsed.model_name == "glm-4"
+    assert parsed.provider_id == "glm"
+
+
+def test_ask_card_uses_select_when_options_overflow():
+    opts = [{"id": f"o{i}", "label": f"选项{i}"} for i in range(6)]
+    card = build_ask_card(
+        call_id="c9",
+        title="很多选项",
+        questions=[{"id": "q1", "prompt": "选一个", "options": opts}],
+    )
+    _assert_schema_v2(card)
+    sel = next(el for el in card_elements(card) if el.get("tag") == "select_static")
+    assert len(sel["options"]) == 6
+    assert sel["behaviors"][0]["value"]["question_id"] == "q1"
+    parsed = parse_card_action(
+        {
+            "schema": "2.0",
+            "header": {"event_type": "card.action.trigger"},
+            "event": {
+                "operator": {"open_id": "ou_9"},
+                "action": {
+                    "tag": "select_static",
+                    "option": "o3",
+                    "value": sel["behaviors"][0]["value"],
+                },
+                "context": {"open_message_id": "om_z", "open_chat_id": "oc_1"},
+            },
+        }
+    )
+    assert parsed is not None
+    assert parsed.answers == {"q1": "o3"}
+
+
+def test_collapsible_thinking_and_confirm():
+    think = build_thinking_card(
+        tools=[{"name": "kb_search", "status": "running"}],
+        reasoning="先检索文档再回答",
+        expanded=True,
+    )
+    _assert_schema_v2(think)
+    panel = next(el for el in card_elements(think) if el.get("tag") == "collapsible_panel")
+    assert panel["expanded"] is True
+    assert "思考过程" in (panel.get("header") or {}).get("title", {}).get("content", "")
+    inner = "\n".join(str(x.get("content") or "") for x in panel.get("elements") or [])
+    assert "kb_search" in inner
+    assert "先检索" in inner
+    confirm = build_confirm_card("确认", "要继续吗？", buttons=[{"label": "OK", "action": "allow"}])
+    _assert_schema_v2(confirm)
+    assert confirm["header"]["template"] == TEMPLATE_APPROVAL
+
+
+def test_chart_option_shape_and_echarts_convert():
+    spec = to_vchart_spec(
+        {
+            "title": {"text": "KB"},
+            "xAxis": {"data": ["文档", "切片", "已向量"]},
+            "series": [{"type": "bar", "data": [3, 12, 8]}],
+        }
+    )
+    assert spec is not None
+    assert spec["type"] == "bar"
+    assert spec["xField"] == "x"
+    assert spec["yField"] == "y"
+    assert spec["data"]["values"][0] == {"x": "文档", "y": 3.0}
+    pie = to_vchart_spec(
+        {"series": [{"type": "pie", "data": [{"name": "A", "value": 1}, {"name": "B", "value": 2}]}]},
+        chart_type="pie",
+    )
+    assert pie is not None
+    assert pie["type"] == "pie"
+    assert pie["valueField"] == "value"
+    native = to_vchart_spec({"type": "line", "data": {"values": [{"x": "t", "y": 1}]}, "xField": "x", "yField": "y"})
+    assert native["type"] == "line"
+    card = build_chart_card(title="图", option={"xAxis": {"data": ["a"]}, "series": [{"type": "bar", "data": [2]}]})
+    _assert_schema_v2(card)
+    chart = next(el for el in card_elements(card) if el.get("tag") == "chart")
+    assert chart["chart_spec"]["type"] == "bar"
+    assert "values" in chart["chart_spec"]["data"]
+
+
+def test_stats_card_kb_and_fallback_metrics():
+    stats = build_stats_card(
+        title="知识库统计",
+        stats={"kind": "kb_stats", "docs": 4, "chunks": 20, "chunks_with_embedding": 9},
+    )
+    _assert_schema_v2(stats)
+    assert any(el.get("tag") == "chart" for el in card_elements(stats))
+    sync = build_stats_card(
+        stats={"kind": "kb_sync", "scanned": 10, "added": 3, "updated": 2, "skipped": 5}
+    )
+    _assert_schema_v2(sync)
+    empty = build_chart_card(title="空", option={"series": [{"type": "bar", "data": []}]})
+    _assert_schema_v2(empty)
+    joined = card_plain_text(empty)
+    assert "指标" in joined or "暂无" in joined or "图表" in joined
+
+
+def test_preset_kb_selects_and_extract_stats():
+    preset = build_preset_pick_card(session_id="s", chat_id="oc_1")
+    _assert_schema_v2(preset)
+    assert {o["option"] for o in iter_select_options(preset)} >= {"read-only", "workspace-write"}
+    kb = build_kb_pick_card(session_id="s", chat_id="oc_1", current_kb="kb_demo")
+    _assert_schema_v2(kb)
+    assert {o["option"] for o in iter_select_options(kb)} >= {"local", "kb_demo"}
+    payload = {
+        "name": "kb_stats",
+        "success": True,
+        "result": {"docs": 2, "chunks": 7, "chunks_with_embedding": 1},
+    }
+    extracted = extract_stats_payload(payload)
+    assert extracted is not None
+    assert extracted["kind"] == "kb_stats"
+    assert extracted["docs"] == 2

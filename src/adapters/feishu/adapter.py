@@ -14,16 +14,21 @@ from src.adapters.feishu.cards import (
     build_ask_card,
     build_error_card,
     build_gate_resolved_card,
+    build_kb_pick_card,
     build_model_pick_card,
     build_no_provider_card,
     build_plan_review_card,
+    build_preset_pick_card,
     build_provider_pick_card,
     build_reply_card,
     build_session_cleared_card,
+    build_stats_card,
     build_streaming_card,
     build_text_card,
     default_reply_buttons,
+    default_reply_selects,
     extract_citations,
+    extract_stats_payload,
     sanitize_error,
     summarize_tool_result,
 )
@@ -32,6 +37,8 @@ from src.adapters.feishu.crypto import AESCipher, verify_request_signature, veri
 from src.adapters.feishu.events import classify_payload, strip_mention_placeholders
 from src.adapters.feishu.model_pick import (
     catalog_choices,
+    is_kb_command,
+    is_preset_command,
     is_rebind_command,
     session_has_model,
 )
@@ -45,6 +52,7 @@ logger = logging.getLogger(__name__)
 # Feishu PATCH /im/v1/messages is easy to rate-limit during token streams.
 STREAM_DEBOUNCE_S = 0.45
 KB_TOOL_HINTS = ("kb_search", "kb_read", "kb_get", "weknora_search", "weknora_read")
+KB_STATS_TOOLS = ("kb_stats", "kb_sync_docs", "kb_sync_feishu")
 
 
 @dataclass
@@ -53,6 +61,9 @@ class _TurnCard:
     status: str = ""
     tools: List[Dict[str, Any]] = field(default_factory=list)
     citations: str = ""
+    reasoning: str = ""
+    stats: Optional[Dict[str, Any]] = None
+    usage: Optional[Dict[str, Any]] = None
     user_preview: str = ""
     session_id: str = ""
     chat_id: str = ""
@@ -104,7 +115,10 @@ class FeishuAdapter(BaseAdapter):
             if data.kind in {"provider_pick", "model_pick"}:
                 await self._handle_model_pick_card(data)
                 return None
-            if data.kind == "conversation" or data.action in {"retry", "clear"}:
+            if data.kind in {"preset_pick", "kb_pick"}:
+                await self._handle_session_select_card(data)
+                return None
+            if data.kind == "conversation" or data.action in {"retry", "clear", "session_setting"}:
                 return await self._handle_conversation_card(data)
             action = data.action
             text = f"[card_action:{action}] {data.payload}".strip()
@@ -154,6 +168,23 @@ class FeishuAdapter(BaseAdapter):
                     },
                 )
                 await self._send_provider_gate(session_id, msg.chat_id, pending_text="")
+                return None
+            if is_preset_command(text):
+                await self._deliver_pick_card(
+                    msg.chat_id,
+                    build_preset_pick_card(session_id=session_id, chat_id=msg.chat_id),
+                )
+                return None
+            if is_kb_command(text):
+                session = await self._get_session(session_id)
+                await self._deliver_pick_card(
+                    msg.chat_id,
+                    build_kb_pick_card(
+                        session_id=session_id,
+                        chat_id=msg.chat_id,
+                        current_kb=str((session or {}).get("weknora_kb_id") or ""),
+                    ),
+                )
                 return None
 
             session = await self._get_session(session_id)
@@ -352,7 +383,7 @@ class FeishuAdapter(BaseAdapter):
             return
         if action == "pick_model":
             provider_id = str(data.provider_id or "").strip()
-            model_name = str(data.model_name or "").strip()
+            model_name = str(data.model_name or "").strip() or str(getattr(data, "option", "") or "").strip()
             if not provider_id or not model_name:
                 return
             await self._bind_and_flush(
@@ -361,6 +392,55 @@ class FeishuAdapter(BaseAdapter):
                 user_id=data.user_id,
                 provider_id=provider_id,
                 model_name=model_name,
+                message_id=message_id,
+            )
+
+    async def _handle_session_select_card(self, data: Any) -> None:
+        chat_id = str(data.chat_id or "").strip()
+        session_id = str(data.session_id or "").strip() or (
+            f"feishu:{chat_id}:{data.user_id}" if chat_id else ""
+        )
+        if not session_id:
+            return
+        await self._ensure_session(session_id, user_id=data.user_id)
+        message_id = str(data.open_message_id or "").strip()
+        if data.kind == "preset_pick" or data.action == "pick_preset":
+            preset = str(getattr(data, "permission_preset", "") or data.option or "").strip()
+            if not preset:
+                return
+            await self._patch_session(session_id, {"permission_preset": preset, "user_id": data.user_id})
+            card = build_text_card(
+                "已切换预设",
+                f"本对话权限预设为 **`{preset}`**。",
+                template="green",
+                subtitle="已就绪",
+                icon_token="yes-outlined",
+            )
+            await self._deliver_pick_card(chat_id, card, message_id=message_id)
+            return
+        if data.kind == "kb_pick" or data.action == "pick_kb":
+            kb = str(getattr(data, "kb_id", "") or data.option or "").strip()
+            if kb in {"", "local"}:
+                await self._patch_session(
+                    session_id,
+                    {"clear_weknora_kb_id": True, "user_id": data.user_id},
+                )
+                detail = "已切回 **本地知识库**。远程 WeKnora 绑定已清除。"
+            else:
+                await self._patch_session(
+                    session_id,
+                    {"weknora_kb_id": kb, "user_id": data.user_id},
+                )
+                detail = f"已绑定知识库 **`{kb}`**。"
+            await self._deliver_pick_card(
+                chat_id,
+                build_text_card(
+                    "知识库",
+                    detail,
+                    template="turquoise",
+                    subtitle="已绑定",
+                    icon_token="file-outlined",
+                ),
                 message_id=message_id,
             )
 
@@ -504,6 +584,29 @@ class FeishuAdapter(BaseAdapter):
             f"feishu:{chat_id}:{data.user_id}" if chat_id else f"feishu:{data.user_id}"
         )
         message_id = str(data.open_message_id or "").strip()
+        if action == "session_setting":
+            option = str(getattr(data, "option", "") or "").strip()
+            if option == "back_providers":
+                await self._send_provider_gate(
+                    session_id, chat_id, pending_text="", page=0, message_id=message_id
+                )
+                return None
+            if option == "open_preset":
+                await self._deliver_pick_card(
+                    chat_id,
+                    build_preset_pick_card(session_id=session_id, chat_id=chat_id),
+                    message_id=message_id,
+                )
+                return None
+            if option.startswith("kb:"):
+                kb = option.split(":", 1)[1].strip() or "local"
+                data.kind = "kb_pick"
+                data.action = "pick_kb"
+                data.kb_id = kb
+                data.option = kb
+                await self._handle_session_select_card(data)
+                return None
+            return None
         if action == "clear":
             try:
                 await self.orchestrator.call("DELETE", f"/rpc/sessions/{session_id}")
@@ -602,6 +705,7 @@ class FeishuAdapter(BaseAdapter):
             tools=turn.tools,
             user_preview=turn.user_preview,
             citations=turn.citations,
+            reasoning=turn.reasoning,
         )
 
     async def _flush_turn_card(self, task_id: str) -> None:
@@ -689,12 +793,26 @@ class FeishuAdapter(BaseAdapter):
                 cites = extract_citations(event.payload)
                 if cites:
                     turn.citations = cites
+                stats = extract_stats_payload(event.payload)
+                if stats:
+                    turn.stats = stats
                 name = str(event.payload.get("name") or "")
                 if any(hint in name for hint in KB_TOOL_HINTS) and cites:
                     turn.status = "知识库命中已写入卡片"
+                elif any(hint in name for hint in KB_STATS_TOOLS) and stats:
+                    turn.status = "统计已写入卡片"
                 else:
                     turn.status = ""
             self._schedule_turn_flush(task_id, immediate=True)
+            return
+        if event.event_type == EventType.TASK_REASONING:
+            delta = str(event.payload.get("delta") or event.payload.get("reasoning") or "")
+            async with self._lock:
+                turn = self._turn(task_id)
+                if delta:
+                    turn.reasoning = (turn.reasoning or "") + delta
+                    turn.status = "思考中…"
+            self._schedule_turn_flush(task_id)
             return
         if event.event_type == EventType.TASK_STATUS:
             message = str(event.payload.get("message") or "处理中…").strip()
@@ -718,23 +836,48 @@ class FeishuAdapter(BaseAdapter):
             message_id = self._card_messages.get(task_id)
             turn = self._forget_turn(task_id)
             content = event.payload.get("content") or turn.content
+            reasoning = str(event.payload.get("reasoning") or turn.reasoning or "")
+            usage = event.payload.get("usage") if isinstance(event.payload.get("usage"), dict) else None
+            session_usage = (
+                event.payload.get("session_usage")
+                if isinstance(event.payload.get("session_usage"), dict)
+                else None
+            )
+            usage_blob = usage or session_usage
+            chat_id = turn.chat_id or _feishu_chat_id(event.session_id)
             card = build_reply_card(
                 str(content or ""),
                 citations=turn.citations,
                 tools=turn.tools,
                 user_preview=turn.user_preview,
+                reasoning=reasoning,
+                stats=turn.stats,
+                usage=usage_blob,
                 buttons=default_reply_buttons(
                     session_id=event.session_id,
-                    chat_id=turn.chat_id or _feishu_chat_id(event.session_id),
+                    chat_id=chat_id,
                     retry_text=self._last_prompts.get(event.session_id, "")
                     or turn.user_preview,
                 ),
+                selects=default_reply_selects(session_id=event.session_id, chat_id=chat_id),
             )
             if message_id:
                 try:
                     await self.client.update_message_card(message_id, card)
                 except Exception:
                     logger.exception("Failed to finalize Feishu reply card")
+            if turn.stats and chat_id:
+                try:
+                    await self.client.send_card_to_chat(
+                        chat_id,
+                        build_stats_card(
+                            title="知识库统计" if turn.stats.get("kind") == "kb_stats" else "同步摘要",
+                            stats=turn.stats,
+                            usage=usage_blob,
+                        ),
+                    )
+                except Exception:
+                    logger.exception("Failed to send Feishu stats card")
             return
         if event.event_type == EventType.TASK_FAILED:
             message_id = self._card_messages.get(task_id)
