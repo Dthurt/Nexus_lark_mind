@@ -12,6 +12,7 @@ from src.common.errors import ValidationAppError
 from src.common.rpc_client import RpcClient
 from src.common.schemas import RpcEnvelope
 from src.core_kernel.knowledge_rpc import MAX_UPLOAD_BYTES
+from src.core_kernel.plugin_runtime.knowledge_ingest import library_ingest_max_bytes
 
 
 def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
@@ -87,6 +88,30 @@ def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
         body = await request.json()
         payload = dict(body) if isinstance(body, dict) else {}
         data = await kernel.call("POST", "/rpc/knowledge/docs", json=payload)
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/docs/file")
+    async def knowledge_add_file(request: Request, workspace_id: str = ""):
+        kernel: RpcClient = state["kernel"]
+        limit = library_ingest_max_bytes()
+        try:
+            form = await request.form(max_part_size=limit)
+        except TypeError:
+            form = await request.form()
+        upload = form.get("file")
+        if upload is None:
+            raise ValidationAppError("file required")
+        filename = Path(str(getattr(upload, "filename", None) or "upload.txt")).name
+        raw = await upload.read()  # type: ignore[misc]
+        if len(raw) > limit:
+            raise ValidationAppError(f"file too large ({len(raw)} bytes, max {limit})")
+        payload = {
+            "filename": filename,
+            "content_b64": base64.b64encode(bytes(raw)).decode("ascii"),
+            "workspace_id": workspace_id or str(form.get("workspace_id") or ""),
+            "title": str(form.get("title") or ""),
+        }
+        data = await kernel.call("POST", "/rpc/knowledge/docs/file", json=payload)
         return RpcEnvelope(ok=True, data=data)
 
     @app.patch("/api/knowledge/docs/{doc_id}")

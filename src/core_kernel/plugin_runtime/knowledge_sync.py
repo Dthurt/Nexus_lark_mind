@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 from src.core_kernel.plugin_runtime.knowledge_ingest import (
     default_tags_for_path,
     is_ingestible,
+    library_ingest_max_bytes,
     read_file_as_text,
 )
 from src.core_kernel.plugin_runtime.knowledge_store import KnowledgeStore, content_hash
@@ -106,9 +107,10 @@ async def sync_workspace_docs(
     *,
     workspace_id: str = "",
     max_files: int = 400,
-    max_bytes: int = 512_000,
+    max_bytes: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Scan docs under cwd into KB with content_hash upsert (.md/.txt/.rst/.pdf)."""
+    limit = library_ingest_max_bytes() if max_bytes is None else max_bytes
     root = Path(cwd).resolve()
     added = 0
     updated = 0
@@ -121,7 +123,7 @@ async def sync_workspace_docs(
         except ValueError:
             rel = path.name
         try:
-            text, note = read_file_as_text(path, max_bytes=max_bytes)
+            text, note = read_file_as_text(path, max_bytes=limit)
             digest = content_hash(text)
             doc_id = stable_doc_id_for_path(rel)
             title = _title_from_md(text, rel)

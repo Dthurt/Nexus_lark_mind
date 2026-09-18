@@ -851,6 +851,29 @@ export function addKnowledgeDoc(body: {
   return apiPost("/api/knowledge/docs", body);
 }
 
+export async function uploadKnowledgeFile(
+  file: File,
+  workspaceId = "",
+  title = "",
+): Promise<KnowledgeDoc> {
+  const form = new FormData();
+  form.append("file", file);
+  if (workspaceId) form.append("workspace_id", workspaceId);
+  if (title) form.append("title", title);
+  const qs = workspaceId
+    ? `?workspace_id=${encodeURIComponent(workspaceId)}`
+    : "";
+  const resp = await fetch(`/api/knowledge/docs/file${qs}`, {
+    method: "POST",
+    body: form,
+  });
+  const json = await resp.json().catch(() => null);
+  if (!resp.ok || !json?.ok) {
+    throw new Error(parseError(json, `HTTP ${resp.status}`));
+  }
+  return json.data as KnowledgeDoc;
+}
+
 export function patchKnowledgeDoc(
   docId: string,
   body: {

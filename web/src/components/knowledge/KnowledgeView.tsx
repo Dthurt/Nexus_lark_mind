@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
-import { BookOpen, FilePlus2, MessageSquare, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BookOpen, FilePlus2, FileUp, MessageSquare, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
   addKnowledgeDoc,
+  uploadKnowledgeFile,
   deleteKnowledgeDoc,
   getKnowledgeDoc,
   getKnowledgeStats,
@@ -64,9 +65,11 @@ export function KnowledgeView({
   const [searched, setSearched] = useState(false);
   const [importingId, setImportingId] = useState("");
   const [adding, setAdding] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const label = kbScopeLabel(boundKbId, boundKbName);
 
@@ -207,6 +210,21 @@ export function KnowledgeView({
     }
   };
 
+  const onImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const row = await uploadKnowledgeFile(file, workspaceId, title.trim());
+      toast.success(`已导入 · ${row.title || file.name}`);
+      await loadList();
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "导入失败"));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const onAddLocal = async () => {
     const body = content.trim();
     if (!body) {
@@ -302,17 +320,39 @@ export function KnowledgeView({
               </Button>
             ) : null}
             {!remote ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-2"
-                disabled={syncing || !cwd}
-                onClick={() => void onSync()}
-              >
-                <RefreshCw className={cn("mr-1 size-3", syncing && "animate-spin")} />
-                同步文档
-              </Button>
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  data-testid="knowledge-import-input"
+                  accept=".pdf,.docx,.xlsx,.pptx,.md,.markdown,.mdx,.txt,.rst,.org,.png,.jpg,.jpeg,.webp,.gif,.bmp"
+                  onChange={(e) => void onImportFile(e.target.files?.[0])}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2"
+                  data-testid="knowledge-import-file"
+                  disabled={uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <FileUp className={cn("mr-1 size-3", uploading && "animate-pulse")} />
+                  {uploading ? "导入中…" : "导入文件"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2"
+                  disabled={syncing || !cwd}
+                  onClick={() => void onSync()}
+                >
+                  <RefreshCw className={cn("mr-1 size-3", syncing && "animate-spin")} />
+                  同步文档
+                </Button>
+              </>
             ) : null}
           </div>
         </div>
@@ -368,7 +408,7 @@ export function KnowledgeView({
                 : "远程库暂无文档。输入关键词搜索，或清空后列出该库。"
               : searched
                 ? "本地知识库没有匹配结果。"
-                : "暂无文档。在下方粘贴 Markdown，或绑定工作区后同步 docs。"}
+                : "暂无文档。导入 PDF / Office，或在下方粘贴 Markdown，或绑定工作区后同步 docs。"}
           </div>
         ) : null}
         {rows.map((row) => {
@@ -474,7 +514,9 @@ export function KnowledgeView({
 
       {!remote ? (
         <div className="shrink-0 space-y-1.5 border-t border-border px-3 py-2">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">写入本地</div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            写入本地 · PDF / Word / Excel / PPT / Markdown
+          </div>
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}

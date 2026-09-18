@@ -14,10 +14,13 @@ from fastapi import FastAPI, Request
 
 from src.common.schemas import RpcEnvelope
 
-from src.core_kernel.plugin_runtime.knowledge_ingest import MAX_INGEST_BYTES
+from src.core_kernel.plugin_runtime.knowledge_ingest import (
+    MAX_SESSION_UPLOAD_BYTES,
+    library_ingest_max_bytes,
+)
 
 SESSION_UPLOAD_ROOT = Path("data") / "session_uploads"
-MAX_UPLOAD_BYTES = MAX_INGEST_BYTES
+MAX_UPLOAD_BYTES = MAX_SESSION_UPLOAD_BYTES
 logger = logging.getLogger(__name__)
 
 
@@ -160,7 +163,9 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
                     error={"code": "NOT_FOUND", "message": f"file not found: {path_arg}"},
                 )
             try:
-                content, ingest_note = read_file_as_text(target)
+                content, ingest_note = read_file_as_text(
+                    target, max_bytes=library_ingest_max_bytes()
+                )
             except ValueError as exc:
                 return RpcEnvelope(
                     ok=False,
@@ -198,6 +203,74 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         )
         if ingest_note:
             row = {**row, "ingest_note": ingest_note}
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.post("/rpc/knowledge/docs/file")
+    async def kb_add_library_file(request: Request):
+        from src.core_kernel.plugin_runtime.knowledge_ingest import (
+            SUPPORTED_SUFFIXES,
+            default_tags_for_name,
+            read_bytes_as_text,
+        )
+        from src.core_kernel.plugin_runtime.knowledge_store import content_hash
+
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        filename = Path(str(body.get("filename") or "upload.txt")).name
+        suffix = Path(filename).suffix.lower()
+        if suffix not in SUPPORTED_SUFFIXES:
+            return RpcEnvelope(
+                ok=False,
+                error={"code": "TYPE", "message": f"unsupported type: {suffix or filename}"},
+            )
+        raw_b64 = str(body.get("content_b64") or "")
+        try:
+            raw = base64.b64decode(raw_b64, validate=False)
+        except Exception:
+            return RpcEnvelope(ok=False, error={"code": "BAD", "message": "content_b64 invalid"})
+        if not raw:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "file empty"})
+        limit = library_ingest_max_bytes()
+        if len(raw) > limit:
+            return RpcEnvelope(
+                ok=False,
+                error={"code": "SIZE", "message": f"file too large ({len(raw)} bytes, max {limit})"},
+            )
+        try:
+            content, ingest_note = read_bytes_as_text(
+                raw, suffix, filename=filename, max_bytes=limit
+            )
+        except ValueError as exc:
+            return RpcEnvelope(ok=False, error={"code": "INGEST", "message": str(exc)})
+        workspace_id = str(body.get("workspace_id") or "")
+        digest = content_hash(content)
+        doc_id = str(body.get("doc_id") or "").strip()
+        if not doc_id:
+            key = f"{workspace_id}:{filename}:{digest}"
+            doc_id = "upload_" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+        tags = default_tags_for_name(filename)
+        extra = "upload,manual"
+        tags = f"{tags},{extra}" if tags else extra
+        title = str(body.get("title") or "").strip() or Path(filename).stem
+        row = await store.upsert(
+            doc_id=doc_id,
+            title=title,
+            content=content,
+            tags=tags,
+            source=f"upload:{filename}",
+            source_uri=filename,
+            workspace_id=workspace_id,
+            content_hash_value=digest,
+        )
+        if ingest_note:
+            row = {**row, "ingest_note": ingest_note}
+        row = {**row, "filename": filename, "bytes": len(raw)}
         return RpcEnvelope(ok=True, data=row)
 
     @app.patch("/rpc/knowledge/docs/{doc_id}")
@@ -564,7 +637,9 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
                 error={"code": "SIZE", "message": f"file too large ({len(raw)} bytes)"},
             )
         try:
-            content, ingest_note = read_bytes_as_text(raw, suffix, filename=filename)
+            content, ingest_note = read_bytes_as_text(
+                raw, suffix, filename=filename, max_bytes=MAX_UPLOAD_BYTES
+            )
         except ValueError as exc:
             return RpcEnvelope(ok=False, error={"code": "INGEST", "message": str(exc)})
         dest_dir = SESSION_UPLOAD_ROOT / session_id

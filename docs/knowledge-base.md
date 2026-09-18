@@ -74,6 +74,8 @@ Once open:
 
 - KB selector (**本地知识库** + WeKnora names when `WEKNORA_BASE_URL` is set), search,
   citation results, full-body preview, empty/health/error states.
+- Local library **导入文件** (`POST /api/knowledge/docs/file`) — PDF / Office / Markdown
+  extracted to text (default ~20MB, `KB_INGEST_MAX_BYTES`; PDF pages `KB_PDF_MAX_PAGES`).
 - **去对话** / row **提问** returns to the main chat with that KB already bound.
 - One session ↔ one bound KB (`weknora_kb_id`; empty = local). Changing the picker patches
   the session and subsequent turns.
@@ -121,6 +123,7 @@ Query/body may include `workspace_id` and `cwd` where relevant.
 - `GET /api/knowledge/docs/{doc_id}`
 - `GET /api/knowledge/docs/{doc_id}/read`
 - `POST /api/knowledge/docs` — `{ title, content }` or `{ path, cwd }`
+- `POST /api/knowledge/docs/file` — multipart library ingest (`file`, optional `workspace_id` / `title`; ~20MB)
 - `PATCH /api/knowledge/docs/{doc_id}` — partial title/content/tags
 - `DELETE /api/knowledge/docs/{doc_id}`
 - `POST /api/knowledge/reindex` — embed chunks missing vectors
@@ -145,7 +148,7 @@ Ignores `.git`, `node_modules`, `.venv`, `.nlm`, etc. Indexes `docs/**` and shal
 
 - `.md` / `.markdown` / `.mdx`
 - `.txt` / `.rst` / `.org`
-- `.pdf` (optional `pypdf` if installed; else crude lossy text extract)
+- `.pdf` (`pypdf`; crude scrape only if extraction fails)
 
 Upsert key is a stable `file_<sha1(rel)>` id plus `content_hash` skip-if-unchanged.
 
@@ -181,6 +184,8 @@ Vectors are stored as JSON on chunks. After configuring embeddings on an existin
 | Env | Default | Role |
 |-----|---------|------|
 | `KB_PARENT_CHILD` | on | Parent/child chunks for long docs |
+| `KB_INGEST_MAX_BYTES` | 20MB | Library file ingest + workspace docs sync (session chips stay 512KB) |
+| `KB_PDF_MAX_PAGES` | 400 | Pages extracted per PDF |
 | `KB_QUERY_EXPAND` | on | Local query variants when first pass is thin |
 | `KB_RERANK` | on | Second-stage token rerank of the candidate pool |
 | `KB_RERANK_URL` | off | Optional HTTP reranker (OpenAI/Cohere-shaped JSON) |
@@ -189,7 +194,7 @@ Vectors are stored as JSON on chunks. After configuring embeddings on an existin
 FTS5 has **no env switch**: `ensure_schema` tries trigram → unicode61 and keeps ILIKE if both fail.
 Existing databases get an empty FTS table **backfilled** from `knowledge_chunks` on first open.
 
-Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape (not WeKnora anydoc). `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags. Pass `session_id` on search to include that session’s temporary uploads.
+Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape (not WeKnora anydoc / OCR). Scanned or image-only PDFs may yield no text. `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags. Pass `session_id` on search to include that session’s temporary uploads.
 
 ## Optional WeKnora bridge
 
@@ -230,8 +235,8 @@ Feishu / GitLab connectors: prefer ingesting into WeKnora first, then `weknora_s
 ## Try it
 
 1. Start the stack (`nlm start` / `scripts/dev.bat`), open the workbench, bind a workspace.
-2. Topbar **知识库** (or composer picker → 在知识库中打开): choose 本地知识库 or a WeKnora KB, search, open a hit, then ask in the right-hand chat.
-3. On the main composer, the **知识库** chip is always visible; changing it binds the session. **添加文件** uploads a temporary doc for this session only.
+2. Topbar **知识库** (`/knowledge`): on 本地知识库, **导入文件** a PDF/Office/Markdown, or paste, or **同步文档**. Search a hit, then **提问** / **去对话**.
+3. On the main composer, the **知识库** chip is always visible; changing it binds the session. **添加文件** uploads a temporary doc for this session only (~512KB).
 4. In chat (tools on): the turn is pre-retrieved against that KB (plus this session’s uploads); the agent should still `kb_read` / `weknora_read` and cite paths.
 5. Or: `curl "http://127.0.0.1:8000/api/knowledge/search?query=architecture"`
 6. Optional: set `KB_EMBEDDING_*`, sync/add docs, then Dock **回填向量** / `kb_reindex`.

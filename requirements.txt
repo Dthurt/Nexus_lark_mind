@@ -19,7 +19,7 @@ pytest-asyncio==0.25.0
 anyio==4.7.0
 asyncssh==2.19.0
 cryptography==44.0.0
-rich>=14.3.0,<15
+pypdf>=5.1.0,<7
 
 # Optional browser crawl (Crawl4AI) — also installable via `nlm` wizard:
 #   pip install -r requirements-crawl.txt && crawl4ai-setup

@@ -1,7 +1,8 @@
-"""File → text helpers for KB ingest (md/txt/rst + optional PDF, no hard deps)."""
+"""File → text helpers for KB ingest (md/txt/rst + PDF/Office)."""
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -11,7 +12,39 @@ PDF_SUFFIXES = {".pdf"}
 OFFICE_SUFFIXES = {".docx", ".xlsx", ".pptx"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 SUPPORTED_SUFFIXES = TEXT_SUFFIXES | PDF_SUFFIXES | OFFICE_SUFFIXES | IMAGE_SUFFIXES
-MAX_INGEST_BYTES = 512_000
+
+# Composer session chips stay small; library ingest / workspace sync use the 20MB default.
+MAX_SESSION_UPLOAD_BYTES = 512_000
+DEFAULT_LIBRARY_INGEST_BYTES = 20 * 1024 * 1024
+DEFAULT_PDF_MAX_PAGES = 400
+# Backward-compatible name: library default (was 512KB).
+MAX_INGEST_BYTES = DEFAULT_LIBRARY_INGEST_BYTES
+
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        val = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(val, maximum))
+
+
+def library_ingest_max_bytes() -> int:
+    """Library file ingest / workspace sync cap. Env ``KB_INGEST_MAX_BYTES``."""
+    return _env_int(
+        "KB_INGEST_MAX_BYTES",
+        DEFAULT_LIBRARY_INGEST_BYTES,
+        minimum=1024,
+        maximum=100 * 1024 * 1024,
+    )
+
+
+def pdf_max_pages() -> int:
+    """Max PDF pages to extract. Env ``KB_PDF_MAX_PAGES``."""
+    return _env_int("KB_PDF_MAX_PAGES", DEFAULT_PDF_MAX_PAGES, minimum=1, maximum=5000)
 
 
 def is_ingestible(path: Path) -> bool:
@@ -19,7 +52,7 @@ def is_ingestible(path: Path) -> bool:
 
 
 def read_file_as_text(
-    path: Path, *, max_bytes: int = MAX_INGEST_BYTES
+    path: Path, *, max_bytes: Optional[int] = None
 ) -> Tuple[str, str]:
     """Return (text, note). note is empty on success; non-empty explains degrade."""
     raw = path.read_bytes()
@@ -31,11 +64,12 @@ def read_bytes_as_text(
     suffix: str,
     *,
     filename: str = "",
-    max_bytes: int = MAX_INGEST_BYTES,
+    max_bytes: Optional[int] = None,
 ) -> Tuple[str, str]:
     """Same extractors as ``read_file_as_text`` but from in-memory bytes."""
-    if len(raw) > max_bytes:
-        raise ValueError(f"file too large ({len(raw)} bytes, max {max_bytes})")
+    limit = library_ingest_max_bytes() if max_bytes is None else max_bytes
+    if len(raw) > limit:
+        raise ValueError(f"file too large ({len(raw)} bytes, max {limit})")
     suffix = (suffix or "").lower()
     if not suffix.startswith("."):
         suffix = f".{suffix}" if suffix else ""
@@ -70,7 +104,7 @@ def _extract_pdf(raw: bytes) -> Tuple[str, str]:
 
         reader = PdfReader(io.BytesIO(raw))
         parts = []
-        for page in reader.pages[:80]:
+        for page in reader.pages[: pdf_max_pages()]:
             try:
                 parts.append(page.extract_text() or "")
             except Exception:

@@ -68,6 +68,7 @@ test.describe("knowledge base", () => {
     await expect(page.getByTestId("knowledge-page")).toBeVisible();
     await expect(page.getByTestId("knowledge-search-input")).toBeVisible();
     await expect(page.getByTestId("knowledge-go-chat")).toBeVisible();
+    await expect(page.getByTestId("knowledge-import-file")).toBeVisible();
     await expect(page.getByTestId("composer-open-knowledge")).toHaveCount(0);
   });
 });
