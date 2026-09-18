@@ -19,5 +19,6 @@ export async function openWorkbench(page: Page): Promise<void> {
     }
     test.skip(true, "adapters not running on baseURL");
   }
-  await expect(page.getByText("Nexus Lark Mind").first()).toBeVisible({ timeout: 20_000 });
+  // <title> also contains this string and is hidden; wait for a visible workbench landmark.
+  await expect(page.getByRole("tab", { name: "对话" })).toBeVisible({ timeout: 20_000 });
 }
