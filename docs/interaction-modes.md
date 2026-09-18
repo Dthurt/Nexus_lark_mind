@@ -161,6 +161,6 @@ Interactive cards for **tool approval**, **ask_user**, and **plan_review** are s
 - Plan review actions: 批准并执行 / 继续规划 / 稍后自己说
 - Approval timeouts match Web (`src/common/approval_timeouts.py` ↔ `web/src/lib/approvalTimeout.ts`)
 
-Streaming reply cards use **Card JSON 2.0**: one message is patched in place (debounced), tool/KB progress and citations render as card sections, errors are warning cards (no stack traces). Retry / 切换模型 / 清空会话 are schema 2.0 callback buttons.
+Streaming reply cards use **Card JSON 2.0**: one message is patched in place (debounced). Tool traces and model reasoning sit in a `collapsible_panel` (展开看思考过程); the final answer + citations stay outside the fold. Provider / model / preset / KB use `select_static` (plus `card.action.trigger` `option`). `kb_stats` / sync emit a small chart card (VChart spec, local counts). Retry / 清空会话 remain buttons; 切换模型 is under 会话设置.
 
 See also: [channels.md](./channels.md), [experience-tiers.md](./experience-tiers.md), [canvas.md](./canvas.md), [diagrams.md](./diagrams.md), [deferred.md](./deferred.md), [subagents.md](./subagents.md).
