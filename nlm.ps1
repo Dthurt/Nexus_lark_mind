@@ -71,7 +71,10 @@ function Update-NlmProcessPath {
     "$env:LOCALAPPDATA\Programs\Python\Launcher",
     "$env:ProgramFiles\Python312",
     "$env:ProgramFiles\Python311",
-    "$env:ProgramFiles\Python313"
+    "$env:ProgramFiles\Python313",
+    "${env:ProgramFiles(x86)}\Python312",
+    "${env:ProgramFiles(x86)}\Python311",
+    "${env:ProgramFiles(x86)}\Python313"
   )
   $machine = ""
   $user = ""
@@ -117,9 +120,11 @@ function Find-NlmPython {
     if ($c -and (Test-NlmPythonExe $c)) { return $c }
   }
   foreach ($name in @("python3", "python")) {
-    $cmd = Get-Command $name -ErrorAction SilentlyContinue
-    if ($cmd -and $cmd.Source -notmatch "WindowsApps" -and (Test-NlmPythonExe $cmd.Source)) {
-      return $cmd.Source
+    $cmds = @(Get-Command $name -All -ErrorAction SilentlyContinue)
+    foreach ($cmd in $cmds) {
+      if ($cmd.Source -and $cmd.Source -notmatch "WindowsApps" -and (Test-NlmPythonExe $cmd.Source)) {
+        return $cmd.Source
+      }
     }
   }
   $py = Get-Command py -ErrorAction SilentlyContinue

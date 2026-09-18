@@ -20,7 +20,8 @@
 ## 前提
 
 - **Python 3.11–3.13**（Linux：`python3` + `python3-venv`；Windows：勾选 Add to PATH）
-  - 若本机没有可用解释器（或只有 Microsoft Store 占位的 `python.exe` / 损坏的 `py`），`nlm` / `nlm.cmd` / `nlm.ps1` **不会闪退**：会提示并给出选项——`[1]` 自动安装（Windows: winget Python 3.12；Linux: apt/dnf/pacman，可能需要 sudo）、`[2]` 打开说明/下载页、`[3]` 退出。安装成功后会刷新当前进程 PATH 并继续 `nlm start`。
+  - 若本机没有可用解释器（或只有 Microsoft Store 占位的 `python.exe` / 损坏的 `py`），`nlm` / `nlm.cmd` / `nlm.ps1` **不会闪退**：会提示并给出选项——`[1]` 自动安装（Windows: winget Python 3.12；macOS: brew；Linux: apt/dnf/pacman，可能需要 sudo）、`[2]` 打开说明/下载页、`[3]` 退出。安装成功后会刷新当前进程 PATH 并继续原来的 `nlm start`。
+  - `scripts\start_local.bat` / `start_local.ps1` 同样跳过 Store 占位、校验 3.11–3.13；缺解释器时交给 `nlm.ps1` 弹出上述菜单，装好后继续 start_local。双击失败会 `pause`，不会空白闪退。
   - 非交互（`nlm start --yes` / `NLM_YES=1` / CI / 无 TTY）只打印错误和安装命令后以退出码 1 结束，**不会卡住**。
 - 前端调试另需 [Node.js 20+](https://nodejs.org/)（或仓库内 `.tools\node\…` 便携包）
 - （可选）在 `.env` 填模型 Key；不填则为 demo 回声模式
@@ -187,7 +188,7 @@ scripts\start_local.bat status
 | `web-static` 缺失 | `scripts\build_web.bat`，或直接用 `dev.bat` |
 | pip 太慢 / 想跳过 | 默认已跳过未变更依赖；强制：`-Install`；跳过：`-SkipInstall` |
 | 没有模型 Key | 可启动，对话为 demo 回声；在 Settings → Models 或 `.env` 配置 |
-| 双击 `nlm.cmd` 一闪就关 / 提示没有 Python | 已改为停留并给出安装选项；选 `[1]` 用 winget 装 3.12，或手动装后勾选 Add to PATH |
+| 双击 `nlm.cmd` / `start_local.bat` 一闪就关 / 提示没有 Python | 已改为停留并给出安装选项；选 `[1]` 用 winget 装 3.12，或手动装后勾选 Add to PATH |
 | 飞书收不到消息 | 需本机进程在线 + 开放平台长连接事件订阅，见 [channels.md](./channels.md) |
 
 ---

@@ -545,27 +545,42 @@ def refresh_process_path() -> None:
     os.environ["PATH"] = os.pathsep.join(p for p in parts if p)
 
 
+def list_on_path(name: str) -> List[str]:
+    """All PATH hits for *name*. Windows `where` sees Store stub first, then a later real python."""
+    found: List[str] = []
+    if os.name == "nt":
+        try:
+            raw = subprocess.check_output(
+                ["where.exe", name],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=8,
+            )
+            found.extend(line.strip() for line in raw.splitlines() if line.strip())
+        except Exception:
+            pass
+    if not found:
+        p = shutil.which(name)
+        if p:
+            found.append(p)
+    return found
+
+
 def find_system_python() -> Optional[str]:
     candidates: List[str] = []
     if os.name == "nt":
         candidates.extend(str(p) for p in default_windows_python_exes())
         for name in ("python3.13", "python3.12", "python3.11", "python3", "python"):
-            p = shutil.which(name)
-            if p:
-                candidates.append(p)
+            candidates.extend(list_on_path(name))
     else:
         for name in ("python3.13", "python3.12", "python3.11", "python3"):
-            p = shutil.which(name)
-            if p:
-                candidates.append(p)
+            candidates.extend(list_on_path(name))
 
     if is_supported_python_version(tuple(sys.version_info[:3])) and not is_windows_store_stub(sys.executable):
         candidates.append(sys.executable)
 
     if os.name != "nt":
-        p = shutil.which("python")
-        if p:
-            candidates.append(p)
+        candidates.extend(list_on_path("python"))
 
     seen: set[str] = set()
     for c in candidates:

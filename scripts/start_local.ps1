@@ -72,23 +72,97 @@ function Test-LocalHealth {
   return $ok
 }
 
-function Resolve-Python {
+function Test-StartLocalPythonExe {
+  param([string]$Exe)
+  if (-not $Exe) { return $false }
+  if ($Exe -match "WindowsApps") { return $false }
+  if ($Exe -ne "py" -and -not (Test-Path -LiteralPath $Exe)) { return $false }
+  $code = "import sys; raise SystemExit(0 if (3,11)<=sys.version_info<(3,14) else 1)"
+  try {
+    if ($Exe -eq "py") {
+      & py -3 -c $code 2>$null | Out-Null
+    } else {
+      & $Exe -c $code 2>$null | Out-Null
+    }
+    return ($LASTEXITCODE -eq 0)
+  } catch {
+    return $false
+  }
+}
+
+function Find-StartLocalPython {
   $candidates = @(
     "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
-    "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe"
+    "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
+    "$env:ProgramFiles\Python312\python.exe",
+    "$env:ProgramFiles\Python311\python.exe",
+    "$env:ProgramFiles\Python313\python.exe",
+    "${env:ProgramFiles(x86)}\Python312\python.exe",
+    "${env:ProgramFiles(x86)}\Python311\python.exe",
+    "${env:ProgramFiles(x86)}\Python313\python.exe"
   )
-  $py = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-  if (-not $py) {
-    foreach ($name in @("python3", "python")) {
-      $cmd = Get-Command $name -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch "WindowsApps" }
-      if ($cmd) { $py = $cmd.Source; break }
+  foreach ($c in $candidates) {
+    if ($c -and (Test-StartLocalPythonExe $c)) { return $c }
+  }
+  foreach ($name in @("python3", "python")) {
+    $cmds = @(Get-Command $name -All -ErrorAction SilentlyContinue)
+    foreach ($cmd in $cmds) {
+      if ($cmd.Source -and $cmd.Source -notmatch "WindowsApps" -and (Test-StartLocalPythonExe $cmd.Source)) {
+        return $cmd.Source
+      }
     }
   }
-  if (-not $py) {
-    Write-Error "Python 3.11-3.13 not found (Microsoft Store stub skipped). Run nlm.cmd to auto-install, or: winget install -e --id Python.Python.3.12 --scope user --accept-package-agreements --accept-source-agreements"
+  $py = Get-Command py -ErrorAction SilentlyContinue
+  if ($py -and $py.Source -notmatch "WindowsApps" -and (Test-StartLocalPythonExe "py")) {
+    return "py"
   }
-  return $py
+  return $null
+}
+
+function Wait-StartLocalIfClosing {
+  if ($env:CI) { return }
+  if ($env:NLM_YES -match '^(1|true|yes|y)$') { return }
+  # start_local.bat sets this and pauses itself after we exit (avoid a double prompt).
+  if ($env:NLM_SHOULD_PAUSE -eq "1") { return }
+  try {
+    if ([Console]::IsInputRedirected) { return }
+  } catch { }
+  try {
+    Write-Host ""
+    Write-Host "Press Enter to close..."
+    [void](Read-Host)
+  } catch { }
+}
+
+function Resolve-Python {
+  $py = Find-StartLocalPython
+  if ($py) { return $py }
+
+  $nlmPs1 = Join-Path $Root "nlm.ps1"
+  if (Test-Path -LiteralPath $nlmPs1) {
+    Write-Host "Python 3.11-3.13 not found (Microsoft Store stub skipped)."
+    Write-Host "Delegating to nlm.ps1 for the install menu, then continuing start_local..."
+    $outFile = Join-Path $env:TEMP ("nlm_ensure_python_{0}.txt" -f [guid]::NewGuid().ToString("N"))
+    $env:NLM_PY_FILE = $outFile
+    try {
+      # Separate process: nlm.ps1 `exit` must not tear down this script.
+      $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $nlmPs1 -EnsurePythonOnly
+    } catch { }
+    if (Test-Path -LiteralPath $outFile) {
+      $got = (Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue).Trim()
+      Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+      Remove-Item Env:NLM_PY_FILE -ErrorAction SilentlyContinue
+      if ($got -and (Test-StartLocalPythonExe $got)) { return $got }
+    }
+    Remove-Item Env:NLM_PY_FILE -ErrorAction SilentlyContinue
+  }
+
+  Write-Host "Python 3.11-3.13 not found (Microsoft Store stub skipped)." -ForegroundColor Red
+  Write-Host "Run nlm.cmd to auto-install, or:" -ForegroundColor Yellow
+  Write-Host "  winget install -e --id Python.Python.3.12 --scope user --accept-package-agreements --accept-source-agreements"
+  Wait-StartLocalIfClosing
+  exit 1
 }
 
 function Get-ReqHash {

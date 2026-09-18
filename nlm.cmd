@@ -70,7 +70,8 @@ pause >nul
 goto :eof
 
 :refresh_python_path
-set "PATH=%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%LOCALAPPDATA%\Programs\Python\Python313;%LOCALAPPDATA%\Programs\Python\Python313\Scripts;%LOCALAPPDATA%\Programs\Python\Launcher;%ProgramFiles%\Python312;%ProgramFiles%\Python311;%ProgramFiles%\Python313;%PATH%"
+set "PF86=%ProgramFiles(x86)%"
+set "PATH=%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%LOCALAPPDATA%\Programs\Python\Python313;%LOCALAPPDATA%\Programs\Python\Python313\Scripts;%LOCALAPPDATA%\Programs\Python\Launcher;%ProgramFiles%\Python312;%ProgramFiles%\Python311;%ProgramFiles%\Python313;%PF86%\Python312;%PF86%\Python311;%PF86%\Python313;%PATH%"
 for /f "skip=2 tokens=1,2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do (
   if /I "%%A"=="Path" set "PATH=%%C;!PATH!"
 )

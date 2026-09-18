@@ -94,6 +94,19 @@ def test_quiet_setup_when_ready(monkeypatch: pytest.MonkeyPatch) -> None:
         os.environ.pop("NLM_YES", None)
 
 
+def test_list_on_path_prefers_where_then_which(monkeypatch: pytest.MonkeyPatch) -> None:
+    boot = _load_boot()
+    monkeypatch.setattr(boot.os, "name", "nt")
+
+    def fake_check_output(*_args, **_kwargs):
+        return "C:\\WindowsApps\\python.exe\nC:\\Python312\\python.exe\n"
+
+    monkeypatch.setattr(boot.subprocess, "check_output", fake_check_output)
+    hits = boot.list_on_path("python")
+    assert hits[0].endswith("WindowsApps\\python.exe")
+    assert hits[1].endswith("Python312\\python.exe")
+
+
 def test_is_windows_store_stub() -> None:
     boot = _load_boot()
     assert boot.is_windows_store_stub(r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\python.exe")
@@ -123,11 +136,33 @@ def test_find_system_python_skips_stub_when_nothing_else(monkeypatch: pytest.Mon
     stub = r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\python.exe"
     monkeypatch.setattr(boot, "probe_python_version", lambda _exe: None)
     monkeypatch.setattr(boot.shutil, "which", lambda _name: stub)
+    monkeypatch.setattr(boot, "list_on_path", lambda _name: [stub])
     monkeypatch.setattr(boot.os, "name", "nt")
     monkeypatch.setenv("LOCALAPPDATA", r"Z:\nlm_no_such_local")
     monkeypatch.setenv("ProgramFiles", r"Z:\nlm_no_such_pf")
     monkeypatch.setenv("ProgramFiles(x86)", r"Z:\nlm_no_such_pfx86")
     assert boot.find_system_python() is None
+
+
+def test_find_system_python_skips_stub_then_real(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    boot = _load_boot()
+    stub = r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\python.exe"
+    real = str(tmp_path / "python.exe")
+    Path(real).write_bytes(b"")
+
+    def fake_probe(exe: str):
+        if "WindowsApps" in exe:
+            return None
+        if os.path.normcase(os.path.abspath(exe)) == os.path.normcase(os.path.abspath(real)):
+            return (3, 12, 8)
+        return None
+
+    monkeypatch.setattr(boot, "probe_python_version", fake_probe)
+    monkeypatch.setattr(boot, "default_windows_python_exes", lambda: [])
+    monkeypatch.setattr(boot, "list_on_path", lambda name: [stub, real] if name == "python" else [])
+    monkeypatch.setattr(boot.os, "name", "nt")
+    monkeypatch.setattr(boot.sys, "executable", stub)
+    assert boot.find_system_python() == real
 
 
 def test_missing_python_help_text_noninteractive() -> None:
