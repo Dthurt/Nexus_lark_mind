@@ -400,14 +400,16 @@ def compact_messages(
     target = max(3_000, int(usable * target_ratio))
     collapse_at = max(3_000, int(usable * collapse_ratio))
 
+    from src.core_kernel.tool_history import sanitize_tool_call_messages
+
     layer1 = _layer1_soft_trim(messages, soft_msg_chars=soft_chars)
     if sum(_msg_tokens(m) for m in layer1) <= collapse_at:
-        return layer1
+        return sanitize_tool_call_messages(layer1)
 
     layer2 = _layer2_collapse_middle(layer1, target)
     if sum(_msg_tokens(m) for m in layer2) <= usable:
-        return layer2
+        return sanitize_tool_call_messages(layer2)
 
     # Stronger collapse then hard drop toward target
     layer2b = _layer2_collapse_middle(layer2, int(target * 0.55))
-    return _layer3_hard_drop(layer2b, target)
+    return sanitize_tool_call_messages(_layer3_hard_drop(layer2b, target))

@@ -205,6 +205,8 @@ export function useChatStream(opts: UseChatStreamOpts) {
           tr.addStatus(via ? `compaction (${via}): ${msg}` : `compaction: ${msg}`);
         } else if (payload.kind === "active_tools") {
           tr.addStatus(msg);
+        } else if (payload.kind === "kb_grounding") {
+          tr.addStatus(msg);
         } else {
           tr.addStatus(msg);
         }

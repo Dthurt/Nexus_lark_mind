@@ -54,6 +54,7 @@ export type UseChatActionsOpts = {
   cwd?: string;
   workspaceKind?: string;
   sshHostId?: string;
+  weknoraKbId?: string;
   providerId?: string;
   modelName?: string;
   toolsEnabled?: boolean;
@@ -97,6 +98,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
     cwd = "",
     workspaceKind = "",
     sshHostId = "",
+    weknoraKbId = "",
     providerId = "",
     modelName = "",
     toolsEnabled = true,
@@ -619,6 +621,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
           workspace_kind: workspaceKind || undefined,
           ssh_host_id: sshHostId || undefined,
           context_refs: refs.length ? refs : undefined,
+          weknora_kb_id: weknoraKbId || "",
         } as any);
         if ((data as any)?.task_id) onTaskId?.((data as any).task_id);
         if ((data as any)?.session_id && (data as any).session_id !== sessionIdRef.current) {
@@ -662,6 +665,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
       setChatTitle,
       setSessionId,
       sshHostId,
+      weknoraKbId,
       stream,
       timeline,
       toolsEnabled,

@@ -4,6 +4,7 @@ import { ApprovalDock } from "@/components/chat/ApprovalDock";
 import { ChatMessages } from "@/components/chat/ChatMessages";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { Composer } from "@/components/composer/Composer";
+import { KnowledgeView } from "@/components/knowledge/KnowledgeView";
 import { RightDock } from "@/components/layout/RightDock";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
@@ -12,11 +13,12 @@ import {
   TrajectoryView,
   type TrajectoryRow,
 } from "@/components/trajectory/TrajectoryView";
-import { gitInfo, getPluginCalls, deleteSession as apiDeleteSession, patchInteraction, addSessionBookmark, getSession, listWeknoraKbs } from "@/api/endpoints";
+import { gitInfo, getPluginCalls, deleteSession as apiDeleteSession, patchInteraction, addSessionBookmark, getSession } from "@/api/endpoints";
 import { useChatActions } from "@/hooks/useChatActions";
 import { useChatStream } from "@/hooks/useChatStream";
 import { useChatTimeline } from "@/hooks/useChatTimeline";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
+import { useKnowledgeCatalog } from "@/hooks/useKnowledgeCatalog";
 import { usePlugins } from "@/hooks/usePlugins";
 import { useProviders } from "@/hooks/useProviders";
 import { useRightDock } from "@/hooks/useRightDock";
@@ -29,8 +31,10 @@ import { DiffDock } from "@/components/chat/DiffDock";
 import { useCanvasSession } from "@/hooks/useCanvasSession";
 import { useDiffReview } from "@/hooks/useDiffReview";
 import { cn } from "@/lib/utils";
+import { kbScopeLabel } from "@/lib/knowledgeScope";
 import type { Workspace } from "@/types/api";
 import { toast } from "sonner";
+import { useSearchParams } from "react-router-dom";
 import "@/styles/workbench.css";
 
 export type WorkbenchPageProps = {
@@ -48,13 +52,30 @@ export function WorkbenchPage({
   catalogTick = 0,
   onOpenSettings,
 }: WorkbenchPageProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [status, setStatus] = useState("ready");
   const [busy, setBusy] = useState(false);
   const [gitBranch, setGitBranch] = useState("");
   const [gitInsertions, setGitInsertions] = useState(0);
   const [gitDeletions, setGitDeletions] = useState(0);
   const [toolsEnabled, setToolsEnabled] = useState(true);
-  const [centerView, setCenterView] = useState<CenterViewId>("chat");
+  const viewParam = (searchParams.get("view") || "").trim();
+  const centerView: CenterViewId =
+    viewParam === "knowledge" || viewParam === "trajectory" ? viewParam : "chat";
+  const setCenterView = useCallback(
+    (view: CenterViewId) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (!view || view === "chat") next.delete("view");
+          else next.set("view", String(view));
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [activeApprovalCallId, setActiveApprovalCallId] = useState<string | null>(null);
   const [layout, setLayout] = useState<LayoutState>({
@@ -136,6 +157,7 @@ export function WorkbenchPage({
   } = usePlugins();
 
   const { workspaces, load: loadWorkspaces } = useWorkspaces();
+  const knowledgeCatalog = useKnowledgeCatalog();
 
   const actionsRef = useRef<ReturnType<typeof useChatActions> | null>(null);
   const completedRef = useRef<() => void>(() => {});
@@ -175,6 +197,7 @@ export function WorkbenchPage({
     cwd,
     workspaceKind,
     sshHostId,
+    weknoraKbId,
     providerId,
     modelName,
     toolsEnabled,
@@ -226,20 +249,34 @@ export function WorkbenchPage({
       return;
     }
     if (weknoraKbName) return;
-    let cancelled = false;
-    void listWeknoraKbs(40)
-      .then((data) => {
-        if (cancelled) return;
-        const hit = (data.knowledge_bases || []).find((kb) => kb.id === weknoraKbId);
-        if (hit) setWeknoraKbName(hit.name || hit.id);
-      })
-      .catch(() => {
-        /* ignore */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [setWeknoraKbName, weknoraKbId, weknoraKbName]);
+    const hit = knowledgeCatalog.kbs.find((kb) => kb.id === weknoraKbId);
+    if (hit) setWeknoraKbName(hit.name || hit.id);
+  }, [knowledgeCatalog.kbs, setWeknoraKbName, weknoraKbId, weknoraKbName]);
+
+  const bindKnowledgeBase = useCallback(
+    async (kbId: string, kbName?: string) => {
+      const id = String(kbId || "").trim();
+      setWeknoraKbId(id);
+      setWeknoraKbName(id ? kbName || kbScopeLabel(id, kbName) : "");
+      try {
+        await ensureSessionOnServer();
+        if (!id) {
+          await patchInteraction(sessionId, { clear_weknora_kb_id: true });
+          toast.success("已切换到本地知识库");
+        } else {
+          await patchInteraction(sessionId, { weknora_kb_id: id });
+          toast.success(`已绑定「${kbScopeLabel(id, kbName)}」`);
+        }
+      } catch (err: any) {
+        toast.error(String(err?.message || err || "绑定知识库失败"));
+      }
+    },
+    [ensureSessionOnServer, sessionId, setWeknoraKbId, setWeknoraKbName],
+  );
+
+  const openKnowledgeView = useCallback(() => {
+    setCenterView("knowledge");
+  }, [setCenterView]);
 
   const loadActivityFromServer = useCallback(async () => {
     try {
@@ -607,19 +644,81 @@ export function WorkbenchPage({
             onToggleCanvas={canvas.togglePane}
             weknoraKbId={weknoraKbId}
             weknoraKbName={weknoraKbName}
-            onWeknoraKbClick={() => {
-              dock.expand();
-              dock.openTab("knowledge", { reveal: true });
-              if (narrowUi) setLayout((s) => ({ ...s, railOpen: true }));
-            }}
+            onWeknoraKbClick={openKnowledgeView}
             activeTools={activeTools}
           />
 
           <section className="nlm-chat-panel" aria-label="对话">
             {(() => {
-              const chatStack = (
+              const composer = (
+                <Composer
+                  value={actions.input}
+                  onChange={actions.setInput}
+                  providerId={providerId}
+                  modelName={modelName}
+                  providerOptions={providerOptions}
+                  modelOptions={modelOptions}
+                  providersDisabled={providersDisabled}
+                  modelsDisabled={modelsDisabled}
+                  toolsEnabled={toolsEnabled}
+                  onToolsEnabledChange={setToolsEnabled}
+                  agentMode={actions.agentMode}
+                  onAgentModeChange={actions.setAgentMode}
+                  autoAccept={actions.autoAccept}
+                  onAutoAcceptChange={actions.setAutoAccept}
+                  multitask={actions.multitask}
+                  onMultitaskChange={actions.setMultitask}
+                  permissionPreset={actions.permissionPreset}
+                  onPermissionPresetChange={actions.setPermissionPreset}
+                  planEnforcement={actions.planEnforcement}
+                  onPlanEnforcementChange={actions.setPlanEnforcement}
+                  experienceTier={actions.experienceTier}
+                  onExperienceTierChange={actions.setExperienceTier}
+                  reasoningEffort={actions.reasoningEffort}
+                  onReasoningEffortChange={actions.setReasoningEffort}
+                  sessionUsage={sessionUsage}
+                  items={timeline.items}
+                  tools={tools}
+                  cwd={cwd}
+                  workspaceTitle={workspaceTitle}
+                  workspaceKind={workspaceKind}
+                  sshHostId={sshHostId}
+                  contextRefs={actions.contextRefs}
+                  onAddContextRef={actions.addContextRef}
+                  onRemoveContextRef={actions.removeContextRef}
+                  gitBranch={gitBranch}
+                  gitInsertions={gitInsertions}
+                  gitDeletions={gitDeletions}
+                  busy={busy}
+                  busyEnterMode={actions.busyEnterMode}
+                  onBusyEnterModeChange={actions.setBusyEnterMode}
+                  inboxItems={actions.inboxItems}
+                  onRemoveInboxItem={(id) => void actions.removeInboxItem(id)}
+                  onProviderIdChange={onProviderChange}
+                  onModelNameChange={onModelChange}
+                  onSend={(opts) => void actions.sendChat(undefined, opts)}
+                  onStop={() => void actions.stopGeneration(currentTaskId)}
+                  weknoraKbId={weknoraKbId}
+                  weknoraKbName={weknoraKbName}
+                  knowledgeKbs={knowledgeCatalog.kbs}
+                  knowledgeHealth={knowledgeCatalog.health}
+                  onWeknoraKbChange={(id, name) => void bindKnowledgeBase(id, name)}
+                  onOpenKnowledge={openKnowledgeView}
+                />
+              );
+
+              const chatColumn = (
                 <>
-                  {centerView === "chat" ? (
+                  {centerView === "trajectory" ? (
+                    <TrajectoryView
+                      rows={trajectory.rows}
+                      followTail={trajectory.followTail}
+                      selectedId={trajectory.selectedId}
+                      onFollowTailChange={trajectory.setFollowTail}
+                      onSelect={trajectory.select}
+                      onInspect={onTrajectoryInspect}
+                    />
+                  ) : (
                     <ChatMessages
                       sessionId={sessionId}
                       items={timeline.items}
@@ -636,15 +735,6 @@ export function WorkbenchPage({
                       onAcceptPlan={() => {
                         void actions.acceptPlan();
                       }}
-                    />
-                  ) : (
-                    <TrajectoryView
-                      rows={trajectory.rows}
-                      followTail={trajectory.followTail}
-                      selectedId={trajectory.selectedId}
-                      onFollowTailChange={trajectory.setFollowTail}
-                      onSelect={trajectory.select}
-                      onInspect={onTrajectoryInspect}
                     />
                   )}
 
@@ -672,62 +762,37 @@ export function WorkbenchPage({
                     onDismiss={diffReview.dismiss}
                   />
 
-                  <Composer
-                    value={actions.input}
-                    onChange={actions.setInput}
-                    providerId={providerId}
-                    modelName={modelName}
-                    providerOptions={providerOptions}
-                    modelOptions={modelOptions}
-                    providersDisabled={providersDisabled}
-                    modelsDisabled={modelsDisabled}
-                    toolsEnabled={toolsEnabled}
-                    onToolsEnabledChange={setToolsEnabled}
-                    agentMode={actions.agentMode}
-                    onAgentModeChange={actions.setAgentMode}
-                    autoAccept={actions.autoAccept}
-                    onAutoAcceptChange={actions.setAutoAccept}
-                    multitask={actions.multitask}
-                    onMultitaskChange={actions.setMultitask}
-                    permissionPreset={actions.permissionPreset}
-                    onPermissionPresetChange={actions.setPermissionPreset}
-                    planEnforcement={actions.planEnforcement}
-                    onPlanEnforcementChange={actions.setPlanEnforcement}
-                    experienceTier={actions.experienceTier}
-                    onExperienceTierChange={actions.setExperienceTier}
-                    reasoningEffort={actions.reasoningEffort}
-                    onReasoningEffortChange={actions.setReasoningEffort}
-                    sessionUsage={sessionUsage}
-                    items={timeline.items}
-                    tools={tools}
-                    cwd={cwd}
-                    workspaceTitle={workspaceTitle}
-                    workspaceKind={workspaceKind}
-                    sshHostId={sshHostId}
-                    contextRefs={actions.contextRefs}
-                    onAddContextRef={actions.addContextRef}
-                    onRemoveContextRef={actions.removeContextRef}
-                    gitBranch={gitBranch}
-                    gitInsertions={gitInsertions}
-                    gitDeletions={gitDeletions}
-                    busy={busy}
-                    busyEnterMode={actions.busyEnterMode}
-                    onBusyEnterModeChange={actions.setBusyEnterMode}
-                    inboxItems={actions.inboxItems}
-                    onRemoveInboxItem={(id) => void actions.removeInboxItem(id)}
-                    onProviderIdChange={onProviderChange}
-                    onModelNameChange={onModelChange}
-                    onSend={(opts) => void actions.sendChat(undefined, opts)}
-                    onStop={() => void actions.stopGeneration(currentTaskId)}
-                  />
+                  {composer}
                 </>
               );
 
-              if (!canvas.open) return chatStack;
+              if (centerView === "knowledge") {
+                return (
+                  <div className="nlm-knowledge-split">
+                    <KnowledgeView
+                      cwd={cwd}
+                      workspaceId={workspaceId}
+                      sessionId={sessionId}
+                      boundKbId={weknoraKbId}
+                      boundKbName={weknoraKbName}
+                      kbs={knowledgeCatalog.kbs}
+                      health={knowledgeCatalog.health}
+                      catalogLoading={knowledgeCatalog.loading}
+                      onBindKb={(id, name) => void bindKnowledgeBase(id, name)}
+                      onAskAbout={(text) => {
+                        actions.setInput(text);
+                      }}
+                    />
+                    <div className="nlm-chat-column">{chatColumn}</div>
+                  </div>
+                );
+              }
+
+              if (!canvas.open) return chatColumn;
 
               return (
                 <div className="nlm-center-split">
-                  <div className="nlm-chat-column">{chatStack}</div>
+                  <div className="nlm-chat-column">{chatColumn}</div>
                   <CanvasPane
                     canvas={canvas}
                     modelProvider={providerId}
@@ -767,8 +832,7 @@ export function WorkbenchPage({
           workspaceId={workspaceId}
           delivery={delivery}
           onBoundKbChange={(kbId, kbName) => {
-            setWeknoraKbId(kbId);
-            setWeknoraKbName(kbName || "");
+            void bindKnowledgeBase(kbId, kbName);
           }}
           onInspectJob={onInspectTool}
           onStopJob={() => void actions.stopGeneration(currentTaskId)}

@@ -5,14 +5,16 @@ NLM keeps a **local SQLite knowledge base** for the coding-agent workbench (Feis
 ## Architecture
 
 ```
-Agent tools (kb_*) ──► KnowledgeStore (kernel SQLite)
-Web Dock / REST    ──► Adapters /api/knowledge/* ──► Kernel /rpc/knowledge/*
-Optional           ──► WeKnora HTTP (weknora_search CLI / weknora_client) when env set
+Agent tools (kb_*)     ──► KnowledgeStore (kernel SQLite)
+Turn grounding         ──► kb_grounding.py (search bound KB before LLM)
+Web 知识库 page / Dock ──► Adapters /api/knowledge/* ──► Kernel /rpc/knowledge/*
+Optional               ──► WeKnora HTTP (weknora_client) when WEKNORA_BASE_URL set
 ```
 
 | Layer | Path |
 |-------|------|
 | Store + chunks | `src/core_kernel/plugin_runtime/knowledge_store.py` |
+| Turn grounding | `src/core_kernel/kb_grounding.py` |
 | Ingest helpers | `src/core_kernel/plugin_runtime/knowledge_ingest.py` |
 | Embeddings (optional) | `src/core_kernel/plugin_runtime/knowledge_embeddings.py` |
 | Workspace sync | `src/core_kernel/plugin_runtime/knowledge_sync.py` |
@@ -20,7 +22,9 @@ Optional           ──► WeKnora HTTP (weknora_search CLI / weknora_client) 
 | Agent tools | `src/core_kernel/plugin_runtime/knowledge_tools.py` |
 | Kernel RPC | `src/core_kernel/rpc_server.py` (`/rpc/knowledge/*`) |
 | Adapters REST | `src/adapters/app.py` (`/api/knowledge/*`) |
-| Web panel | `web/src/components/layout/KnowledgePanel.tsx` |
+| Knowledge page | `web/src/components/knowledge/KnowledgeView.tsx` |
+| Composer picker | `web/src/components/knowledge/KnowledgeScopePicker.tsx` |
+| Dock admin panel | `web/src/components/layout/KnowledgePanel.tsx` |
 
 **Tables:** `knowledge_docs`, `knowledge_chunks`, `knowledge_sync_log`.
 
@@ -44,9 +48,34 @@ Documents are split on headings / blank lines into ~512-character chunks with ~1
 
 System prompt: search → read before answering; cite `source_uri` / citation like web_search.
 
+Each **agent turn** also runs a **deterministic retrieval step** (`kb_grounding.py`) against the
+session-bound KB *before* the LLM: local `kb_search`, or `weknora_search` with that session
+`kb_id` only (never the first listed KB / silent `WEKNORA_KB_ID` fallback). Top snippets are
+injected as `<knowledge_context>`. Tools still work for follow-up reads.
+
 ## Web UI
 
-Right dock tab **知识库** (Command Palette → 右坞 → 知识库):
+### Knowledge page (first-class)
+
+Topbar view ring **知识库** (also `/?view=knowledge` and `/knowledge`):
+
+- Left: KB selector (**本地知识库** + WeKnora names when `WEKNORA_BASE_URL` is set), search,
+  citation results, full-body preview, empty/health/error states.
+- Right: the **same** workbench chat (same session / same agent). Composing here continues
+  that session with the selected KB already bound.
+- One session ↔ one bound KB (`weknora_kb_id`; empty = local). Changing the picker patches
+  the session and subsequent turns.
+
+### Main composer picker
+
+The workbench composer always shows a compact **知识库** selector (name, not raw id).
+Placeholder: `基于「xxx」提问`. **在知识库中打开** jumps to the Knowledge page with the
+same selection. `/api/chat` also sends `weknora_kb_id` on the turn so a picker change is
+not lost if the session patch is still in flight.
+
+### Dock (admin)
+
+Right dock tab **知识库** remains ingest/sync/reindex (Command Palette → 右坞):
 
 - List / search with heading + path
 - Stats line (docs / chunks / hybrid)
@@ -54,12 +83,13 @@ Right dock tab **知识库** (Command Palette → 右坞 → 知识库):
 - Edit title inline; delete with confirm
 - **同步文档** — workspace ingest + sync log strip
 - **回填向量** — when embeddings env is configured
-- Optional **远程** tab when a WeKnora KB is selected — list/search that KB via
+- Optional **远程** browse when a WeKnora KB is selected — list/search that KB via
   `/api/knowledge/weknora/knowledge` and `/api/knowledge/weknora/search`.
   **导入到本地** copies one remote doc into SQLite (`POST /api/knowledge/weknora/import`).
-  Local SQLite remains the default tab.
-- Session chrome shows the bound WeKnora KB **name** (click the chip to open Dock 知识库)
-  and active-tools count after Dock select or Command Palette preset apply.
+- Dock picker includes **本地知识库** and does **not** auto-select the first remote KB.
+
+Topbar chip always shows the bound scope (本地知识库 or WeKnora name); click opens the
+Knowledge page.
 
 ## REST (workspace-scoped)
 
@@ -125,7 +155,8 @@ WEKNORA_KB_ID=...            # default knowledge-base id
 
 | Capability | How |
 |------------|-----|
-| Search | Prefer `POST /api/v1/knowledge-search`; tool `weknora_search` (+ `kb_id`). Requires a KB id — does not pick the first listed KB. |
+| Search | Prefer `POST /api/v1/knowledge-search`; tool `weknora_search` (+ `kb_id`). Requires a KB id — does not pick the first listed KB. Session-bound chat forces that `kb_id` even if the model omits or passes another. |
+| Turn grounding | Server-side search injected as `<knowledge_context>` (`src/core_kernel/kb_grounding.py`) |
 | Read | `weknora_read` / `GET /api/knowledge/weknora/item` for the full remote body |
 | Multi-KB | `weknora_list_kbs` / `GET /api/knowledge/weknora/kbs`; Dock KB picker |
 | Route | Explicit `kb_id` → session `weknora_kb_id` → `WEKNORA_KB_MAP[workspace]` → `WEKNORA_KB_ID` |
@@ -146,7 +177,8 @@ Feishu / GitLab connectors: prefer ingesting into WeKnora first, then `weknora_s
 ## Try it
 
 1. Start the stack (`nlm start` / `scripts/dev.bat`), open the workbench, bind a workspace.
-2. Dock → **知识库** → paste a note, path-import, or **同步文档**.
-3. In chat (tools on): ask something that should hit the KB; agent should `kb_search` then `kb_read` and cite paths.
-4. Or: `curl "http://127.0.0.1:8000/api/knowledge/search?query=architecture"`
-5. Optional: set `KB_EMBEDDING_*`, sync/add docs, then **回填向量** / `kb_reindex`.
+2. Topbar **知识库** (or composer picker → 在知识库中打开): choose 本地知识库 or a WeKnora KB, search, open a hit, then ask in the right-hand chat.
+3. On the main composer, the **知识库** chip is always visible; changing it binds the session.
+4. In chat (tools on): the turn is pre-retrieved against that KB; the agent should still `kb_read` / `weknora_read` and cite paths.
+5. Or: `curl "http://127.0.0.1:8000/api/knowledge/search?query=architecture"`
+6. Optional: set `KB_EMBEDDING_*`, sync/add docs, then Dock **回填向量** / `kb_reindex`.

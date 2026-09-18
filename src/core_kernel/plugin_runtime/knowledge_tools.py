@@ -45,8 +45,9 @@ WEKNORA_TOOLS: List[Dict[str, Any]] = [
         "name": "weknora_search",
         "description": (
             "Search a remote WeKnora knowledge base when WEKNORA_BASE_URL is set. "
-            "Prefer local kb_search first. Pass kb_id to target a specific remote KB "
-            "(use weknora_list_kbs). Session/workspace routing applies when kb_id omitted."
+            "If this session is bound to a WeKnora KB, that kb_id is used even when omitted. "
+            "Do not pick the first listed KB. Prefer local kb_search when the session is on "
+            "the local SQLite KB. After search, weknora_read the best doc_id/knowledge_id."
         ),
         "inputSchema": {
             "type": "object",
@@ -252,6 +253,14 @@ TOOLS: List[Dict[str, Any]] = [
 TOOLS = TOOLS + WEKNORA_TOOLS
 
 
+def _session_bound_weknora_kb(arguments: Dict[str, Any], meta: Dict[str, Any]) -> str:
+    """Bound session KB wins so the model cannot search a different / first KB."""
+    session_kb = str(meta.get("weknora_kb_id") or "").strip()
+    if session_kb:
+        return session_kb
+    return str(arguments.get("kb_id") or "").strip()
+
+
 class KnowledgeToolsPlugin(BasePlugin):
     def __init__(self, manifest: PluginManifest) -> None:
         super().__init__(manifest)
@@ -369,11 +378,12 @@ class KnowledgeToolsPlugin(BasePlugin):
             q = str(arguments.get("query") or "").strip()
             if not q:
                 raise PluginError("query required")
+            bound = _session_bound_weknora_kb(arguments, meta)
             return await weknora_search(
                 q,
                 limit=int(arguments.get("limit") or 5),
-                kb_id=str(arguments.get("kb_id") or ""),
-                workspace_id=ws,
+                kb_id=bound,
+                workspace_id=ws if bound else "",
                 session_kb_id=str(meta.get("weknora_kb_id") or ""),
             )
         if tool_name == "weknora_push":
@@ -381,7 +391,7 @@ class KnowledgeToolsPlugin(BasePlugin):
         if tool_name == "weknora_sync":
             doc_ids = arguments.get("doc_ids")
             ids = [str(x) for x in doc_ids] if isinstance(doc_ids, list) else None
-            kb = str(arguments.get("kb_id") or meta.get("weknora_kb_id") or "")
+            kb = _session_bound_weknora_kb(arguments, meta)
             return await sync_weknora_bidirectional(
                 store,
                 workspace_id=ws,
@@ -417,7 +427,7 @@ class KnowledgeToolsPlugin(BasePlugin):
         doc_id = str(arguments.get("doc_id") or "").strip()
         title = str(arguments.get("title") or "").strip()
         content = str(arguments.get("content") or "")
-        kb_id = str(arguments.get("kb_id") or meta.get("weknora_kb_id") or "").strip()
+        kb_id = _session_bound_weknora_kb(arguments, meta)
         session_kb = str(meta.get("weknora_kb_id") or "")
         nlm_source = ""
         if doc_id:

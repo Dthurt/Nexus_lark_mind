@@ -14,7 +14,9 @@ import { Mic, Paperclip, Plus, Square, ArrowUp, ListTodo, ShieldCheck, Layers2 }
 import { motion, useReducedMotion } from "motion/react";
 
 import type { InboxItem } from "@/api/endpoints";
+import type { WeknoraHealth, WeknoraKb } from "@/api/endpoints";
 import { ContextMeter } from "@/components/chat/ContextMeter";
+import { KnowledgeScopePicker } from "@/components/knowledge/KnowledgeScopePicker";
 import { MentionPopover } from "@/components/composer/MentionPopover";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +46,7 @@ import {
   formatTokenCount,
 } from "@/lib/pricing";
 import { formatUsage } from "@/lib/pretty";
+import { composerKbPlaceholder, kbScopeLabel } from "@/lib/knowledgeScope";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -98,6 +101,12 @@ export type ComposerProps = {
   onModelChange?: (v: string) => void;
   onSend?: (opts?: { alternate?: boolean }) => void;
   onStop?: () => void;
+  weknoraKbId?: string;
+  weknoraKbName?: string;
+  knowledgeKbs?: WeknoraKb[];
+  knowledgeHealth?: WeknoraHealth | null;
+  onWeknoraKbChange?: (kbId: string, kbName: string) => void;
+  onOpenKnowledge?: () => void;
   className?: string;
 };
 
@@ -157,6 +166,12 @@ export function Composer({
   onModelChange,
   onSend,
   onStop,
+  weknoraKbId = "",
+  weknoraKbName = "",
+  knowledgeKbs = [],
+  knowledgeHealth = null,
+  onWeknoraKbChange,
+  onOpenKnowledge,
   className,
 }: ComposerProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -898,7 +913,7 @@ export function Composer({
                       ? "先绑定工作目录，再输入消息…"
                       : needsModel
                         ? "先选择 Provider / 模型，再输入消息…"
-                        : "输入消息 · @ 附加文件 · Enter 发送 · Shift+Enter 换行"
+                        : composerKbPlaceholder(weknoraKbId, weknoraKbName)
                 }
                 onChange={onTextareaChange}
                 onKeyDown={onTextareaKeyDown}
@@ -957,7 +972,7 @@ export function Composer({
 
         <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 border-t border-border px-2 pb-2 pt-1.5">
           {cwd ? (
-            <div className="inline-flex max-w-[48%] min-w-0 flex-nowrap items-center gap-2" title={cwd}>
+            <div className="inline-flex max-w-[36%] min-w-0 flex-nowrap items-center gap-2" title={cwd}>
               <span className="inline-flex min-w-0 max-w-full items-center gap-1 text-xs text-muted-foreground">
                 <FolderIcon />
                 <span className="truncate">{workspaceTitle || cwd}</span>
@@ -989,10 +1004,19 @@ export function Composer({
             </div>
           ) : null}
 
+          <KnowledgeScopePicker
+            value={weknoraKbId}
+            name={weknoraKbName}
+            kbs={knowledgeKbs}
+            health={knowledgeHealth}
+            onChange={onWeknoraKbChange}
+            onOpenKnowledge={onOpenKnowledge}
+          />
+
           <button
             type="button"
-            className="max-w-[160px] truncate rounded-md border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-xs text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
-            title={modelLabel}
+            className="max-w-[140px] truncate rounded-md border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-xs text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
+            title={`${modelLabel} · 基于「${kbScopeLabel(weknoraKbId, weknoraKbName)}」`}
             onClick={() => setMenuOpen((v) => !v)}
           >
             {modelLabel}

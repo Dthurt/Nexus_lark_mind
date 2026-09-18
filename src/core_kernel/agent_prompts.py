@@ -144,20 +144,21 @@ DIAGRAMS_MATH = (
 # ---------------------------------------------------------------------------
 
 KNOWLEDGE_HINTS = (
-    "## Local knowledge base\n"
-    "- When the user asks about project docs, decisions, specs, or anything that may live "
-    "in the KB / `docs/`, use the knowledge tools — do not guess from memory.\n"
-    "- Always `kb_search` first, then `kb_read` (or `kb_get`) on the best `doc_id`/`chunk_index` "
-    "before answering from KB content. Do not invent from snippets alone.\n"
+    "## Knowledge base (session-scoped)\n"
+    "- Each turn is already grounded: server-side search against the **bound** KB is injected "
+    "as `<knowledge_context>`. Treat those hits as the primary source; cite them.\n"
+    "- Local SQLite (no WeKnora selection): `kb_search` then `kb_read` / `kb_get` on the best "
+    "`doc_id`/`chunk_index` when snippets are not enough. Do not invent from memory.\n"
     "- Search returns stable `doc_id` + `chunk_id` + `citation` + `citations_md`. "
     "In your final reply, cite sources (title + path from `source_uri` / citation), similar to web_search.\n"
     "- `kb_add` accepts pasted Markdown or `path` (workspace-relative `.md/.txt/.rst/.pdf`).\n"
     "- `kb_sync_docs` indexes workspace docs with content_hash upsert; `kb_stats` / `kb_reindex` "
     "for status and embedding backfill when configured.\n"
     "- Optional WeKnora (when WEKNORA_BASE_URL is set): `weknora_search` / `weknora_read` / "
-    "`weknora_list_kbs` / `weknora_push` / `weknora_sync` / `weknora_health`. Prefer local "
-    "`kb_*` first; use WeKnora for team/remote KB. Pass `kb_id` when multiple remote KBs exist. "
-    "After `weknora_search`, call `weknora_read` on the hit `doc_id`/`knowledge_id` for the full body.\n"
+    "`weknora_list_kbs` / `weknora_push` / `weknora_sync` / `weknora_health`. "
+    "When this session is bound to a WeKnora KB, search **that** `kb_id` only — never another "
+    "KB and never the first listed KB. After `weknora_search`, call `weknora_read` on the hit "
+    "`doc_id`/`knowledge_id` for the full body. If `kb_id` is omitted, the session binding is used.\n"
     "- Tools: `kb_add` / `kb_search` / `kb_read` / `kb_get` / `kb_list` / `kb_delete` / "
     "`kb_sync_docs` / `kb_stats` / `kb_reindex` (+ WeKnora tools when configured).\n"
 )
@@ -326,9 +327,23 @@ def build_system_prompt(
     bound_kb = str(meta.get("weknora_kb_id") or "").strip()
     if bound_kb:
         parts.append(
-            f"- This session is bound to WeKnora KB `{bound_kb}`. "
-            "`weknora_search` / `weknora_read` / `weknora_push` / `weknora_sync` "
-            "use it when `kb_id` is omitted."
+            "## Bound knowledge base (this session)\n"
+            f"- This conversation is scoped to WeKnora KB `{bound_kb}`.\n"
+            "- Each turn injects `<knowledge_context>` from that KB (server-side `weknora_search`).\n"
+            "- You MUST answer from that KB first. Follow with `weknora_search` "
+            f"(kb_id=`{bound_kb}` or omit — session routing applies) then `weknora_read` "
+            "on the best hits when snippets are insufficient. Cite titles/paths.\n"
+            "- Do not search a different knowledge base. Do not fall back to general knowledge "
+            "when the bound KB has relevant hits."
+        )
+    else:
+        parts.append(
+            "## Bound knowledge base (this session)\n"
+            "- This conversation is scoped to the **local SQLite knowledge base**.\n"
+            "- Each turn injects `<knowledge_context>` from local `kb_search`.\n"
+            "- Follow with `kb_read` (or `kb_get`) on the best `doc_id`/`chunk_index` before "
+            "answering from KB content. Cite sources. Do not call `weknora_search` unless "
+            "the user explicitly asks to switch to a remote KB."
         )
     parts.append(PLUGIN_HINTS)
     parts.append(experience_tier_prompt_block(experience_tier))

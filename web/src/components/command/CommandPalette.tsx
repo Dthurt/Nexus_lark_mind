@@ -355,6 +355,10 @@ export function CommandPalette({
             <MessageSquare className="mr-2 size-4" />
             聊天视图
           </CommandItem>
+          <CommandItem onSelect={() => run(() => onSetCenterView?.("knowledge"))}>
+            <BookOpen className="mr-2 size-4" />
+            知识库（检索 + 对话）
+          </CommandItem>
           <CommandItem onSelect={() => run(() => onSetCenterView?.("trajectory"))}>
             <Bot className="mr-2 size-4" />
             Trajectory 账本
@@ -378,7 +382,7 @@ export function CommandPalette({
           </CommandItem>
           <CommandItem onSelect={() => run(() => onOpenDockTab?.("knowledge"))}>
             <BookOpen className="mr-2 size-4" />
-            知识库
+            右坞 · 知识库（导入 / 同步）
           </CommandItem>
           <CommandItem onSelect={() => run(() => onOpenDockTab?.("activity"))}>
             <Search className="mr-2 size-4" />

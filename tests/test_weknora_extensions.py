@@ -566,7 +566,37 @@ async def test_knowledge_search_tool_reads_session_kb(monkeypatch):
         out = await plugin._on_invoke("weknora_search", {"query": "hello"})
     assert out.get("ok") is True
     assert seen.get("session_kb_id") == "kb-sess"
+    assert seen.get("kb_id") == "kb-sess"
     assert seen.get("workspace_id") == "ws-1"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_search_tool_session_kb_overrides_model_kb_id(monkeypatch):
+    from src.core_kernel.plugin_runtime.invoke_context import workspace_cwd_scope
+    from src.core_kernel.plugin_runtime.knowledge_tools import KnowledgeToolsPlugin, knowledge_tools_manifest
+
+    seen: dict = {}
+
+    async def fake_search(q, **kwargs):
+        seen.update(kwargs)
+        return {"ok": True, "results": []}
+
+    monkeypatch.setattr(
+        "src.core_kernel.plugin_runtime.weknora_client.weknora_search",
+        fake_search,
+    )
+    plugin = KnowledgeToolsPlugin(knowledge_tools_manifest())
+    plugin._store = MagicMock()
+    with workspace_cwd_scope(
+        "/tmp/ws",
+        {"weknora_kb_id": "kb-bound", "workspace_id": "ws-1"},
+    ):
+        await plugin._on_invoke(
+            "weknora_search",
+            {"query": "hello", "kb_id": "kb-first-listed"},
+        )
+    assert seen.get("kb_id") == "kb-bound"
+    assert seen.get("kb_id") != "kb-first-listed"
 
 
 def test_workspace_meta_forwards_weknora_kb_id():
@@ -641,6 +671,10 @@ def test_build_system_prompt_includes_session_kb():
     assert "kb-sess-9" in text
     assert "weknora_search" in text
     assert "weknora_read" in text
+    assert "Bound knowledge base" in text
+
+    local = build_system_prompt(metadata={"weknora_kb_id": ""})
+    assert "local SQLite" in local or "本地" in local or "local SQLite knowledge base" in local
 
 
 @pytest.mark.asyncio

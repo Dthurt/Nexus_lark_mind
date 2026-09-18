@@ -35,6 +35,7 @@ function AppRoutes() {
             </div>
           }
         />
+        <Route path="/knowledge" element={<Navigate to="/?view=knowledge" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

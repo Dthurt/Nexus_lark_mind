@@ -62,6 +62,7 @@ class WebChatRequest(BaseModel):
     experience_tier: Optional[str] = None
     reasoning_effort: Optional[str] = None
     context_refs: Optional[list] = None
+    weknora_kb_id: Optional[str] = None
 
 
 class GateResolveRequest(BaseModel):

@@ -308,6 +308,8 @@ export type ChatSendBody = {
   ssh_host_id?: string;
   /** @ file/dir chips — expanded server-side into Attached context */
   context_refs?: { path: string; kind?: "file" | "dir" | string; label?: string }[];
+  /** Bound KB for this turn. Empty string = local SQLite (not default WeKnora). */
+  weknora_kb_id?: string;
 };
 
 export type ApprovalAction = "allow" | "deny" | "allow_session" | "always" | string;

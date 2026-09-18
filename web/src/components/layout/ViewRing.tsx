@@ -1,13 +1,13 @@
-import { MessageSquare, TrendingUp } from "lucide-react";
+import { BookOpen, MessageSquare, TrendingUp } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-export type CenterViewId = "chat" | "trajectory" | string;
+export type CenterViewId = "chat" | "trajectory" | "knowledge" | string;
 
 export type ViewRingItem = {
   id: CenterViewId;
   label: string;
-  icon?: "chat" | "trajectory" | string;
+  icon?: "chat" | "trajectory" | "knowledge" | string;
 };
 
 export type ViewRingProps = {
@@ -19,6 +19,7 @@ export type ViewRingProps = {
 
 const DEFAULT_VIEWS: ViewRingItem[] = [
   { id: "chat", label: "对话", icon: "chat" },
+  { id: "knowledge", label: "知识库", icon: "knowledge" },
   { id: "trajectory", label: "轨迹", icon: "trajectory" },
 ];
 
@@ -40,7 +41,8 @@ export function ViewRing({
       {views.map((v) => {
         const active = value === v.id;
         const isTrajectory = v.icon === "trajectory" || v.id === "trajectory";
-        const Icon = isTrajectory ? TrendingUp : MessageSquare;
+        const isKnowledge = v.icon === "knowledge" || v.id === "knowledge";
+        const Icon = isKnowledge ? BookOpen : isTrajectory ? TrendingUp : MessageSquare;
         return (
           <button
             key={v.id}

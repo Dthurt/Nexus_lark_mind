@@ -45,6 +45,11 @@ def test_soft_trim_huge_tool_payload():
     msgs = [
         _msg("system", "sys"),
         _msg("user", "hi"),
+        ChatMessage(
+            role=ChatRole.ASSISTANT,
+            content="",
+            metadata={"tool_calls": [{"id": "t1", "name": "read_file"}]},
+        ),
         ChatMessage(role=ChatRole.TOOL, content=huge, tool_call_id="t1", name="read_file"),
         _msg("user", "continue"),
     ]

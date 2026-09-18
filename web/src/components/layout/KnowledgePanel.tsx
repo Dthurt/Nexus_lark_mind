@@ -101,14 +101,7 @@ export function KnowledgePanel({
               /* ignore */
             }
           }
-          setWkKbId(
-            (prev) =>
-              sessionKb ||
-              prev ||
-              kbs.default_kb_id ||
-              kbs.knowledge_bases?.[0]?.id ||
-              "",
-          );
+          setWkKbId(sessionKb);
         } else {
           setWkKbs([]);
         }
@@ -123,13 +116,23 @@ export function KnowledgePanel({
   }, [workspaceId, sessionId]);
 
   const onSelectWeknoraKb = async (kbId: string) => {
-    setWkKbId(kbId);
-    const kbName = wkKbs.find((kb) => kb.id === kbId)?.name || kbId;
-    onBoundKbChange?.(kbId, kbName);
-    if (!sessionId || !kbId) return;
+    const id = String(kbId || "").trim();
+    setWkKbId(id);
+    const kbName = id
+      ? wkKbs.find((kb) => kb.id === id)?.name || id
+      : "本地知识库";
+    onBoundKbChange?.(id, kbName);
+    if (!sessionId) return;
     try {
-      await patchInteraction(sessionId, { weknora_kb_id: kbId });
-      toast.success("已绑定会话 WeKnora KB");
+      if (!id) {
+        await patchInteraction(sessionId, { clear_weknora_kb_id: true });
+        setBrowseMode("local");
+        setRemoteHits(null);
+        toast.success("已切换到本地知识库");
+        return;
+      }
+      await patchInteraction(sessionId, { weknora_kb_id: id });
+      toast.success("已绑定会话知识库");
     } catch (err: any) {
       toast.error(String(err?.message || err || "绑定 KB 失败"));
     }
@@ -469,11 +472,16 @@ export function KnowledgePanel({
             {wkHealth.kb_count != null ? <span>· {wkHealth.kb_count} 库</span> : null}
             {wkKbs.length > 0 ? (
               <select
-                className="h-6 max-w-[140px] rounded border border-border bg-background px-1 text-[11px]"
-                value={wkKbId}
-                onChange={(e) => void onSelectWeknoraKb(e.target.value)}
-                title="目标知识库（同步 + 绑定当前会话）"
+                className="h-6 max-w-[160px] rounded border border-border bg-background px-1 text-[11px]"
+                value={wkKbId || "__local__"}
+                onChange={(e) =>
+                  void onSelectWeknoraKb(
+                    e.target.value === "__local__" ? "" : e.target.value,
+                  )
+                }
+                title="绑定当前会话：本地或某一个 WeKnora 库"
               >
+                <option value="__local__">本地知识库</option>
                 {wkKbs.map((kb) => (
                   <option key={kb.id} value={kb.id}>
                     {kb.name || kb.id}

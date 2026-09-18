@@ -124,16 +124,14 @@ export function Topbar({
                 {workspaceTitle || cwd}
               </code>
             ) : null}
-            {weknoraKbId ? (
-              <button
-                type="button"
-                title={`WeKnora KB ${weknoraKbName || weknoraKbId}（打开知识库）`}
-                className="max-w-[160px] truncate rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:border-teal/50 hover:text-foreground"
-                onClick={() => onWeknoraKbClick?.()}
-              >
-                KB · {weknoraKbName || weknoraKbId}
-              </button>
-            ) : null}
+            <button
+              type="button"
+              title={`${weknoraKbId ? `WeKnora ${weknoraKbName || weknoraKbId}` : "本地知识库"}（打开知识库页面）`}
+              className="max-w-[160px] truncate rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:border-teal/50 hover:text-foreground"
+              onClick={() => onWeknoraKbClick?.()}
+            >
+              {weknoraKbId ? `KB · ${weknoraKbName || weknoraKbId}` : "本地知识库"}
+            </button>
             {activeTools && activeTools.length ? (
               <span
                 title={activeTools.join(", ")}

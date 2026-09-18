@@ -66,6 +66,9 @@ class AnthropicProvider(BaseModelProvider):
         }
 
     def _split_messages(self, messages: List[ChatMessage]) -> tuple[Optional[str], List[Dict[str, Any]]]:
+        from src.core_kernel.tool_history import sanitize_tool_call_messages
+
+        messages = sanitize_tool_call_messages(messages)
         system_parts: List[str] = []
         converted: List[Dict[str, Any]] = []
         for m in messages:

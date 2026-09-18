@@ -182,11 +182,13 @@ async def compact_messages_async(
     target = max(3_000, int(usable * target_ratio))
     collapse_at = max(3_000, int(usable * collapse_ratio))
 
+    from src.core_kernel.tool_history import sanitize_tool_call_messages
+
     layer1 = _layer1_soft_trim(messages, soft_msg_chars=soft_chars)
     total = sum(_msg_tokens(m) for m in layer1)
     # Compress once past soft trigger — don't wait until the hard usable ceiling.
     if total <= collapse_at:
-        return layer1, info
+        return sanitize_tool_call_messages(layer1), info
 
     if use_llm and gateway is not None:
         split = _split_for_collapse(list(layer1))
@@ -215,7 +217,7 @@ async def compact_messages_async(
             info = {"compacted_via": via, "compacted_count": len(middle)}
             layer2 = [*system, *rest[:keep_head], stub, *rest[len(rest) - keep_tail :]]
             if sum(_msg_tokens(m) for m in layer2) <= target:
-                return layer2, info
+                return sanitize_tool_call_messages(layer2), info
             layer2b = compact_messages(
                 layer2,
                 model_name=model_name,
@@ -223,8 +225,8 @@ async def compact_messages_async(
                 aggressiveness=aggressiveness,
             )
             if sum(_msg_tokens(m) for m in layer2b) <= usable:
-                return layer2b, info
-            return _layer3_hard_drop(layer2b, target), info
+                return sanitize_tool_call_messages(layer2b), info
+            return sanitize_tool_call_messages(_layer3_hard_drop(layer2b, target)), info
 
     out = compact_messages(
         messages,
@@ -234,4 +236,4 @@ async def compact_messages_async(
     )
     if len(out) < len(messages):
         info = {"compacted_via": "heuristic"}
-    return out, info
+    return sanitize_tool_call_messages(out), info

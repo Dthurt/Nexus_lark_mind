@@ -649,6 +649,18 @@ async def _run_agent_stream_inner(
                 "notice_kind": "compaction",
                 "compaction": entry,
             }
+        if round_i == 0 and depth <= 0:
+            try:
+                from src.core_kernel.kb_grounding import apply_turn_grounding
+
+                working, ground_ev = await apply_turn_grounding(working, meta0)
+                if ground_ev:
+                    yield ground_ev
+            except Exception:
+                pass
+        from src.core_kernel.tool_history import sanitize_tool_call_messages
+
+        working = sanitize_tool_call_messages(working)
         req = ModelRequest(
             provider=provider,
             model=model,
@@ -744,6 +756,9 @@ async def _run_agent_stream_inner(
                             "notice_kind": "compaction",
                             "compaction": make_compaction_entry(compact_info),
                         }
+                    from src.core_kernel.tool_history import sanitize_tool_call_messages
+
+                    working = sanitize_tool_call_messages(working)
                     req = ModelRequest(
                         provider=provider,
                         model=model,
@@ -1375,10 +1390,12 @@ async def _run_agent_stream_inner(
         ],
         model_name=model,
     )
+    from src.core_kernel.tool_history import sanitize_tool_call_messages
+
     req = ModelRequest(
         provider=provider,
         model=model,
-        messages=final_msgs,
+        messages=sanitize_tool_call_messages(final_msgs),
         tools=openai_tools or None,
         stream=True,
         reasoning_effort=reasoning_effort,

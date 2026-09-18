@@ -76,6 +76,8 @@ class WebAdapter(BaseAdapter):
             meta["experience_tier"] = str(payload.get("experience_tier") or "").strip().lower()
         if payload.get("reasoning_effort") is not None:
             meta["reasoning_effort"] = str(payload.get("reasoning_effort") or "").strip().lower()
+        if payload.get("weknora_kb_id") is not None:
+            meta["weknora_kb_id"] = str(payload.get("weknora_kb_id") or "").strip()
 
         refs = payload.get("context_refs")
         if isinstance(refs, list) and refs and cwd:

@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 def _messages_to_openai(messages: List[ChatMessage]) -> List[Dict[str, Any]]:
+    from src.core_kernel.tool_history import sanitize_tool_call_messages
+
+    messages = sanitize_tool_call_messages(messages)
     out: List[Dict[str, Any]] = []
     for m in messages:
         item: Dict[str, Any] = {"role": m.role.value, "content": m.content if m.content is not None else ""}
