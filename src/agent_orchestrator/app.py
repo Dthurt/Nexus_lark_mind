@@ -345,6 +345,16 @@ def create_orchestrator_app() -> FastAPI:
             ssh_host_id=str(parent.get("ssh_host_id") or "").strip() or None,
         )
 
+        leftover = [m for m in (parent.get("messages") or []) if isinstance(m, dict)]
+        try:
+            fork_idx = int(until) if until is not None else max(0, len(seeded) - 1)
+        except (TypeError, ValueError):
+            fork_idx = max(0, len(seeded) - 1)
+        abandoned = leftover[fork_idx + 1 :]
+        from src.core_kernel.file_ops import heuristic_branch_summary
+
+        branch_note = heuristic_branch_summary(abandoned) if abandoned else ""
+
         def _seed(sess: dict) -> None:
             sess["messages"] = seeded
             sess["forked_from"] = session_id
@@ -358,6 +368,8 @@ def create_orchestrator_app() -> FastAPI:
             else:
                 sess["fork_point_index"] = max(0, len(seeded) - 1) if seeded else 0
             sess["title"] = str(body.get("title") or f"Fork of {parent.get('title') or session_id}")[:80]
+            if branch_note:
+                sess["sibling_branch_summary"] = branch_note
             # Copy interaction prefs
             for key in (
                 "agent_mode",
@@ -373,6 +385,20 @@ def create_orchestrator_app() -> FastAPI:
                     sess[key] = parent[key]
 
         child = await sessions.redis.update_session(new_sid, _seed, preserve_messages=False)
+        if branch_note:
+
+            def _note_parent(sess: dict) -> None:
+                notes = list(sess.get("branch_summaries") or [])
+                notes.append(
+                    {
+                        "child_id": new_sid,
+                        "fork_point_index": fork_idx,
+                        "summary": branch_note,
+                    }
+                )
+                sess["branch_summaries"] = notes[-12:]
+
+            await sessions.redis.update_session(session_id, _note_parent, preserve_messages=True)
         return RpcEnvelope(ok=True, data=child)
 
     @app.patch("/rpc/sessions/{session_id}/workspace")

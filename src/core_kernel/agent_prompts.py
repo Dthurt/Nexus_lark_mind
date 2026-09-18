@@ -151,7 +151,7 @@ KNOWLEDGE_HINTS = (
     "`doc_id`/`chunk_index` when snippets are not enough. Do not invent from memory.\n"
     "- Search returns stable `doc_id` + `chunk_id` + `citation` + `citations_md`. "
     "In your final reply, cite sources (title + path from `source_uri` / citation), similar to web_search.\n"
-    "- `kb_add` accepts pasted Markdown or `path` (workspace-relative `.md/.txt/.rst/.pdf`).\n"
+    "- `kb_add` accepts pasted Markdown or `path` (`.md/.txt/.rst/.pdf/.docx/.xlsx/.pptx`).\n"
     "- `kb_sync_docs` indexes workspace docs with content_hash upsert; `kb_stats` / `kb_reindex` "
     "for status and embedding backfill when configured.\n"
     "- Optional WeKnora (when WEKNORA_BASE_URL is set): `weknora_search` / `weknora_read` / "
@@ -275,6 +275,14 @@ def build_system_prompt(
 
     if cwd:
         parts.append(_workspace_block(meta, cwd))
+        try:
+            from src.core_kernel.workspace_git import format_git_prompt_block, workspace_git_snapshot
+
+            git_block = format_git_prompt_block(workspace_git_snapshot(cwd))
+            if git_block:
+                parts.append(git_block)
+        except Exception:
+            pass
         parts.append(CODING_LOOP)
         parts.append(FS_TOOL_GUIDANCE)
         parts.append(SUBAGENT_POLICY)
@@ -322,6 +330,20 @@ def build_system_prompt(
                 )
             )
         )
+
+    sibling = str(meta.get("sibling_branch_summary") or "").strip()
+    if sibling:
+        parts.append(
+            "## Other branch (abandoned at fork)\n"
+            "A sibling fork left this recap. Do not redo that work unless asked.\n"
+            f"{sibling}"
+        )
+    leftovers = meta.get("branch_summaries")
+    if isinstance(leftovers, list) and leftovers:
+        last = leftovers[-1] if isinstance(leftovers[-1], dict) else {}
+        note = str(last.get("summary") or "").strip()
+        if note:
+            parts.append(f"## Latest child-branch recap\n{note}")
 
     parts.append(KNOWLEDGE_HINTS)
     bound_kb = str(meta.get("weknora_kb_id") or "").strip()

@@ -123,7 +123,12 @@ async def summarize_middle_with_llm(
     """One-shot non-tool completion that produces a framed checkpoint body."""
     if gateway is None or not middle:
         return None
+    from src.core_kernel.file_ops import format_file_operations
+
     transcript = _serialize_for_summarizer(middle, limit=MAX_MIDDLE_CHARS)
+    ops = format_file_operations(middle)
+    if ops:
+        transcript = f"{ops}\n\n{transcript}"
     if not transcript.strip():
         return None
     req = ModelRequest(

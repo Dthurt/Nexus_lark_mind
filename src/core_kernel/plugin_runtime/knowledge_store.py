@@ -673,13 +673,18 @@ class KnowledgeStore:
                 "truncated": off + lim < len(body),
             }
 
-    async def list_docs(self, workspace_id: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+    async def list_docs(
+        self, workspace_id: str = "", limit: int = 50, *, tag: str = ""
+    ) -> List[Dict[str, Any]]:
         async with self.session_factory() as session:
             stmt = select(KnowledgeDoc).order_by(KnowledgeDoc.updated_at.desc()).limit(limit)
             if workspace_id:
                 stmt = stmt.where(
                     or_(KnowledgeDoc.workspace_id == workspace_id, KnowledgeDoc.workspace_id == "")
                 )
+            tag_s = (tag or "").strip()
+            if tag_s:
+                stmt = stmt.where(KnowledgeDoc.tags.ilike(f"%{tag_s}%"))
             rows = (await session.execute(stmt)).scalars().all()
             return [self._public(r, include_content=False) for r in rows]
 
@@ -733,30 +738,33 @@ class KnowledgeStore:
         return self._public(preferred[0] if preferred else rows[0])
 
     async def search(
-        self, query: str, *, workspace_id: str = "", limit: int = 8
+        self, query: str, *, workspace_id: str = "", limit: int = 8, tag: str = ""
     ) -> List[Dict[str, Any]]:
         from src.core_kernel.plugin_runtime.knowledge_query import (
             expand_queries,
             merge_hits_by_id,
             should_expand,
         )
+        from src.core_kernel.plugin_runtime.knowledge_rerank import rerank_hits
 
         q = (query or "").strip()
-        hits = await self._search_once(q, workspace_id=workspace_id, limit=limit)
-        if not should_expand(len(hits), limit):
-            return hits
-        extras: List[Dict[str, Any]] = []
-        for variant in expand_queries(q):
-            extras.extend(
-                await self._search_once(
-                    variant,
-                    workspace_id=workspace_id,
-                    limit=limit,
-                    query_vec=None,
-                    skip_vector=True,
+        pool = max(limit * 3, 16)
+        hits = await self._search_once(q, workspace_id=workspace_id, limit=pool, tag=tag)
+        if should_expand(len(hits), limit):
+            extras: List[Dict[str, Any]] = []
+            for variant in expand_queries(q):
+                extras.extend(
+                    await self._search_once(
+                        variant,
+                        workspace_id=workspace_id,
+                        limit=pool,
+                        query_vec=None,
+                        skip_vector=True,
+                        tag=tag,
+                    )
                 )
-            )
-        return merge_hits_by_id(hits, extras, limit=limit)
+            hits = merge_hits_by_id(hits, extras, limit=pool)
+        return await rerank_hits(q, hits, keep=limit)
 
     def _is_searchable_chunk(self, chunk: KnowledgeChunk) -> bool:
         ctype = (getattr(chunk, "chunk_type", None) or "text").strip() or "text"
@@ -770,6 +778,7 @@ class KnowledgeStore:
         limit: int = 8,
         query_vec: Optional[List[float]] = None,
         skip_vector: bool = False,
+        tag: str = "",
     ) -> List[Dict[str, Any]]:
         tokens = _tokens(query)
         q = (query or "").strip()
@@ -881,6 +890,10 @@ class KnowledgeStore:
             if query_vec and kw <= 0 and vec_score < 1.2:
                 continue
             scored.append((total, c, doc))
+
+        tag_s = (tag or "").strip().lower()
+        if tag_s:
+            scored = [row for row in scored if tag_s in (row[2].tags or "").lower()]
 
         scored.sort(key=lambda x: x[0], reverse=True)
         out: List[Dict[str, Any]] = []

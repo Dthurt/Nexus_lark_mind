@@ -180,6 +180,13 @@ Default sample at `plugins_volume/hooks/pre_tool.py` blocks writes to `.env` / k
 
 ## Compaction ledger
 
+Compaction also injects a **file-operations** list extracted from tool_calls
+(read vs modified paths) so the summarizer does not rely on the LLM remembering
+paths. Forking a session stores a cheap **branch recap** of the abandoned tail
+(`sibling_branch_summary` / parent `branch_summaries`) and injects it on later
+turns. The system prompt includes a **git** snapshot (branch + dirty +/-) when
+cwd is a repo.
+
 When context is compacted, the agent emits `task.status` with
 `kind=compaction` + ledger fields, and appends to
 `session.compaction_ledger`. Trajectory shows compaction status lines.

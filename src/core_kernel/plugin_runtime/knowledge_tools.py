@@ -165,6 +165,7 @@ TOOLS: List[Dict[str, Any]] = [
             "properties": {
                 "query": {"type": "string"},
                 "limit": {"type": "integer", "default": 6},
+                "tag": {"type": "string", "description": "Optional tag filter"},
             },
             "required": ["query"],
         },
@@ -296,7 +297,12 @@ class KnowledgeToolsPlugin(BasePlugin):
             if not q:
                 raise PluginError("query required")
             limit = int(arguments.get("limit") or 6)
-            hits = await store.search(q, workspace_id=ws, limit=max(1, min(limit, 20)))
+            hits = await store.search(
+                q,
+                workspace_id=ws,
+                limit=max(1, min(limit, 20)),
+                tag=str(arguments.get("tag") or ""),
+            )
             return {
                 "ok": True,
                 "query": q,

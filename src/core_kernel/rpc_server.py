@@ -544,14 +544,16 @@ def create_kernel_app() -> FastAPI:
         return KnowledgeStore(state["session_factory"])
 
     @app.get("/rpc/knowledge/docs")
-    async def kb_list_docs(workspace_id: str = "", limit: int = 50):
+    async def kb_list_docs(workspace_id: str = "", limit: int = 50, tag: str = ""):
         store = _kb_store()
         await store.ensure_schema()
-        docs = await store.list_docs(workspace_id=workspace_id or "", limit=min(max(limit, 1), 200))
+        docs = await store.list_docs(
+            workspace_id=workspace_id or "", limit=min(max(limit, 1), 200), tag=tag or ""
+        )
         return RpcEnvelope(ok=True, data={"docs": docs})
 
     @app.get("/rpc/knowledge/search")
-    async def kb_search(query: str = "", workspace_id: str = "", limit: int = 8):
+    async def kb_search(query: str = "", workspace_id: str = "", limit: int = 8, tag: str = ""):
         from src.core_kernel.plugin_runtime.knowledge_store import citations_markdown
 
         store = _kb_store()
@@ -559,7 +561,9 @@ def create_kernel_app() -> FastAPI:
         q = (query or "").strip()
         if not q:
             return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "query required"})
-        hits = await store.search(q, workspace_id=workspace_id or "", limit=min(max(limit, 1), 40))
+        hits = await store.search(
+            q, workspace_id=workspace_id or "", limit=min(max(limit, 1), 40), tag=tag or ""
+        )
         return RpcEnvelope(
             ok=True,
             data={

@@ -533,6 +533,9 @@ class WorkspaceToolsPlugin(BasePlugin):
         end = start + max(1, min(limit, 400))
         slice_lines = lines[start:end]
         numbered = "\n".join(f"{i + start + 1:>5}|{line}" for i, line in enumerate(slice_lines))
+        from src.core_kernel.tool_output import truncate_tool_text
+
+        numbered, cut = truncate_tool_text(numbered)
         mark_fs_observed(rel)
         return {
             "path": rel,
@@ -540,7 +543,7 @@ class WorkspaceToolsPlugin(BasePlugin):
             "offset": start + 1,
             "limit": end - start,
             "content": numbered,
-            "truncated": end < len(lines),
+            "truncated": end < len(lines) or cut,
             "kind": "local",
         }
 
@@ -735,15 +738,17 @@ class WorkspaceToolsPlugin(BasePlugin):
         out = stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace")
 
-        def _trim(s: str, n: int = 12000) -> str:
-            return s if len(s) <= n else s[:n] + "\n…[truncated]"
+        from src.core_kernel.tool_output import truncate_tool_text
 
+        out_s, out_cut = truncate_tool_text(out)
+        err_s, err_cut = truncate_tool_text(err)
         return {
             "ok": proc.returncode == 0,
             "exit_code": proc.returncode,
             "cwd": str(root),
-            "stdout": _trim(out),
-            "stderr": _trim(err),
+            "stdout": out_s,
+            "stderr": err_s,
+            "truncated": out_cut or err_cut,
             "kind": "local",
         }
 

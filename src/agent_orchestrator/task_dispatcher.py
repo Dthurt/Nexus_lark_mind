@@ -179,6 +179,10 @@ class TaskDispatcher:
         if "weknora_kb_id" not in (task.metadata or {}):
             if session.get("weknora_kb_id"):
                 task.metadata["weknora_kb_id"] = session.get("weknora_kb_id")
+        if session.get("sibling_branch_summary") and not task.metadata.get("sibling_branch_summary"):
+            task.metadata["sibling_branch_summary"] = session.get("sibling_branch_summary")
+        if session.get("branch_summaries") and not task.metadata.get("branch_summaries"):
+            task.metadata["branch_summaries"] = session.get("branch_summaries")
         if cwd:
             task.metadata = {
                 **task.metadata,

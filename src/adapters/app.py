@@ -1334,22 +1334,22 @@ def create_adapters_app() -> FastAPI:
     # ----- Knowledge base (proxied to kernel SQLite) -----
 
     @app.get("/api/knowledge/docs")
-    async def knowledge_list(workspace_id: str = "", limit: int = 50):
+    async def knowledge_list(workspace_id: str = "", limit: int = 50, tag: str = ""):
         kernel: RpcClient = state["kernel"]
         data = await kernel.call(
             "GET",
             "/rpc/knowledge/docs",
-            params={"workspace_id": workspace_id or "", "limit": limit},
+            params={"workspace_id": workspace_id or "", "limit": limit, "tag": tag or ""},
         )
         return RpcEnvelope(ok=True, data=data)
 
     @app.get("/api/knowledge/search")
-    async def knowledge_search(query: str = "", workspace_id: str = "", limit: int = 8):
+    async def knowledge_search(query: str = "", workspace_id: str = "", limit: int = 8, tag: str = ""):
         kernel: RpcClient = state["kernel"]
         data = await kernel.call(
             "GET",
             "/rpc/knowledge/search",
-            params={"query": query, "workspace_id": workspace_id or "", "limit": limit},
+            params={"query": query, "workspace_id": workspace_id or "", "limit": limit, "tag": tag or ""},
         )
         return RpcEnvelope(ok=True, data=data)
 

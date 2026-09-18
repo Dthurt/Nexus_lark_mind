@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ".org", ".mdx"}
 PDF_SUFFIXES = {".pdf"}
+OFFICE_SUFFIXES = {".docx", ".xlsx", ".pptx"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-SUPPORTED_SUFFIXES = TEXT_SUFFIXES | PDF_SUFFIXES | IMAGE_SUFFIXES
+SUPPORTED_SUFFIXES = TEXT_SUFFIXES | PDF_SUFFIXES | OFFICE_SUFFIXES | IMAGE_SUFFIXES
 
 
 def is_ingestible(path: Path) -> bool:
@@ -35,6 +36,11 @@ def read_file_as_text(
         text, note = _extract_pdf(raw)
         if not text.strip():
             raise ValueError(note or "PDF produced no extractable text")
+        return text, note
+    if suffix in OFFICE_SUFFIXES:
+        text, note = _extract_office(raw, suffix)
+        if not text.strip():
+            raise ValueError(note or f"{suffix} produced no extractable text")
         return text, note
     # Plain / markdown family
     text = raw.decode("utf-8", errors="replace")
@@ -105,12 +111,54 @@ def _crude_pdf_text(raw: bytes) -> Tuple[str, str]:
     return text.strip(), "crude PDF text (lossy)"
 
 
+def _xml_texts(xml: str) -> str:
+    parts = re.findall(r">([^<]{1,4000})<", xml)
+    return "\n".join(p.strip() for p in parts if p.strip())
+
+
+def _extract_office(raw: bytes, suffix: str) -> Tuple[str, str]:
+    """Dep-free OOXML scrape (docx/xlsx/pptx). Not a WeKnora anydoc clone."""
+    import io
+    import zipfile
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+    except Exception as exc:
+        return "", f"not a zip OOXML ({exc})"
+    names = zf.namelist()
+    chunks: List[str] = []
+    if suffix == ".docx":
+        targets = [n for n in names if n.startswith("word/") and n.endswith(".xml")]
+    elif suffix == ".xlsx":
+        targets = [
+            n
+            for n in names
+            if n.startswith("xl/") and n.endswith(".xml") and ("sharedStrings" in n or "/worksheets/" in n)
+        ]
+    else:
+        targets = [n for n in names if n.startswith("ppt/slides/slide") and n.endswith(".xml")]
+    for name in targets[:80]:
+        try:
+            xml = zf.read(name).decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        text = _xml_texts(xml)
+        if text:
+            chunks.append(text)
+    body = "\n\n".join(chunks).strip()
+    if not body:
+        return "", f"{suffix} had no text nodes"
+    return body, f"extracted via OOXML ({suffix})"
+
+
 def default_tags_for_path(path: Path) -> str:
     suf = path.suffix.lower()
     if suf in {".md", ".markdown", ".mdx"}:
         return "file,markdown"
     if suf == ".pdf":
         return "file,pdf"
+    if suf in OFFICE_SUFFIXES:
+        return f"file,office,{suf.lstrip('.')}"
     if suf in IMAGE_SUFFIXES:
         return "file,image"
     if suf in {".txt", ".rst", ".org"}:

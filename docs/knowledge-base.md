@@ -160,7 +160,11 @@ Vectors are stored as JSON on chunks. After configuring embeddings on an existin
 |-----|---------|------|
 | `KB_PARENT_CHILD` | on | Parent/child chunks for long docs |
 | `KB_QUERY_EXPAND` | on | Local query variants when first pass is thin |
+| `KB_RERANK` | on | Second-stage token rerank of the candidate pool |
+| `KB_RERANK_URL` | off | Optional HTTP reranker (OpenAI/Cohere-shaped JSON) |
 | `KB_EMBEDDING_*` / `WEMM_*` | off | Optional hybrid + image vectors |
+
+Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape (not WeKnora anydoc). `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags.
 
 ## Optional WeKnora bridge
 
