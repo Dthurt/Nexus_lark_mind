@@ -53,6 +53,22 @@ test.describe("knowledge base", () => {
     await page.getByTestId("knowledge-scope-local").click();
     await expect(page.getByTestId("knowledge-scope-picker").first()).toContainText("本地知识库");
   });
+
+  test("labeled entries open dedicated knowledge chat", async ({ page, request }) => {
+    await requireAdapters(request);
+    await openWorkbench(page);
+
+    await expect(page.getByTestId("view-ring-knowledge")).toContainText("知识库");
+    await expect(page.getByTestId("topbar-knowledge-entry")).toContainText("知识库对话");
+    await expect(page.getByTestId("empty-open-knowledge")).toBeVisible();
+    await expect(page.getByTestId("composer-open-knowledge")).toBeVisible();
+
+    await page.getByTestId("empty-open-knowledge").click();
+    await expect(page).toHaveURL(/view=knowledge/);
+    await expect(page.getByTestId("knowledge-split")).toBeVisible();
+    await expect(page.getByTestId("knowledge-search-input")).toBeVisible();
+    await expect(page.getByText("知识库单独对话").first()).toBeVisible();
+  });
 });
 
 test.describe("session uploads", () => {

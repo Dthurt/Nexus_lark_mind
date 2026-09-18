@@ -111,9 +111,13 @@ export function KnowledgeScopePicker({
           {onOpenKnowledge ? (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="gap-2" onSelect={() => onOpenKnowledge()}>
+              <DropdownMenuItem
+                className="gap-2"
+                data-testid="knowledge-scope-open-page"
+                onSelect={() => onOpenKnowledge()}
+              >
                 <ExternalLink className="size-3.5 text-muted-foreground" />
-                在知识库中打开
+                打开知识库单独对话
               </DropdownMenuItem>
             </>
           ) : null}
@@ -124,11 +128,12 @@ export function KnowledgeScopePicker({
           type="button"
           variant="ghost"
           size="sm"
-          className="hidden h-6 px-1.5 text-[10px] text-muted-foreground sm:inline-flex"
-          title="打开知识库页面（检索 + 对话）"
+          data-testid="composer-open-knowledge"
+          className="h-6 shrink-0 px-1.5 text-[11px] text-teal hover:bg-teal/10 hover:text-teal"
+          title="打开知识库单独对话（左侧检索，右侧针对该库提问）"
           onClick={onOpenKnowledge}
         >
-          打开
+          知识库对话
         </Button>
       ) : null}
     </div>

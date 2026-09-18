@@ -269,12 +269,12 @@ export function KnowledgeView({
       <header className="shrink-0 space-y-2 border-b border-border px-3 py-2.5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-              <BookOpen className="size-3" />
-              知识库
+            <div className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+              <BookOpen className="size-3.5 text-teal" />
+              知识库单独对话
             </div>
             <p className="m-0 mt-0.5 text-[12px] text-foreground/90">
-              检索并对话 · 当前「{label}」
+              检索并提问 · 当前「{label}」
             </p>
             <p className="m-0 mt-0.5 text-[11px] text-muted-foreground">
               {remote

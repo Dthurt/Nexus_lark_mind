@@ -58,7 +58,17 @@ injected as `<knowledge_context>`. Tools still work for follow-up reads.
 
 ### Knowledge page (first-class)
 
-Topbar view ring **知识库** (also `/?view=knowledge` and `/knowledge`):
+Dedicated **知识库单独对话** is the same session, split: left retrieve, right grounded chat.
+Open it from any of these labeled entries (not a hidden icon):
+
+- Topbar view ring **知识库** (`/?view=knowledge`, also `/knowledge`)
+- Topbar chip **知识库对话**
+- Sidebar **知识库对话** (under 新对话)
+- Empty-state card **打开知识库单独对话**
+- Composer **知识库对话** (next to the KB picker)
+- Command palette **知识库单独对话（检索 + 提问）** (`Ctrl+K`)
+
+Once open:
 
 - Left: KB selector (**本地知识库** + WeKnora names when `WEKNORA_BASE_URL` is set), search,
   citation results, full-body preview, empty/health/error states.
@@ -70,9 +80,9 @@ Topbar view ring **知识库** (also `/?view=knowledge` and `/knowledge`):
 ### Main composer picker
 
 The workbench composer always shows a compact **知识库** selector (name, not raw id).
-Placeholder: `基于「xxx」提问`. **在知识库中打开** jumps to the Knowledge page with the
-same selection. `/api/chat` also sends `weknora_kb_id` on the turn so a picker change is
-not lost if the session patch is still in flight.
+Placeholder: `基于「xxx」提问`. **知识库对话** / picker **打开知识库单独对话** jumps to the
+Knowledge page with the same selection. `/api/chat` also sends `weknora_kb_id` on the turn so
+a picker change is not lost if the session patch is still in flight.
 
 Composer **添加文件** uploads into a session-scoped knowledge document (`source=session-upload`,
 tag `session:{id}`) via `POST /api/sessions/{session_id}/uploads`. Types follow

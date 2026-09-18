@@ -37,7 +37,7 @@ Dock **插件 → 扩展槽** lists live registrations. See [plugins.md](./plugi
 
 ## Trajectory dual view
 
-Topbar **Chat | Trajectory** (`ViewRing`):
+Topbar **对话 | 知识库 | 轨迹** (`ViewRing`):
 
 - Chat → `useChatTimeline` bubbles  
 - Trajectory → `useTrajectory` event ledger  

@@ -10,7 +10,7 @@ import {
   type UIEvent,
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronDown } from "lucide-react";
+import { BookOpen, ChevronDown } from "lucide-react";
 
 import { AskUserForm } from "@/components/chat/AskUserForm";
 import { ChatFileCard } from "@/components/chat/ChatFileCard";
@@ -64,6 +64,9 @@ export type ChatMessagesProps = {
   onAcceptPlan?: (item: TimelineItem) => void;
   /** Highlight the tool card awaiting ApprovalDock decision. */
   highlightCallId?: string | null;
+  /** Open the dedicated knowledge retrieve + chat view. */
+  onOpenKnowledge?: () => void;
+  knowledgeViewActive?: boolean;
   className?: string;
 };
 
@@ -210,6 +213,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       onResolvePlanReview,
       onAcceptPlan,
       highlightCallId = null,
+      onOpenKnowledge,
+      knowledgeViewActive = false,
       className,
     },
     ref,
@@ -410,6 +415,27 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
                 </div>
               </li>
             </ol>
+            {onOpenKnowledge ? (
+              <button
+                type="button"
+                data-testid="empty-open-knowledge"
+                className={cn(
+                  "mt-4 w-full rounded-lg border px-3 py-2.5 text-left transition-colors",
+                  knowledgeViewActive
+                    ? "border-teal/40 bg-teal/10"
+                    : "border-teal/35 bg-teal/5 hover:border-teal/60 hover:bg-teal/10",
+                )}
+                onClick={onOpenKnowledge}
+              >
+                <div className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+                  <BookOpen className="size-3.5 text-teal" aria-hidden />
+                  {knowledgeViewActive ? "知识库单独对话已打开" : "打开知识库单独对话"}
+                </div>
+                <div className="mt-0.5 text-[12px] text-muted-foreground">
+                  左侧检索当前知识库，右侧针对该库提问（同一会话，不是新开一条聊天）。
+                </div>
+              </button>
+            ) : null}
             {showWorkspacePicker ? (
               <WorkspacePicker
                 className="empty-ws mt-[18px]"

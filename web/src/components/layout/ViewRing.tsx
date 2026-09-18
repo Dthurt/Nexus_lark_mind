@@ -49,17 +49,18 @@ export function ViewRing({
             type="button"
             role="tab"
             aria-selected={active}
-            title={v.label}
+            title={v.id === "knowledge" ? "知识库单独对话：左侧检索，右侧针对该库提问" : v.label}
             aria-label={v.label}
             data-testid={`view-ring-${v.id}`}
             className={cn(
-              "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors",
+              "inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors",
               "hover:text-foreground",
-              active && "bg-primary/15 text-primary",
+              active && "bg-primary/15 font-medium text-primary",
             )}
             onClick={() => onChange?.(v.id)}
           >
-            <Icon className="size-[15px]" aria-hidden />
+            <Icon className="size-[14px] shrink-0" aria-hidden />
+            <span>{v.label}</span>
           </button>
         );
       })}

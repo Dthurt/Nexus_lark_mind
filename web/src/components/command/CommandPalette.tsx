@@ -357,7 +357,7 @@ export function CommandPalette({
           </CommandItem>
           <CommandItem onSelect={() => run(() => onSetCenterView?.("knowledge"))}>
             <BookOpen className="mr-2 size-4" />
-            知识库（检索 + 对话）
+            知识库单独对话（检索 + 提问）
           </CommandItem>
           <CommandItem onSelect={() => run(() => onSetCenterView?.("trajectory"))}>
             <Bot className="mr-2 size-4" />

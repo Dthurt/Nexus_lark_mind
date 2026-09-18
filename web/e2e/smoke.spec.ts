@@ -13,6 +13,8 @@ test.describe("workbench smoke", () => {
 
     await expect(page.getByText(/绑定工作目录/)).toBeVisible();
     await expect(page.getByText(/选择 Provider/)).toBeVisible();
+    await expect(page.getByTestId("view-ring-knowledge")).toContainText("知识库");
+    await expect(page.getByTestId("empty-open-knowledge")).toBeVisible();
 
     // Mermaid normalize contract (in-page, no model call)
     const sized = await page.evaluate(() => {

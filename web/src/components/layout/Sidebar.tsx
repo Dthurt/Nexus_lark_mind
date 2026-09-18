@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { PanelLeft, Plus, Search, Settings, X } from "lucide-react";
+import { BookOpen, PanelLeft, Plus, Search, Settings, X } from "lucide-react";
 import { motion } from "motion/react";
 
 import { NlmLogo } from "@/components/brand/Logos";
@@ -33,6 +33,8 @@ export type SidebarProps = {
   onDelete?: (id: string) => void;
   onOpenWorkspace?: (workspace: SidebarWorkspace) => void;
   onOpenSettings?: () => void;
+  onOpenKnowledge?: () => void;
+  knowledgeActive?: boolean;
   className?: string;
 };
 
@@ -41,17 +43,20 @@ function RailIconButton({
   onClick,
   children,
   className,
+  testId,
 }: {
   title: string;
   onClick?: () => void;
   children: ReactNode;
   className?: string;
+  testId?: string;
 }) {
   return (
     <button
       type="button"
       title={title}
       aria-label={title}
+      data-testid={testId}
       onClick={onClick}
       className={cn(
         "inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors",
@@ -76,6 +81,8 @@ export function Sidebar({
   onDelete,
   onOpenWorkspace,
   onOpenSettings,
+  onOpenKnowledge,
+  knowledgeActive = false,
   className,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
@@ -138,6 +145,17 @@ export function Sidebar({
             <Plus className="size-4" />
           </RailIconButton>
 
+          {onOpenKnowledge ? (
+            <RailIconButton
+              title="知识库对话"
+              testId="sidebar-knowledge-entry"
+              onClick={onOpenKnowledge}
+              className={cn(knowledgeActive && "bg-teal/15 text-teal")}
+            >
+              <BookOpen className="size-4" />
+            </RailIconButton>
+          ) : null}
+
           <RailIconButton title="搜索会话" onClick={onRailSearch}>
             <Search className="size-4" />
           </RailIconButton>
@@ -190,6 +208,25 @@ export function Sidebar({
             <Plus className="size-3.5" />
             新对话
           </Button>
+
+          {onOpenKnowledge ? (
+            <Button
+              type="button"
+              data-testid="sidebar-knowledge-entry"
+              className={cn(
+                "h-8 w-full justify-start gap-1.5",
+                knowledgeActive
+                  ? "border border-teal/45 bg-teal/15 text-teal hover:bg-teal/20"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              variant="ghost"
+              size="sm"
+              onClick={onOpenKnowledge}
+            >
+              <BookOpen className="size-3.5" />
+              知识库对话
+            </Button>
+          ) : null}
 
           <div className="mt-1 shrink-0 text-[10.5px] tracking-wide text-muted-foreground">
             工作目录

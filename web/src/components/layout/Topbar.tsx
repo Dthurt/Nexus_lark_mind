@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 import {
+  BookOpen,
   Contrast,
   Flower2,
   LayoutTemplate,
@@ -126,11 +127,19 @@ export function Topbar({
             ) : null}
             <button
               type="button"
-              title={`${weknoraKbId ? `WeKnora ${weknoraKbName || weknoraKbId}` : "本地知识库"}（打开知识库页面）`}
-              className="max-w-[160px] truncate rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:border-teal/50 hover:text-foreground"
+              data-testid="topbar-knowledge-entry"
+              title="打开知识库单独对话（左侧检索，右侧针对该库提问）"
+              aria-pressed={centerView === "knowledge"}
+              className={cn(
+                "inline-flex max-w-[220px] items-center gap-1 truncate rounded-md border px-1.5 py-0.5 text-[11px]",
+                centerView === "knowledge"
+                  ? "border-teal/70 bg-teal/20 font-medium text-teal"
+                  : "border-teal/40 bg-teal/10 text-teal hover:border-teal/70 hover:bg-teal/15",
+              )}
               onClick={() => onWeknoraKbClick?.()}
             >
-              {weknoraKbId ? `KB · ${weknoraKbName || weknoraKbId}` : "本地知识库"}
+              <BookOpen className="size-3 shrink-0" aria-hidden />
+              {weknoraKbId ? `知识库对话 · ${weknoraKbName || weknoraKbId}` : "知识库对话"}
             </button>
             {activeTools && activeTools.length ? (
               <span

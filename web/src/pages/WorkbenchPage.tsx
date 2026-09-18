@@ -628,6 +628,8 @@ export function WorkbenchPage({
           onDelete={(id) => void onDeleteConversation(id)}
           onOpenWorkspace={(ws) => void startConversationWithWorkspace(ws as Workspace)}
           onOpenSettings={onOpenSettings}
+          onOpenKnowledge={openKnowledgeView}
+          knowledgeActive={centerView === "knowledge"}
         />
 
         <main className={cn("nlm-workspace", canvas.open && "nlm-workspace--canvas")}>
@@ -737,6 +739,8 @@ export function WorkbenchPage({
                       onAcceptPlan={() => {
                         void actions.acceptPlan();
                       }}
+                      onOpenKnowledge={openKnowledgeView}
+                      knowledgeViewActive={centerView === "knowledge"}
                     />
                   )}
 
@@ -770,7 +774,7 @@ export function WorkbenchPage({
 
               if (centerView === "knowledge") {
                 return (
-                  <div className="nlm-knowledge-split">
+                  <div className="nlm-knowledge-split" data-testid="knowledge-split">
                     <KnowledgeView
                       cwd={cwd}
                       workspaceId={workspaceId}
