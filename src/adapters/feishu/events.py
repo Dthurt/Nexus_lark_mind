@@ -145,13 +145,18 @@ def parse_im_message(payload: Dict[str, Any]) -> Optional[ParsedFeishuMessage]:
 
 def parse_card_action(payload: Dict[str, Any]) -> Optional[ParsedCardAction]:
     header = payload.get("header") or {}
+    event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
     event_type = header.get("event_type") or payload.get("type")
     if event_type not in {"card.action.trigger", "interactive"} and "action" not in payload:
         # interactive callback often comes as top-level
-        if "open_message_id" not in payload and "action" not in payload:
+        if (
+            "open_message_id" not in payload
+            and "action" not in payload
+            and "action" not in event
+        ):
             return None
 
-    action_obj = payload.get("action") or (payload.get("event") or {}).get("action") or {}
+    action_obj = payload.get("action") or event.get("action") or {}
     value = action_obj.get("value") or {}
     if isinstance(value, str):
         try:
@@ -159,15 +164,35 @@ def parse_card_action(payload: Dict[str, Any]) -> Optional[ParsedCardAction]:
         except json.JSONDecodeError:
             value = {"action": value}
 
-    user = payload.get("operator") or payload.get("user_id") or {}
+    user = (
+        payload.get("operator")
+        or event.get("operator")
+        or payload.get("user_id")
+        or {}
+    )
     if isinstance(user, dict):
         user_id = user.get("open_id") or user.get("user_id") or "unknown"
     else:
         user_id = str(user)
 
+    context = event.get("context") if isinstance(event.get("context"), dict) else {}
+    open_message_id = (
+        payload.get("open_message_id")
+        or context.get("open_message_id")
+        or context.get("message_id")
+        or ""
+    )
+    chat_id = (
+        value.get("chat_id")
+        or context.get("open_chat_id")
+        or context.get("chat_id")
+        or payload.get("open_chat_id")
+        or ""
+    )
+
     return ParsedCardAction(
         user_id=user_id,
-        open_message_id=payload.get("open_message_id") or "",
+        open_message_id=str(open_message_id or ""),
         action=str(value.get("action") or "noop"),
         payload=str(value.get("payload") or ""),
         kind=str(value.get("kind") or ""),
@@ -176,7 +201,7 @@ def parse_card_action(payload: Dict[str, Any]) -> Optional[ParsedCardAction]:
         provider_id=str(value.get("provider_id") or ""),
         model_name=str(value.get("model_name") or ""),
         session_id=str(value.get("session_id") or ""),
-        chat_id=str(value.get("chat_id") or ""),
+        chat_id=str(chat_id or ""),
         page=int(value.get("page") or 0),
         raw=payload,
     )

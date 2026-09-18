@@ -161,6 +161,6 @@ Interactive cards for **tool approval**, **ask_user**, and **plan_review** are s
 - Plan review actions: 批准并执行 / 继续规划 / 稍后自己说
 - Approval timeouts match Web (`src/common/approval_timeouts.py` ↔ `web/src/lib/approvalTimeout.ts`)
 
-Streaming reply cards + retry/clear remain as before.
+Streaming reply cards use **Card JSON 2.0**: one message is patched in place (debounced), tool/KB progress and citations render as card sections, errors are warning cards (no stack traces). Retry / 切换模型 / 清空会话 are schema 2.0 callback buttons.
 
 See also: [channels.md](./channels.md), [experience-tiers.md](./experience-tiers.md), [canvas.md](./canvas.md), [diagrams.md](./diagrams.md), [deferred.md](./deferred.md), [subagents.md](./subagents.md).

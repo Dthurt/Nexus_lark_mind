@@ -82,22 +82,37 @@ def p2_card_action_to_payload(data: Any) -> Dict[str, Any]:
     if value is not None and not isinstance(value, (dict, str)):
         value = _obj_to_dict(value)
 
-    open_message_id = getattr(event, "context", None)
+    context = getattr(event, "context", None)
     msg_id = None
-    if open_message_id is not None:
-        msg_id = getattr(open_message_id, "open_message_id", None) or getattr(
-            open_message_id, "message_id", None
-        )
+    chat_id = ""
+    if context is not None:
+        msg_id = getattr(context, "open_message_id", None) or getattr(context, "message_id", None)
+        chat_id = getattr(context, "open_chat_id", None) or getattr(context, "chat_id", None) or ""
+
+    callback_value = value if isinstance(value, dict) else {"action": str(value or "noop")}
+    if chat_id and not callback_value.get("chat_id"):
+        callback_value = {**callback_value, "chat_id": chat_id}
 
     return {
         "header": {"event_type": "card.action.trigger"},
         "open_message_id": msg_id or getattr(event, "open_message_id", "") or "",
+        "open_chat_id": chat_id,
         "operator": {
             "open_id": getattr(operator, "open_id", None) if operator else None,
             "user_id": getattr(operator, "user_id", None) if operator else None,
         },
         "action": {
-            "value": value if isinstance(value, dict) else {"action": str(value or "noop")},
+            "value": callback_value,
+        },
+        "event": {
+            "context": {
+                "open_message_id": msg_id or "",
+                "open_chat_id": chat_id,
+            },
+            "action": {"value": callback_value},
+            "operator": {
+                "open_id": getattr(operator, "open_id", None) if operator else None,
+            },
         },
     }
 

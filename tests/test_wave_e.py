@@ -1,6 +1,6 @@
 """Wave E unit tests: approval timeouts, Feishu cards, parallel setting."""
 
-from src.adapters.feishu.cards import build_approval_card, build_ask_card
+from src.adapters.feishu.cards import build_approval_card, build_ask_card, iter_card_actions
 from src.common.approval_timeouts import approval_timeout_seconds
 from src.common.config import Settings
 
@@ -13,10 +13,10 @@ def test_approval_timeouts_match_web():
 
 def test_feishu_approval_card_has_actions():
     card = build_approval_card(call_id="c1", name="run_shell", base="run_shell", arguments={"cmd": "ls"})
-    actions = card["elements"][-1]["actions"]
+    actions = iter_card_actions(card)
     assert len(actions) == 3
-    assert actions[0]["value"]["kind"] == "approval"
-    assert actions[0]["value"]["call_id"] == "c1"
+    assert actions[0]["kind"] == "approval"
+    assert actions[0]["call_id"] == "c1"
 
 
 def test_feishu_ask_card_options():
@@ -31,8 +31,8 @@ def test_feishu_ask_card_options():
             }
         ],
     )
-    actions = card["elements"][-1]["actions"]
-    kinds = {a["value"]["kind"] for a in actions}
+    actions = iter_card_actions(card)
+    kinds = {a["kind"] for a in actions}
     assert "ask_user" in kinds
 
 
