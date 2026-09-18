@@ -17,6 +17,7 @@ Optional               ──► WeKnora HTTP (weknora_client) when WEKNORA_BASE
 | Turn grounding | `src/core_kernel/kb_grounding.py` |
 | Ingest helpers | `src/core_kernel/plugin_runtime/knowledge_ingest.py` |
 | Embeddings (optional) | `src/core_kernel/plugin_runtime/knowledge_embeddings.py` |
+| Query expand (local) | `src/core_kernel/plugin_runtime/knowledge_query.py` |
 | Workspace sync | `src/core_kernel/plugin_runtime/knowledge_sync.py` |
 | WeKnora HTTP client | `src/core_kernel/plugin_runtime/weknora_client.py` |
 | Agent tools | `src/core_kernel/plugin_runtime/knowledge_tools.py` |
@@ -28,7 +29,7 @@ Optional               ──► WeKnora HTTP (weknora_client) when WEKNORA_BASE
 
 **Tables:** `knowledge_docs`, `knowledge_chunks`, `knowledge_sync_log`.
 
-Documents are split on headings / blank lines into ~512-character chunks with ~15% overlap. Search ranks **chunks** with keyword scoring (CJK bigrams + Latin tokens). When `KB_EMBEDDING_*` is set, hybrid merge also scores chunks that have stored vectors — **even if keyword ILIKE misses** (semantic recall). `kb_read` / GET read return a char window or a chunk plus neighbors, with a `citation` provenance line.
+Documents are split heading-aware (breadcrumb `context_header` stored separately from body). Long docs use **parent/child** chunks (WeKnora-style, `KB_PARENT_CHILD=1` default): search the ~384-char child, expand a short hit from its ~2048-char parent. Overlap stays ~15%. Search ranks **children** with keyword scoring (CJK bigrams + Latin tokens). Thin recall optionally runs **local query expansion** (stopword strip / quoted phrases / question-word peel — no LLM; `KB_QUERY_EXPAND=0` to disable). When `KB_EMBEDDING_*` or `WEMM_BASE_URL` is set, hybrid merge also scores chunks that have stored vectors — **even if keyword ILIKE misses**. Embeddings index `context_header + body`. `kb_read` / GET read return a char window or a chunk plus neighbors, with a `citation` provenance line (heading path included).
 
 ## Agent tools
 
@@ -128,16 +129,38 @@ Upsert key is a stable `file_<sha1(rel)>` id plus `content_hash` skip-if-unchang
 
 ## Optional embeddings (hybrid)
 
-Unset → keyword-only (default).
+Unset → keyword-only (default). Either `KB_EMBEDDING_BASE_URL` **or** `WEMM_BASE_URL` enables hybrid search. Requests try `/embeddings` then `/v1/embeddings` so a bare host or an OpenAI `/v1` base both work. Failures degrade to keyword-only.
 
 ```bash
-KB_EMBEDDING_BASE_URL=https://api.openai.com/v1   # or WeMM / vLLM OpenAI-compatible base
+KB_EMBEDDING_BASE_URL=https://api.openai.com/v1
 KB_EMBEDDING_MODEL=text-embedding-3-small
 KB_EMBEDDING_API_KEY=sk-...
-# KB_EMBEDDING_ENABLED=0   # force off
+# KB_EMBEDDING_DIM=256        # optional Matryoshka truncate + L2 re-norm
+# KB_EMBEDDING_ENABLED=0      # force off
 ```
 
-Vectors are stored as JSON on chunks. After configuring embeddings on an existing DB, use Dock **回填向量** or `kb_reindex` / `POST /api/knowledge/reindex`. Hybrid score ≈ keyword + cosine. **WeMM is not a default dependency.**
+### WeMM-Embedding (optional local backend)
+
+[WeMM-Embedding](https://github.com/Tencent/WeMM-Embedding) is a multimodal embedding model (text / image / visdoc). Serve it with vLLM pooling or SGLang, then point NLM at that OpenAI-compatible endpoint. **No package install inside NLM.**
+
+```bash
+# vLLM: vllm serve $MODEL_PATH --runner pooling --chat-template $MODEL_PATH/embedding_chat_template.jinja
+WEMM_BASE_URL=http://127.0.0.1:8000/v1
+WEMM_MODEL=WeMM-Embedding-2B
+# WEMM_DIM=256
+```
+
+`WEMM_*` is an alias for `KB_EMBEDDING_*`. When the backend is WeMM, workspace sync may also index shallow images (placeholder markdown + image vector). Generic OpenAI shims stay text-only unless `KB_EMBEDDING_MULTIMODAL=1`.
+
+Vectors are stored as JSON on chunks. After configuring embeddings on an existing DB, use Dock **回填向量** or `kb_reindex` / `POST /api/knowledge/reindex`. Hybrid score ≈ keyword + cosine.
+
+## Local RAG knobs (not a WeKnora clone)
+
+| Env | Default | Role |
+|-----|---------|------|
+| `KB_PARENT_CHILD` | on | Parent/child chunks for long docs |
+| `KB_QUERY_EXPAND` | on | Local query variants when first pass is thin |
+| `KB_EMBEDDING_*` / `WEMM_*` | off | Optional hybrid + image vectors |
 
 ## Optional WeKnora bridge
 
@@ -167,7 +190,7 @@ WEKNORA_KB_ID=...            # default knowledge-base id
 | Health | `weknora_health` / Dock WeKnora strip |
 | Skill / preset | `weknora-research` skill (`/skill:` injects SKILL.md) + `knowledge-research` preset (`kb_search` → `weknora_search` → `weknora_read` / `kb_read`) |
 
-Kernel helper: `weknora_client.py`. MCP stub: `plugins_volume/mcp/weknora_http.json`.
+Kernel helper: `weknora_client.py`. Optional MCP stubs (disabled): `plugins_volume/mcp/weknora_http.json` and `weknora_mcp.json` (`WEKNORA_MCP_URL` → WeKnora's `hybrid_search` / `list_knowledge` / `get_knowledge`). Prefer the first-class `weknora_*` tools.
 
 Feishu / GitLab connectors: prefer ingesting into WeKnora first, then `weknora_sync` pull.
 ## Feishu knowledge sync

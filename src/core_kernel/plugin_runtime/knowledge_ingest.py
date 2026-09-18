@@ -8,7 +8,8 @@ from typing import Optional, Tuple
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ".org", ".mdx"}
 PDF_SUFFIXES = {".pdf"}
-SUPPORTED_SUFFIXES = TEXT_SUFFIXES | PDF_SUFFIXES
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+SUPPORTED_SUFFIXES = TEXT_SUFFIXES | PDF_SUFFIXES | IMAGE_SUFFIXES
 
 
 def is_ingestible(path: Path) -> bool:
@@ -23,6 +24,13 @@ def read_file_as_text(
     if len(raw) > max_bytes:
         raise ValueError(f"file too large ({len(raw)} bytes, max {max_bytes})")
     suffix = path.suffix.lower()
+    if suffix in IMAGE_SUFFIXES:
+        return (
+            f"![image]({path.name})\n\n"
+            f"Visual document: {path.name}\n"
+            f"Path: {path.as_posix()}\n",
+            "image-placeholder",
+        )
     if suffix in PDF_SUFFIXES:
         text, note = _extract_pdf(raw)
         if not text.strip():
@@ -103,6 +111,8 @@ def default_tags_for_path(path: Path) -> str:
         return "file,markdown"
     if suf == ".pdf":
         return "file,pdf"
+    if suf in IMAGE_SUFFIXES:
+        return "file,image"
     if suf in {".txt", ".rst", ".org"}:
         return "file,text"
     return "file"

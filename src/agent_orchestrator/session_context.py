@@ -30,10 +30,38 @@ class SessionContext:
         return list(session.get("messages") or [])
 
     async def append(self, session_id: str, message: ChatMessage) -> Dict[str, Any]:
-        return await self.redis.append_session_message(
-            session_id,
-            message.model_dump(mode="json"),
-        )
+        dumped = message.model_dump(mode="json")
+        result = await self.redis.append_session_message(session_id, dumped)
+        try:
+            from src.core_kernel.extension_runtime import emit_extension_event
+            from src.core_kernel.tool_hooks import run_session_persist_hook
+
+            session = await self.redis.get_session(session_id)
+            cwd = str((session or {}).get("cwd") or "")
+            emit_extension_event(
+                "session_persist",
+                {
+                    "session_id": session_id,
+                    "role": dumped.get("role") or "",
+                    "cwd": cwd,
+                },
+            )
+            extra = run_session_persist_hook(
+                session_id=session_id,
+                cwd=cwd,
+                role=str(dumped.get("role") or ""),
+                content=str(dumped.get("content") or "")[:400],
+            )
+            entries = extra.get("entries") if isinstance(extra, dict) else None
+            if entries:
+                await self.redis.patch_session(
+                    session_id,
+                    {"extension_entries": entries},
+                    preserve_messages=True,
+                )
+        except Exception:
+            pass
+        return result
 
     async def ensure_user_message(
         self,

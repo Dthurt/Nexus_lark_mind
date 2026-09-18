@@ -220,8 +220,9 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "kb_sync_docs",
         "description": (
-            "Scan workspace docs (docs/** and shallow *.md/*.txt/*.rst/*.pdf) into the "
-            "knowledge base with content_hash upsert. Use when the user asks to index project docs."
+            "Scan workspace docs (docs/** and shallow *.md/*.txt/*.rst/*.pdf, plus images "
+            "when WeMM/KB embeddings are multimodal) into the knowledge base with "
+            "content_hash upsert. Use when the user asks to index project docs."
         ),
         "inputSchema": {
             "type": "object",
@@ -240,8 +241,8 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "kb_reindex",
         "description": (
-            "Re-embed chunks missing vectors when KB_EMBEDDING_BASE_URL is configured. "
-            "No-op / error if embeddings are not configured."
+            "Re-embed chunks missing vectors when KB_EMBEDDING_BASE_URL or WEMM_BASE_URL "
+            "is configured. No-op / error if embeddings are not configured."
         ),
         "inputSchema": {
             "type": "object",

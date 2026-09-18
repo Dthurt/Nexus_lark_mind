@@ -26,15 +26,21 @@ from src.core_kernel.plugin_runtime.knowledge_embeddings import (
     cosine_similarity,
     deserialize_embedding,
     embed_one,
+    embed_one_image,
     embed_texts,
     embeddings_configured,
+    embedding_stats,
+    multimodal_embeddings_enabled,
     serialize_embedding,
 )
 from src.infrastructure.storage.database import Base
 
 CHUNK_TARGET = 512
 CHUNK_OVERLAP_RATIO = 0.15
+CHILD_CHUNK_TARGET = 384
+PARENT_CHUNK_TARGET = 2048
 SNIPPET_RADIUS = 160
+SHORT_CHUNK_EXPAND = 350
 
 
 class KnowledgeDoc(Base):
@@ -69,6 +75,9 @@ class KnowledgeChunk(Base):
     char_start: Mapped[int] = mapped_column(Integer, default=0)
     char_end: Mapped[int] = mapped_column(Integer, default=0)
     embedding: Mapped[str] = mapped_column(Text, default="")  # JSON float array
+    parent_chunk_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    chunk_type: Mapped[str] = mapped_column(String(32), default="text")  # text|parent|image
+    context_header: Mapped[str] = mapped_column(String(1024), default="")
     workspace_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -143,19 +152,23 @@ def format_citation(
     doc_id: str = "",
     chunk_index: Optional[int] = None,
     heading: str = "",
+    context_header: str = "",
 ) -> str:
     """Human-readable provenance line for chat / tool results."""
     label = (title or doc_id or "untitled").strip()
     path = (source_uri or "").strip()
     if not path and (source or "").startswith("file:"):
         path = source[5:]
+    section = (context_header or heading or "").strip()
+    if section:
+        section = re.sub(r"^#+\s*", "", section.replace("\n", " › "))
     parts = [f"**{label}**"]
     if path:
         parts.append(f"`{path}`")
     elif source:
         parts.append(f"({source})")
-    if heading:
-        parts.append(f"§ {heading}")
+    if section:
+        parts.append(f"§ {section}")
     if chunk_index is not None:
         parts.append(f"chunk #{chunk_index}")
     if doc_id:
@@ -175,12 +188,61 @@ def citations_markdown(hits: List[Dict[str, Any]]) -> str:
             doc_id=str(h.get("doc_id") or ""),
             chunk_index=h.get("chunk_index") if "chunk_index" in h else None,
             heading=str(h.get("heading") or ""),
+            context_header=str(h.get("context_header") or ""),
         )
         snip = (h.get("snippet") or "").replace("\n", " ").strip()
         if len(snip) > 160:
             snip = snip[:157] + "…"
         lines.append(f"{i}. {cite}" + (f" — {snip}" if snip else ""))
     return "\n".join(lines)
+
+
+def _heading_level(line: str) -> int:
+    m = re.match(r"^(#{1,6})\s+\S", line)
+    return len(m.group(1)) if m else 0
+
+
+def _breadcrumb(stack: List[Tuple[int, str]]) -> str:
+    if not stack:
+        return ""
+    return "\n".join(f"{'#' * lvl} {title}" for lvl, title in stack)
+
+
+def _push_heading(stack: List[Tuple[int, str]], level: int, title: str) -> List[Tuple[int, str]]:
+    next_stack = [(lvl, t) for lvl, t in stack if lvl < level]
+    next_stack.append((level, title))
+    return next_stack
+
+
+def parent_child_enabled() -> bool:
+    import os
+
+    v = (os.getenv("KB_PARENT_CHILD") or "1").strip().lower()
+    return v not in {"0", "false", "no", "off"}
+
+
+def chunk_embedding_text(piece: Dict[str, Any]) -> str:
+    """WeKnora-style EmbeddingContent: breadcrumb + body (header not in stored content)."""
+    header = str(piece.get("context_header") or piece.get("heading") or "").strip()
+    body = str(piece.get("content") or "").strip()
+    if header and header not in body[: min(len(body), len(header) + 8)]:
+        return f"{header}\n\n{body}"
+    return body
+
+
+def merge_breadcrumbs(parent: str, child: str) -> str:
+    p = (parent or "").strip()
+    c = (child or "").strip()
+    if not p:
+        return c
+    if not c:
+        return p
+    if c.startswith(p):
+        return c
+    p_first = p.splitlines()[0]
+    if c.splitlines()[0] == p_first:
+        return c
+    return f"{p}\n{c}"
 
 
 def chunk_markdown(
@@ -195,19 +257,25 @@ def chunk_markdown(
         return []
 
     # Prefer heading boundaries, then blank-line paragraphs
-    blocks: List[Tuple[str, str, int]] = []  # heading, text, start
+    blocks: List[Tuple[str, str, int, str]] = []  # heading, text, start, breadcrumb
     heading = ""
+    header = ""
+    stack: List[Tuple[int, str]] = []
     buf: List[str] = []
     start = 0
     pos = 0
     lines = text_body.splitlines(keepends=True)
     for line in lines:
-        if re.match(r"^#{1,6}\s+\S", line):
+        level = _heading_level(line)
+        if level:
             if buf:
                 piece = "".join(buf)
-                blocks.append((heading, piece, start))
+                blocks.append((heading, piece, start, header))
                 buf = []
-            heading = line.lstrip("#").strip()
+            title = line.lstrip("#").strip()
+            stack = _push_heading(stack, level, title)
+            heading = title
+            header = _breadcrumb(stack)
             start = pos
             buf.append(line)
         else:
@@ -217,26 +285,41 @@ def chunk_markdown(
             # flush oversized paragraph runs on blank lines
             if line.strip() == "" and sum(len(x) for x in buf) >= target:
                 piece = "".join(buf)
-                blocks.append((heading, piece, start))
+                blocks.append((heading, piece, start, header))
                 buf = []
-                heading = heading  # keep section heading
         pos += len(line)
     if buf:
-        blocks.append((heading, "".join(buf), start))
+        blocks.append((heading, "".join(buf), start, header))
 
     # Re-pack blocks into target-sized chunks with overlap
     overlap = max(32, int(target * overlap_ratio))
     chunks: List[Dict[str, Any]] = []
     carry = ""
     carry_heading = ""
+    carry_header = ""
     carry_start = 0
-    for h, piece, st in blocks:
+    for h, piece, st, crumb in blocks:
+        heading_changed = bool(crumb) and bool(carry_header) and crumb != carry_header
+        if carry and heading_changed:
+            chunks.append(
+                {
+                    "heading": carry_heading,
+                    "context_header": carry_header,
+                    "content": carry.rstrip(),
+                    "char_start": carry_start,
+                    "char_end": carry_start + len(carry.rstrip()),
+                    "chunk_type": "text",
+                }
+            )
+            carry = ""
         section = piece
         sec_heading = h or carry_heading
+        sec_header = crumb or carry_header
         sec_start = st
         if carry:
             section = carry + section
             sec_heading = carry_heading or h
+            sec_header = carry_header or crumb
             sec_start = carry_start
             carry = ""
         while len(section) > target:
@@ -246,9 +329,11 @@ def chunk_markdown(
                 chunks.append(
                     {
                         "heading": sec_heading,
+                        "context_header": sec_header,
                         "content": chunk_text,
                         "char_start": sec_start,
                         "char_end": sec_start + len(chunk_text),
+                        "chunk_type": "text",
                     }
                 )
             # overlap window
@@ -258,26 +343,86 @@ def chunk_markdown(
             section = section[next_start_off:]
         carry = section
         carry_heading = sec_heading
+        carry_header = sec_header
         carry_start = sec_start
     if carry.strip():
         chunks.append(
             {
                 "heading": carry_heading,
+                "context_header": carry_header,
                 "content": carry.rstrip(),
                 "char_start": carry_start,
                 "char_end": carry_start + len(carry.rstrip()),
+                "chunk_type": "text",
             }
         )
     if not chunks and text_body.strip():
         chunks.append(
             {
                 "heading": "",
+                "context_header": "",
                 "content": text_body.strip(),
                 "char_start": 0,
                 "char_end": len(text_body.strip()),
+                "chunk_type": "text",
             }
         )
     return chunks
+
+
+def chunk_parent_child(
+    content: str,
+    *,
+    parent_size: int = PARENT_CHUNK_TARGET,
+    child_size: int = CHILD_CHUNK_TARGET,
+    overlap_ratio: float = CHUNK_OVERLAP_RATIO,
+) -> List[Dict[str, Any]]:
+    """WeKnora-style two-level split: search children, answer from parent."""
+    parents = chunk_markdown(content, target=parent_size, overlap_ratio=overlap_ratio)
+    if not parents:
+        return []
+    out: List[Dict[str, Any]] = []
+    for pi, parent in enumerate(parents):
+        body = str(parent.get("content") or "")
+        children = chunk_markdown(body, target=child_size, overlap_ratio=0.2)
+        parent_header = str(parent.get("context_header") or parent.get("heading") or "")
+        if len(children) <= 1:
+            child = children[0] if children else parent
+            out.append(
+                {
+                    **child,
+                    "chunk_type": str(parent.get("chunk_type") or "text"),
+                    "parent_index": -1,
+                    "context_header": merge_breadcrumbs(
+                        parent_header, str(child.get("context_header") or "")
+                    ),
+                    "char_start": int(parent.get("char_start") or 0),
+                    "char_end": int(parent.get("char_end") or 0)
+                    or int(parent.get("char_start") or 0) + len(body),
+                }
+            )
+            continue
+        out.append({**parent, "chunk_type": "parent", "parent_index": pi})
+        p_start = int(parent.get("char_start") or 0)
+        for child in children:
+            header = merge_breadcrumbs(parent_header, str(child.get("context_header") or ""))
+            out.append(
+                {
+                    **child,
+                    "chunk_type": "text",
+                    "parent_index": pi,
+                    "context_header": header,
+                    "char_start": p_start + int(child.get("char_start") or 0),
+                    "char_end": p_start + int(child.get("char_end") or 0),
+                }
+            )
+    return out
+
+
+def split_document(content: str) -> List[Dict[str, Any]]:
+    if parent_child_enabled() and len(content or "") > PARENT_CHUNK_TARGET // 2:
+        return chunk_parent_child(content)
+    return chunk_markdown(content)
 
 
 def _soft_cut(s: str, target: int) -> int:
@@ -330,6 +475,9 @@ class KnowledgeStore:
             for ddl in (
                 "ALTER TABLE knowledge_docs ADD COLUMN source_uri VARCHAR(1024) DEFAULT ''",
                 "ALTER TABLE knowledge_docs ADD COLUMN content_hash VARCHAR(64) DEFAULT ''",
+                "ALTER TABLE knowledge_chunks ADD COLUMN parent_chunk_id VARCHAR(80) DEFAULT ''",
+                "ALTER TABLE knowledge_chunks ADD COLUMN chunk_type VARCHAR(32) DEFAULT 'text'",
+                "ALTER TABLE knowledge_chunks ADD COLUMN context_header VARCHAR(1024) DEFAULT ''",
             ):
                 try:
                     await conn.execute(text(ddl))
@@ -376,27 +524,63 @@ class KnowledgeStore:
             await session.flush()
 
             await session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.doc_id == doc_id))
-            pieces = chunk_markdown(body)
-            emb_vectors: Optional[List[Optional[List[float]]]] = None
-            if embeddings_configured() and pieces:
-                raw = await embed_texts([p["content"] for p in pieces])
+            pieces = split_document(body)
+            parent_ids: Dict[int, str] = {}
+            for i, piece in enumerate(pieces):
+                if str(piece.get("chunk_type") or "") == "parent":
+                    parent_ids[int(piece.get("parent_index") or i)] = f"{doc_id}#{i}"
+            embeddable = [
+                (i, p)
+                for i, p in enumerate(pieces)
+                if str(p.get("chunk_type") or "text") != "parent"
+            ]
+            emb_by_index: Dict[int, List[float]] = {}
+            if embeddings_configured() and embeddable:
+                raw = await embed_texts([chunk_embedding_text(p) for _, p in embeddable])
                 if raw:
-                    emb_vectors = raw
+                    for (idx, _), vec in zip(embeddable, raw):
+                        if vec:
+                            emb_by_index[idx] = vec
+            image_vec: Optional[List[float]] = None
+            src_path = ""
+            if (source or "").startswith("file:"):
+                src_path = source[5:]
+            elif source_uri:
+                src_path = source_uri
+            if (
+                multimodal_embeddings_enabled()
+                and src_path
+                and re.search(r"\.(png|jpe?g|webp|gif|bmp)$", src_path, re.I)
+            ):
+                image_vec = await embed_one_image(src_path)
 
             for i, piece in enumerate(pieces):
+                ctype = str(piece.get("chunk_type") or "text")
+                parent_id = ""
+                pidx = piece.get("parent_index")
+                if pidx is not None and int(pidx) >= 0:
+                    parent_id = parent_ids.get(int(pidx), "")
                 emb_json = ""
-                if emb_vectors and i < len(emb_vectors) and emb_vectors[i]:
-                    emb_json = serialize_embedding(emb_vectors[i])  # type: ignore[arg-type]
+                vec = emb_by_index.get(i)
+                if image_vec and ctype != "parent" and not vec:
+                    vec = image_vec
+                    if ctype == "text":
+                        ctype = "image"
+                if vec:
+                    emb_json = serialize_embedding(vec)
                 session.add(
                     KnowledgeChunk(
                         chunk_id=f"{doc_id}#{i}",
                         doc_id=doc_id,
                         chunk_index=i,
                         heading=str(piece.get("heading") or "")[:512],
+                        context_header=str(piece.get("context_header") or "")[:1024],
                         content=str(piece.get("content") or ""),
                         char_start=int(piece.get("char_start") or 0),
                         char_end=int(piece.get("char_end") or 0),
                         embedding=emb_json,
+                        parent_chunk_id=parent_id[:80],
+                        chunk_type=ctype[:32],
                         workspace_id=row.workspace_id,
                         updated_at=datetime.now(timezone.utc),
                     )
@@ -551,11 +735,46 @@ class KnowledgeStore:
     async def search(
         self, query: str, *, workspace_id: str = "", limit: int = 8
     ) -> List[Dict[str, Any]]:
+        from src.core_kernel.plugin_runtime.knowledge_query import (
+            expand_queries,
+            merge_hits_by_id,
+            should_expand,
+        )
+
+        q = (query or "").strip()
+        hits = await self._search_once(q, workspace_id=workspace_id, limit=limit)
+        if not should_expand(len(hits), limit):
+            return hits
+        extras: List[Dict[str, Any]] = []
+        for variant in expand_queries(q):
+            extras.extend(
+                await self._search_once(
+                    variant,
+                    workspace_id=workspace_id,
+                    limit=limit,
+                    query_vec=None,
+                    skip_vector=True,
+                )
+            )
+        return merge_hits_by_id(hits, extras, limit=limit)
+
+    def _is_searchable_chunk(self, chunk: KnowledgeChunk) -> bool:
+        ctype = (getattr(chunk, "chunk_type", None) or "text").strip() or "text"
+        return ctype != "parent"
+
+    async def _search_once(
+        self,
+        query: str,
+        *,
+        workspace_id: str = "",
+        limit: int = 8,
+        query_vec: Optional[List[float]] = None,
+        skip_vector: bool = False,
+    ) -> List[Dict[str, Any]]:
         tokens = _tokens(query)
         q = (query or "").strip()
-        use_vec = embeddings_configured() and bool(q)
-        query_vec: Optional[List[float]] = None
-        if use_vec:
+        use_vec = embeddings_configured() and bool(q) and not skip_vector
+        if use_vec and query_vec is None:
             query_vec = await embed_one(q)
 
         async with self.session_factory() as session:
@@ -565,6 +784,11 @@ class KnowledgeStore:
                     KnowledgeChunk.workspace_id == workspace_id,
                     KnowledgeChunk.workspace_id == "",
                 )
+            not_parent = or_(
+                KnowledgeChunk.chunk_type != "parent",
+                KnowledgeChunk.chunk_type == "",
+                KnowledgeChunk.chunk_type.is_(None),
+            )
 
             # --- Keyword candidate pool ---
             kw_chunks: List[KnowledgeChunk] = []
@@ -572,11 +796,13 @@ class KnowledgeStore:
             if q:
                 likes.append(KnowledgeChunk.content.ilike(f"%{q}%"))
                 likes.append(KnowledgeChunk.heading.ilike(f"%{q}%"))
+                likes.append(KnowledgeChunk.context_header.ilike(f"%{q}%"))
             for t in tokens:
                 likes.append(KnowledgeChunk.content.ilike(f"%{t}%"))
                 likes.append(KnowledgeChunk.heading.ilike(f"%{t}%"))
+                likes.append(KnowledgeChunk.context_header.ilike(f"%{t}%"))
             if likes:
-                stmt = select(KnowledgeChunk)
+                stmt = select(KnowledgeChunk).where(not_parent)
                 if ws_filter is not None:
                     stmt = stmt.where(ws_filter)
                 stmt = stmt.where(or_(*likes)).limit(160)
@@ -585,7 +811,11 @@ class KnowledgeStore:
             # --- Vector candidate pool (even when keyword miss) ---
             vec_chunks: List[KnowledgeChunk] = []
             if query_vec is not None:
-                vstmt = select(KnowledgeChunk).where(KnowledgeChunk.embedding != "")
+                vstmt = (
+                    select(KnowledgeChunk)
+                    .where(KnowledgeChunk.embedding != "")
+                    .where(not_parent)
+                )
                 if ws_filter is not None:
                     vstmt = vstmt.where(ws_filter)
                 vstmt = vstmt.order_by(KnowledgeChunk.updated_at.desc()).limit(400)
@@ -593,14 +823,28 @@ class KnowledgeStore:
 
             by_id: Dict[str, KnowledgeChunk] = {}
             for c in kw_chunks:
-                by_id[c.chunk_id] = c
+                if self._is_searchable_chunk(c):
+                    by_id[c.chunk_id] = c
             for c in vec_chunks:
-                by_id.setdefault(c.chunk_id, c)
+                if self._is_searchable_chunk(c):
+                    by_id.setdefault(c.chunk_id, c)
             chunks = list(by_id.values())
 
             if not chunks:
                 # Legacy whole-doc fallback when nothing chunked yet
                 return await self._search_docs(session, query, tokens, workspace_id, limit)
+
+            extra_ids = {c.parent_chunk_id for c in chunks if getattr(c, "parent_chunk_id", "")}
+            extra_ids.discard("")
+            extra_ids |= {c.chunk_id for c in chunks}
+            parents_by_id: Dict[str, KnowledgeChunk] = {}
+            if extra_ids:
+                prows = (
+                    await session.execute(
+                        select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(list(extra_ids)))
+                    )
+                ).scalars().all()
+                parents_by_id = {p.chunk_id: p for p in prows}
 
             doc_ids = {c.doc_id for c in chunks}
             docs_by_id: Dict[str, KnowledgeDoc] = {}
@@ -617,8 +861,9 @@ class KnowledgeStore:
             doc = docs_by_id.get(c.doc_id)
             if not doc:
                 continue
+            header = getattr(c, "context_header", "") or ""
             kw = _score_text(
-                f"{c.heading}\n{c.content}",
+                f"{header}\n{c.heading}\n{c.content}",
                 doc.title or "",
                 doc.tags or "",
                 tokens,
@@ -644,6 +889,7 @@ class KnowledgeStore:
             if doc.doc_id in seen_docs and len(out) >= max(2, limit // 2):
                 continue
             seen_docs.add(doc.doc_id)
+            header = getattr(c, "context_header", "") or ""
             cite = format_citation(
                 title=doc.title or "",
                 source=doc.source or "",
@@ -651,19 +897,27 @@ class KnowledgeStore:
                 doc_id=doc.doc_id,
                 chunk_index=c.chunk_index,
                 heading=c.heading or "",
+                context_header=header,
             )
+            display = c.content or ""
+            parent = parents_by_id.get(getattr(c, "parent_chunk_id", "") or "")
+            if parent and parent.content and len(display) < SHORT_CHUNK_EXPAND:
+                display = parent.content
             item = {
                 "doc_id": doc.doc_id,
                 "chunk_id": c.chunk_id,
                 "chunk_index": c.chunk_index,
                 "title": doc.title,
                 "heading": c.heading,
+                "context_header": header,
+                "parent_chunk_id": getattr(c, "parent_chunk_id", "") or "",
+                "chunk_type": getattr(c, "chunk_type", "") or "text",
                 "tags": doc.tags,
                 "source": doc.source,
                 "source_uri": getattr(doc, "source_uri", "") or "",
                 "workspace_id": doc.workspace_id,
                 "score": round(sc, 3),
-                "snippet": self._snippet(c.content or "", tokens or [query]),
+                "snippet": self._snippet(display, tokens or [query]),
                 "citation": cite,
                 "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             }
@@ -745,15 +999,18 @@ class KnowledgeStore:
             docs = int((await session.execute(doc_stmt)).scalar() or 0)
             chunks = int((await session.execute(chunk_stmt)).scalar() or 0)
             embedded = int((await session.execute(emb_stmt)).scalar() or 0)
-        from src.core_kernel.plugin_runtime.knowledge_embeddings import embedding_model
-
+        info = embedding_stats()
         return {
             "docs": docs,
             "chunks": chunks,
             "chunks_with_embedding": embedded,
-            "embeddings_configured": embeddings_configured(),
-            "embedding_model": embedding_model() if embeddings_configured() else "",
-            "hybrid_ready": embeddings_configured() and embedded > 0,
+            "embeddings_configured": bool(info.get("configured")),
+            "embedding_backend": info.get("backend") or "",
+            "embedding_model": info.get("model") or "",
+            "embedding_dim": info.get("dim") or 0,
+            "embedding_multimodal": bool(info.get("multimodal")),
+            "hybrid_ready": bool(info.get("configured")) and embedded > 0,
+            "parent_child": parent_child_enabled(),
         }
 
     async def patch(
@@ -840,7 +1097,16 @@ class KnowledgeStore:
             if not rows:
                 return {"ok": True, "updated": 0, "scanned": 0}
 
-            texts = [r.content or "" for r in rows]
+            texts = [
+                chunk_embedding_text(
+                    {
+                        "content": r.content or "",
+                        "context_header": getattr(r, "context_header", "") or "",
+                        "heading": r.heading or "",
+                    }
+                )
+                for r in rows
+            ]
             # Batch in groups of 32
             updated = 0
             errors: List[str] = []
@@ -1035,6 +1301,9 @@ class KnowledgeStore:
             "doc_id": row.doc_id,
             "chunk_index": row.chunk_index,
             "heading": row.heading,
+            "context_header": getattr(row, "context_header", "") or "",
+            "parent_chunk_id": getattr(row, "parent_chunk_id", "") or "",
+            "chunk_type": getattr(row, "chunk_type", "") or "text",
             "content": row.content,
             "char_start": row.char_start,
             "char_end": row.char_end,

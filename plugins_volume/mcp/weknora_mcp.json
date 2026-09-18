@@ -1,0 +1,16 @@
+{
+  "plugin_id": "mcp.weknora_server",
+  "name": "WeKnora MCP Server (optional)",
+  "kind": "mcp_http",
+  "version": "0.1.0",
+  "description": "Optional Streamable HTTP client for a WeKnora MCP server (hybrid_search / list_knowledge / get_knowledge). Disabled by default. Prefer NLM's weknora_* tools + WEKNORA_BASE_URL. This is not a second knowledge platform.",
+  "enabled": false,
+  "config": {
+    "url": "${WEKNORA_MCP_URL}",
+    "rpc_path": "/mcp",
+    "headers": {
+      "Authorization": "Bearer ${WEKNORA_MCP_AUTH_TOKEN}"
+    },
+    "notes": "Point at WeKnora mcp-server Streamable HTTP (WEKNORA_MCP_URL, e.g. http://127.0.0.1:8000). Useful tools if you want the agent to call WeKnora MCP directly: hybrid_search, list_knowledge, get_knowledge. Leave disabled unless that process is running."
+  }
+}

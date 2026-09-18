@@ -628,20 +628,54 @@ async def _run_agent_stream_inner(
 
         _refresh_tools()
         from src.core_kernel.compaction_summarizer import compact_messages_async
+        from src.core_kernel.tool_hooks import run_post_compact_hook, run_pre_compact_hook
 
-        working, compact_info = await compact_messages_async(
-            working,
-            model_name=model,
-            gateway=gateway,
-            provider=provider,
-            task_id=task_id,
-            use_llm=True,
+        pre_compact = run_pre_compact_hook(
+            session_id=parent_session_id,
+            cwd=workspace_cwd or meta0.get("cwd"),
+            model=model,
+            message_count=len(working),
         )
+        emit_extension_event(
+            "pre_compact",
+            {
+                "session_id": parent_session_id,
+                "model": model,
+                "message_count": len(working),
+                **(pre_compact if isinstance(pre_compact, dict) else {}),
+            },
+        )
+        skip_compact = bool(pre_compact.get("skip")) if isinstance(pre_compact, dict) else False
+        extra_instructions = ""
+        if isinstance(pre_compact, dict):
+            extra_instructions = str(pre_compact.get("instructions") or "")
+        if skip_compact:
+            compact_info = {}
+        else:
+            working, compact_info = await compact_messages_async(
+                working,
+                model_name=model,
+                gateway=gateway,
+                provider=provider,
+                task_id=task_id,
+                use_llm=True,
+            )
+        if extra_instructions and compact_info.get("compacted_via"):
+            compact_info = {**compact_info, "hook_instructions": extra_instructions}
         if compact_info.get("compacted_via"):
             from src.core_kernel.compaction_ledger import make_compaction_entry, notice_from_info
 
             entry = make_compaction_entry(compact_info)
             emit_extension_event("compaction", {"session_id": parent_session_id, **entry})
+            run_post_compact_hook(
+                session_id=parent_session_id,
+                cwd=workspace_cwd or meta0.get("cwd"),
+                compact_info=compact_info,
+            )
+            emit_extension_event(
+                "post_compact",
+                {"session_id": parent_session_id, **entry},
+            )
             yield {
                 "delta": "",
                 "done": False,

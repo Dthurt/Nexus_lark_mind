@@ -845,6 +845,23 @@ def create_adapters_app() -> FastAPI:
         path = (cwd or "").strip()
         return RpcEnvelope(ok=True, data={"skills": list_skills_public(path), "cwd": path})
 
+    @app.get("/api/extensions")
+    async def list_extensions(cwd: str = ""):
+        from src.core_kernel.extension_runtime import discover_and_load_extensions
+
+        path = (cwd or "").strip()
+        reg = discover_and_load_extensions(path or None, reload=False)
+        return RpcEnvelope(
+            ok=True,
+            data={
+                "cwd": path,
+                "loaded": list(reg.loaded),
+                "tools": list(reg.tools),
+                "commands": list(reg.commands),
+                "flags": reg.public_flags(),
+            },
+        )
+
     @app.get("/api/prompts")
     async def list_prompts(cwd: str = ""):
         from src.core_kernel.prompt_templates import list_prompt_templates_public

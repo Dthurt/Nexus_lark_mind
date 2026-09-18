@@ -5,11 +5,14 @@ without adopting Pi's "minimal core" product philosophy.
 
 ## Skills (progressive disclosure)
 
-Place playbooks under the workspace:
+Place playbooks under the workspace (first match wins):
 
 ```
 .nlm/skills/<name>/SKILL.md
-.agents/skills/<name>/SKILL.md
+.nlm/skills/<name>.md          # standalone with front-matter description
+.agents/skills/<name>/SKILL.md # also walked toward the git root
+~/.nlm/skills/<name>/SKILL.md
+plugins_volume/skills/<name>/SKILL.md
 ```
 
 Optional YAML front matter:
@@ -19,6 +22,7 @@ Optional YAML front matter:
 name: verify-change
 description: Run focused checks after edits
 allowed-tools: read_file, grep, glob, list_dir, run_shell
+# disable-model-invocation: true   # hide from catalog; /skill:name still works
 ---
 # body …
 ```
@@ -29,6 +33,7 @@ allowed-tools: read_file, grep, glob, list_dir, run_shell
 - When `/skill:name` is used and `allowed-tools` is set, the agent **converges**
   the OpenAI tool list to that subset for the turn (Dynamic Tool Loading).
 - API: `GET /api/skills?cwd=<path>`
+- Extensions + flags: `GET /api/extensions?cwd=<path>`
 
 Example skill ships at `.nlm/skills/verify-change/SKILL.md` (repo root).
 Built-in WeKnora playbook: `plugins_volume/skills/weknora-research/SKILL.md`
@@ -51,10 +56,17 @@ def register(api):
     api.register_tool({...})
     api.register_command("name", {...})
     api.set_active_tools(["read_file", "grep"])
+    api.register_flag("verbose-tools", {"type": "boolean", "env": "NLM_FLAG_VERBOSE_TOOLS"})
+    api.get_flag("verbose-tools")
 ```
 
 Events: `session_start`, `before_agent_start`, `after_agent_turn`, `tool_call`,
-`tool_result`, `model_request`, `model_response`, `user_message`, `compaction`, …
+`tool_result`, `model_request`, `model_response`, `user_message`, `compaction`,
+`pre_compact`, `post_compact`, `session_persist`, …
+
+`register_flag` is env-backed (`NLM_FLAG_<NAME>` or `options.env`), not a CLI
+parser — NLM is a server. `GET /api/extensions` lists loaded modules, tools,
+commands, and resolved flag values.
 
 Sample: `plugins_volume/extensions/sample_logger.py`.
 
@@ -140,16 +152,30 @@ PATCH /api/sessions/{id}/interaction  { "preset_name": "code-review", "cwd": "..
 
 ```
 <cwd>/.nlm/hooks/pre_tool.py
-plugins_volume/hooks/pre_tool.py
+<cwd>/.nlm/hooks/pre_compact.py
+<cwd>/.nlm/hooks/post_compact.py
+<cwd>/.nlm/hooks/session_persist.py
+plugins_volume/hooks/*.py
 ```
 
 ```python
 def pre_tool(ctx: dict) -> dict | None:
     # ctx: tool, base, arguments, plugin_id, session_id, task_id, cwd
     return {"block": True, "reason": "..."}  # or {"arguments": {...}}
+
+def pre_compact(ctx: dict) -> dict | None:
+    return {"skip": True}  # or {"instructions": "keep file paths"}
+
+def post_compact(ctx: dict) -> dict | None:
+    return None
+
+def session_persist(ctx: dict) -> dict | None:
+    return {"entries": [{"kind": "note", "text": "checkpoint"}]}
 ```
 
 Default sample at `plugins_volume/hooks/pre_tool.py` blocks writes to `.env` / key files.
+`session_persist` may store a small `extension_entries` sidecar on the session
+(Pi `appendEntry` analogue — not a second transcript).
 
 ## Compaction ledger
 

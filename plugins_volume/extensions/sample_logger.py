@@ -22,6 +22,15 @@ def register(api):
 
     api.on("tool_call", on_tool_call)
     api.on("before_agent_start", on_before_start)
+    api.register_flag(
+        "verbose-tools",
+        {
+            "type": "boolean",
+            "default": False,
+            "env": "NLM_FLAG_VERBOSE_TOOLS",
+            "description": "When true, sample_logger records extra tool metadata",
+        },
+    )
     api.register_command(
         "tools-readonly",
         {

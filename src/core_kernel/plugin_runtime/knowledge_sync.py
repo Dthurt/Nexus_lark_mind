@@ -35,7 +35,16 @@ _IGNORE_DIR_NAMES = {
     ".cursor",
 }
 
-_SYNC_GLOBS = ("*.md", "*.markdown", "*.mdx", "*.txt", "*.rst", "*.org", "*.pdf")
+_TEXT_GLOBS = ("*.md", "*.markdown", "*.mdx", "*.txt", "*.rst", "*.org", "*.pdf")
+_IMAGE_GLOBS = ("*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif")
+
+
+def _sync_globs() -> tuple[str, ...]:
+    from src.core_kernel.plugin_runtime.knowledge_embeddings import multimodal_embeddings_enabled
+
+    if multimodal_embeddings_enabled():
+        return _TEXT_GLOBS + _IMAGE_GLOBS
+    return _TEXT_GLOBS
 
 
 def stable_doc_id_for_path(rel_path: str) -> str:
@@ -59,10 +68,11 @@ def iter_workspace_docs(cwd: str, *, max_files: int = 400) -> List[Path]:
     found: List[Path] = []
     docs = root / "docs"
     candidates: List[Path] = []
+    globs = _sync_globs()
     if docs.is_dir():
-        for pattern in _SYNC_GLOBS:
+        for pattern in globs:
             candidates.extend(docs.rglob(pattern))
-    for pattern in _SYNC_GLOBS:
+    for pattern in globs:
         for path in root.rglob(pattern):
             try:
                 rel_parts = path.relative_to(root).parts

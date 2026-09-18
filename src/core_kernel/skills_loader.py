@@ -1,8 +1,9 @@
 """Skills — progressive disclosure of task playbooks (Pi-inspired).
 
 Layout (first match wins per skill name):
-  <cwd>/.nlm/skills/<name>/SKILL.md
-  <cwd>/.agents/skills/<name>/SKILL.md
+  <cwd>/.nlm/skills/<name>/SKILL.md  (also standalone *.md with description)
+  <cwd>/.agents/skills/… + ancestor .agents/skills up to git root
+  ~/.nlm/skills/<name>/SKILL.md
   plugins_volume/skills/<name>/SKILL.md
 
 SKILL.md front matter (optional YAML between ---):
@@ -33,6 +34,7 @@ class SkillInfo:
     path: str
     body: str = ""
     allowed_tools: tuple[str, ...] = ()
+    hidden: bool = False
 
 
 _FRONT_MATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
@@ -71,6 +73,30 @@ def _first_heading(body: str) -> str:
     return ""
 
 
+def _truthy(raw: str) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ancestor_agent_skill_dirs(start: Path) -> List[Path]:
+    """Walk toward the git root for shared .agents/skills (Pi-style)."""
+    out: List[Path] = []
+    cur = start.resolve()
+    seen: set[str] = set()
+    for _ in range(8):
+        candidate = cur / ".agents" / "skills"
+        key = str(candidate)
+        if candidate.is_dir() and key not in seen:
+            out.append(candidate)
+            seen.add(key)
+        if (cur / ".git").exists() or (cur / ".git").is_file():
+            break
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+    return out
+
+
 def _skill_search_roots(cwd: Optional[str] = None) -> List[Path]:
     paths: List[Path] = []
     if cwd:
@@ -78,10 +104,40 @@ def _skill_search_roots(cwd: Optional[str] = None) -> List[Path]:
         if root.is_dir():
             paths.append(root / ".nlm" / "skills")
             paths.append(root / ".agents" / "skills")
+            paths.extend(_ancestor_agent_skill_dirs(root))
     paths.append(Path("plugins_volume") / "skills")
     repo = Path(__file__).resolve().parents[2]
     paths.append(repo / "plugins_volume" / "skills")
-    return paths
+    paths.append(Path.home() / ".nlm" / "skills")
+    # Preserve order, drop dupes
+    uniq: List[Path] = []
+    seen: set[str] = set()
+    for p in paths:
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(p)
+    return uniq
+
+
+def _collect_skill_files(base: Path) -> List[Path]:
+    files: List[Path] = []
+    try:
+        for skill_md in sorted(base.rglob("SKILL.md"), key=lambda p: str(p).lower()):
+            if skill_md.is_file():
+                files.append(skill_md)
+        allow_standalone = base.name == "skills" and (
+            base.parent.name in {".nlm", ".agents"} or base.parent.name == ".nlm"
+        )
+        if allow_standalone or (base.parent.name == ".nlm" and base.name == "skills"):
+            for md in sorted(base.glob("*.md"), key=lambda p: p.name.lower()):
+                if md.name.lower() == "skill.md":
+                    continue
+                files.append(md)
+    except OSError:
+        return []
+    return files
 
 
 def discover_skills(cwd: str, *, max_skills: int = 40) -> List[SkillInfo]:
@@ -93,32 +149,30 @@ def discover_skills(cwd: str, *, max_skills: int = 40) -> List[SkillInfo]:
     for base in search_roots:
         if not base.is_dir():
             continue
-        try:
-            children = sorted(base.iterdir(), key=lambda p: p.name.lower())
-        except OSError:
-            continue
-        for child in children:
-            if len(found) >= max_skills:
-                break
-            skill_md = child / "SKILL.md" if child.is_dir() else None
-            if child.is_file() and child.name.lower() == "skill.md":
-                skill_md = child
-                child = child.parent
-            if skill_md is None or not skill_md.is_file():
-                continue
+        for skill_md in _collect_skill_files(base):
             try:
                 raw = skill_md.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             meta, body = _parse_front_matter(raw)
-            name = (meta.get("name") or child.name).strip()
+            name = (meta.get("name") or skill_md.parent.name).strip()
+            if skill_md.name.lower() != "skill.md" and not meta.get("name"):
+                name = skill_md.stem.strip()
             if not name or name in found:
                 continue
             desc = (meta.get("description") or _first_heading(body) or name).strip()
+            if skill_md.name.lower() != "skill.md" and not meta.get("description"):
+                # Standalone .md without a description is not a skill (Pi rule).
+                continue
             if len(desc) > 240:
                 desc = desc[:237] + "…"
             allowed = _parse_allowed_tools(
                 meta.get("allowed-tools") or meta.get("allowed_tools") or ""
+            )
+            hidden = _truthy(
+                meta.get("disable-model-invocation")
+                or meta.get("disable_model_invocation")
+                or ""
             )
             try:
                 if root and root.is_dir():
@@ -136,8 +190,9 @@ def discover_skills(cwd: str, *, max_skills: int = 40) -> List[SkillInfo]:
                 path=rel,
                 body=body,
                 allowed_tools=allowed,
+                hidden=hidden,
             )
-    return list(found.values())
+    return list(found.values())[:max_skills]
 
 
 def skills_prompt_block(cwd: str, *, max_skills: int = 40) -> str:
@@ -153,7 +208,10 @@ def skills_prompt_block(cwd: str, *, max_skills: int = 40) -> str:
         "it may be a builtin file outside the workspace.",
         "",
     ]
-    for s in skills:
+    listed = [s for s in skills if not s.hidden]
+    if not listed:
+        return ""
+    for s in listed:
         lines.append(f"- `{s.name}` — {s.description}")
         lines.append(f"  path: `{s.path}`")
     lines.append("")
@@ -192,6 +250,7 @@ def list_skills_public(cwd: str) -> List[dict]:
             "description": s.description,
             "path": s.path,
             "allowed_tools": list(s.allowed_tools),
+            "hidden": s.hidden,
         }
         for s in discover_skills(cwd)
     ]

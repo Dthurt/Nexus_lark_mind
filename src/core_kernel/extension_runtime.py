@@ -25,6 +25,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -50,6 +51,9 @@ KNOWN_EVENTS = frozenset(
         "user_message",
         "user_bash",
         "compaction",
+        "pre_compact",
+        "post_compact",
+        "session_persist",
         "extension",  # inter-extension bus
     }
 )
@@ -79,6 +83,10 @@ class ExtensionAPI:
 
     def register_flag(self, name: str, options: Optional[Dict[str, Any]] = None) -> None:
         self._registry.register_flag(self.name, name, options or {})
+
+    def get_flag(self, name: str) -> Any:
+        """Read a registered flag (env NLM_FLAG_<NAME> or options.env)."""
+        return self._registry.get_flag(name)
 
     def get_active_tools(self) -> Optional[List[str]]:
         return self._registry.get_active_tools()
@@ -165,6 +173,38 @@ class ExtensionRegistry:
             return
         with self._lock:
             self.flags[key] = {**options, "name": key, "_extension": ext_name}
+
+    def get_flag(self, name: str) -> Any:
+        spec = self.flags.get((name or "").strip())
+        if not spec:
+            return None
+        env_key = str(spec.get("env") or f"NLM_FLAG_{name.upper().replace('-', '_')}")
+        raw = (os.getenv(env_key) or "").strip()
+        typ = str(spec.get("type") or "boolean")
+        if raw == "":
+            return spec.get("default")
+        if typ == "boolean":
+            return raw.lower() in {"1", "true", "yes", "on"}
+        return raw
+
+    def public_flags(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            items = list(self.flags.values())
+        out: List[Dict[str, Any]] = []
+        for spec in items:
+            name = str(spec.get("name") or "")
+            out.append(
+                {
+                    "name": name,
+                    "type": spec.get("type") or "boolean",
+                    "description": spec.get("description") or "",
+                    "env": spec.get("env") or f"NLM_FLAG_{name.upper().replace('-', '_')}",
+                    "default": spec.get("default"),
+                    "value": self.get_flag(name),
+                    "extension": spec.get("_extension") or "",
+                }
+            )
+        return out
 
     def get_active_tools(self) -> Optional[List[str]]:
         with self._lock:

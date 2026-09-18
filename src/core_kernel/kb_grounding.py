@@ -72,10 +72,13 @@ def format_grounding_block(result: Dict[str, Any]) -> str:
             title = str(hit.get("title") or hit.get("doc_id") or hit.get("source_uri") or "untitled")
             doc_id = str(hit.get("doc_id") or hit.get("knowledge_id") or "")
             cite = str(hit.get("citation") or hit.get("source_uri") or "")
+            section = str(hit.get("context_header") or hit.get("heading") or "").replace("\n", " › ")
             snip = str(hit.get("snippet") or hit.get("content") or "").replace("\n", " ").strip()
             if len(snip) > MAX_SNIPPET:
                 snip = snip[: MAX_SNIPPET - 1] + "…"
             head = f"{i}. **{title}**"
+            if section:
+                head += f" § {section}"
             if doc_id:
                 head += f" [{doc_id}]"
             if cite and cite not in head:

@@ -12,6 +12,7 @@ from src.core_kernel.plugin_runtime.knowledge_store import (
     Base,
     KnowledgeStore,
     chunk_markdown,
+    chunk_parent_child,
     citations_markdown,
     content_hash,
     format_citation,
@@ -32,6 +33,27 @@ async def store(tmp_path):
     await kb.ensure_schema()
     yield kb
     await engine.dispose()
+
+
+def test_chunk_markdown_keeps_heading_breadcrumb():
+    md = "# Chapter\n\nintro para\n\n## Section\n\n" + ("body " * 40)
+    chunks = chunk_markdown(md, target=180, overlap_ratio=0.15)
+    assert chunks
+    headers = " ".join(c.get("context_header") or "" for c in chunks)
+    assert "Chapter" in headers
+    assert any("Section" in (c.get("context_header") or "") for c in chunks)
+
+
+def test_chunk_parent_child_search_children():
+    md = "# Manual\n\n" + "\n\n".join(
+        f"## Part {i}\n\n" + ("detail word " * 80) for i in range(6)
+    )
+    pieces = chunk_parent_child(md, parent_size=900, child_size=220)
+    types = [p.get("chunk_type") for p in pieces]
+    assert "parent" in types
+    assert types.count("text") >= 2
+    children = [p for p in pieces if p.get("chunk_type") != "parent"]
+    assert any(int(p.get("parent_index", -1)) >= 0 for p in children)
 
 
 def test_chunk_markdown_splits_headings_and_paragraphs():
@@ -275,6 +297,36 @@ async def test_sync_workspace_docs(tmp_path, store: KnowledgeStore):
 
     again = await sync_workspace_docs(store, str(tmp_path), workspace_id="ws")
     assert again["skipped"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_parent_child_search_expands_short_child(store: KnowledgeStore, monkeypatch):
+    monkeypatch.setenv("KB_PARENT_CHILD", "1")
+    body = "# Spec\n\n" + "\n\n".join(
+        f"## Topic {i}\n\n" + ("uniquephrase " * 60) + f" marker{i}\n"
+        for i in range(5)
+    )
+    await store.upsert(
+        doc_id="kb_pc",
+        title="Spec",
+        content=body,
+        workspace_id="ws",
+    )
+    full = await store.get("kb_pc", include_chunks=True)
+    assert full and any(c.get("chunk_type") == "parent" for c in full["chunks"])
+    hits = await store.search("uniquephrase marker2", workspace_id="ws", limit=5)
+    assert hits
+    assert hits[0].get("context_header") or hits[0].get("heading")
+
+
+def test_ingest_image_placeholder(tmp_path):
+    from src.core_kernel.plugin_runtime.knowledge_ingest import read_file_as_text
+
+    img = tmp_path / "shot.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8)
+    text, note = read_file_as_text(img)
+    assert "shot.png" in text
+    assert note == "image-placeholder"
 
 
 def test_ingest_txt_and_crude_pdf(tmp_path):
