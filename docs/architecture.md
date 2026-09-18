@@ -62,8 +62,8 @@
 |------|----------|
 | 验签 / challenge | `adapters/feishu/crypto.py` + webhook |
 | 消息解析 | `adapters/feishu/events.py` |
-| 流式卡片更新 | `adapter.on_bus_event` + `cards.py` + `client.update_message_card` |
-| 按钮交互 | `parse_card_action` → 新任务入队 |
+| 流式卡片更新 | Card JSON 2.0 `cards.py` + 防抖 `update_message_card`（同一条消息） |
+| 按钮交互 | schema 2.0 `behaviors.callback` → `parse_card_action` / HITL resolve / retry·clear |
 | 长连接 | `long_connection.py`（凭证齐全时启用） |
 
 ## 5. 扩展新模型

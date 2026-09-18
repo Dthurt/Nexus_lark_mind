@@ -3,10 +3,14 @@
 from src.adapters.feishu.cards import (
     build_model_pick_card,
     build_provider_pick_card,
+    iter_card_actions,
+    iter_select_options,
 )
 from src.adapters.feishu.events import classify_payload, parse_card_action
 from src.adapters.feishu.model_pick import (
     catalog_choices,
+    is_kb_command,
+    is_preset_command,
     is_rebind_command,
     session_has_model,
 )
@@ -41,6 +45,8 @@ def test_session_has_model_and_rebind():
     assert is_rebind_command("切换模型")
     assert is_rebind_command("/model")
     assert not is_rebind_command("你好")
+    assert is_preset_command("权限预设")
+    assert is_kb_command("切换知识库")
 
 
 def test_provider_pick_card_embeds_session():
@@ -52,10 +58,11 @@ def test_provider_pick_card_embeds_session():
         session_id="feishu:oc_1:ou_1",
         chat_id="oc_1",
     )
-    actions = card["elements"][1]["actions"]
-    values = [a["value"] for a in actions]
-    assert any(v.get("kind") == "provider_pick" and v.get("provider_id") == "custom-a" for v in values)
+    values = iter_card_actions(card)
+    assert any(v.get("kind") == "provider_pick" and v.get("action") == "pick_provider" for v in values)
     assert all(v.get("session_id") == "feishu:oc_1:ou_1" for v in values if v.get("kind") == "provider_pick")
+    opts = {o["option"] for o in iter_select_options(card)}
+    assert {"custom-a", "glm"} <= opts
 
 
 def test_model_pick_card_and_parse_action():
@@ -66,15 +73,11 @@ def test_model_pick_card_and_parse_action():
         session_id="feishu:oc_1:ou_1",
         chat_id="oc_1",
     )
-    pick = next(
-        a["value"]
-        for a in card["elements"][1]["actions"]
-        if a["value"].get("action") == "pick_model"
-    )
+    pick = next(a for a in iter_card_actions(card) if a.get("action") == "pick_model")
     payload = {
         "open_message_id": "om_x",
         "operator": {"open_id": "ou_1"},
-        "action": {"value": pick},
+        "action": {"tag": "select_static", "option": "m1", "value": pick},
     }
     parsed = parse_card_action(payload)
     assert parsed is not None
@@ -87,7 +90,7 @@ def test_model_pick_card_and_parse_action():
             "header": {"event_type": "card.action.trigger"},
             "open_message_id": "om_x",
             "operator": {"open_id": "ou_1"},
-            "action": {"value": pick},
+            "action": {"tag": "select_static", "option": "m1", "value": pick},
         }
     )
     assert kind == "card_action"

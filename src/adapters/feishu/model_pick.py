@@ -17,9 +17,35 @@ REBIND_COMMANDS = frozenset(
     }
 )
 
+PRESET_COMMANDS = frozenset(
+    {
+        "/preset",
+        "权限预设",
+        "切换预设",
+        "选择预设",
+    }
+)
+
+KB_COMMANDS = frozenset(
+    {
+        "/kb",
+        "切换知识库",
+        "绑定知识库",
+        "选择知识库",
+    }
+)
+
 
 def is_rebind_command(text: str) -> bool:
     return (text or "").strip().lower() in {c.lower() for c in REBIND_COMMANDS}
+
+
+def is_preset_command(text: str) -> bool:
+    return (text or "").strip().lower() in {c.lower() for c in PRESET_COMMANDS}
+
+
+def is_kb_command(text: str) -> bool:
+    return (text or "").strip().lower() in {c.lower() for c in KB_COMMANDS}
 
 
 def session_has_model(session: Optional[Dict[str, Any]]) -> bool:

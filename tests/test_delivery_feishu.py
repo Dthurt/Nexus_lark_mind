@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from src.adapters.feishu.cards import build_plan_review_card
+from src.adapters.feishu.cards import build_plan_review_card, iter_card_actions
 from src.common.delivery_store import DeliveryWriteError, write_delivery_to_workspace
 
 
@@ -12,12 +12,13 @@ def test_build_plan_review_card_actions():
         title="Plan review",
         plan="# Do thing\n\n```mermaid\ngraph TD\nA-->B\n```",
     )
+    assert card["schema"] == "2.0"
     assert card["header"]["title"]["content"] == "计划审阅"
-    actions = card["elements"][-1]["actions"]
-    kinds = {a["value"]["action"] for a in actions}
+    actions = iter_card_actions(card)
+    kinds = {a["action"] for a in actions}
     assert kinds == {"approve", "keep_planning", "deny"}
-    assert all(a["value"]["kind"] == "plan_review" for a in actions)
-    assert all(a["value"]["call_id"] == "pr_1" for a in actions)
+    assert all(a["kind"] == "plan_review" for a in actions)
+    assert all(a["call_id"] == "pr_1" for a in actions)
 
 
 def test_write_delivery_to_workspace(tmp_path: Path):

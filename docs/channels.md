@@ -76,6 +76,22 @@ POST /api/settings/channels/feishu|dingtalk|wecom/reload
 
 密钥字段留空表示保留已存值。
 
+## 飞书卡片（Card JSON 2.0）
+
+对话与交互走官方 **interactive / Card Kit schema 2.0**（`schema: "2.0"`，正文在 `body.elements`，按钮 `behaviors.callback`）：
+
+| 卡片 | 用途 |
+|------|------|
+| 生成中 | 同一条消息 `PATCH` 更新；工具进度 / 状态 / 引用写在卡片内，流式 delta **防抖**（约 450ms）避免触达更新频控 |
+| 对话 / 知识库 | 最终回复；有 `citations_md` 时改用青绿「知识库」头 |
+| 工具审批 / 询问 / 计划审阅 | 独立交互卡，回调进 Kernel `/rpc/gates/resolve` |
+| 错误 / 限流 | 红色或黄色卡，去掉 traceback；可「再问一次」 |
+| Provider / 模型 | 会话首次绑定；回复卡上也可「切换模型」 |
+
+按钮：再问一次（重提原文）、切换模型、清空会话（二次确认）。不另发一堆碎消息。
+
+限制（开放平台）：交互卡片 JSON 约 **30 KB**、markdown 子集、更新接口有 QPS 限制。超长正文会被截断；图表未使用。
+
 ## Env fallback
 
 见 `.env.example`：`FEISHU_*`、`DINGTALK_*`、`WECOM_*`。

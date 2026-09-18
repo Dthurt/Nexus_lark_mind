@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,11 @@ class ParsedCardAction(BaseModel):
     session_id: str = ""
     chat_id: str = ""
     page: int = 0
+    option: str = ""
+    options: List[str] = Field(default_factory=list)
+    question_id: str = ""
+    permission_preset: str = ""
+    kb_id: str = ""
     raw: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -145,13 +150,18 @@ def parse_im_message(payload: Dict[str, Any]) -> Optional[ParsedFeishuMessage]:
 
 def parse_card_action(payload: Dict[str, Any]) -> Optional[ParsedCardAction]:
     header = payload.get("header") or {}
+    event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
     event_type = header.get("event_type") or payload.get("type")
     if event_type not in {"card.action.trigger", "interactive"} and "action" not in payload:
         # interactive callback often comes as top-level
-        if "open_message_id" not in payload and "action" not in payload:
+        if (
+            "open_message_id" not in payload
+            and "action" not in payload
+            and "action" not in event
+        ):
             return None
 
-    action_obj = payload.get("action") or (payload.get("event") or {}).get("action") or {}
+    action_obj = payload.get("action") or event.get("action") or {}
     value = action_obj.get("value") or {}
     if isinstance(value, str):
         try:
@@ -159,25 +169,75 @@ def parse_card_action(payload: Dict[str, Any]) -> Optional[ParsedCardAction]:
         except json.JSONDecodeError:
             value = {"action": value}
 
-    user = payload.get("operator") or payload.get("user_id") or {}
+    option = str(action_obj.get("option") or value.get("option") or "").strip()
+    raw_options = action_obj.get("options") or value.get("options") or []
+    options = [str(x) for x in raw_options if str(x).strip()] if isinstance(raw_options, list) else []
+    question_id = str(value.get("question_id") or "").strip()
+    answers = value.get("answers") if isinstance(value.get("answers"), dict) else {}
+    if option and question_id and question_id not in answers:
+        answers = {**answers, question_id: option}
+
+    user = (
+        payload.get("operator")
+        or event.get("operator")
+        or payload.get("user_id")
+        or {}
+    )
     if isinstance(user, dict):
         user_id = user.get("open_id") or user.get("user_id") or "unknown"
     else:
         user_id = str(user)
 
+    context = event.get("context") if isinstance(event.get("context"), dict) else {}
+    open_message_id = (
+        payload.get("open_message_id")
+        or context.get("open_message_id")
+        or context.get("message_id")
+        or ""
+    )
+    chat_id = (
+        value.get("chat_id")
+        or context.get("open_chat_id")
+        or context.get("chat_id")
+        or payload.get("open_chat_id")
+        or ""
+    )
+
+    action = str(value.get("action") or "noop")
+    provider_id = str(value.get("provider_id") or "")
+    model_name = str(value.get("model_name") or "")
+    if action == "pick_provider" and option:
+        provider_id = option
+    if action == "pick_model" and option:
+        model_name = option
+    permission_preset = str(value.get("permission_preset") or "")
+    kb_id = str(value.get("kb_id") or "")
+    if action == "pick_preset" and option:
+        permission_preset = option
+    if action == "pick_kb" and option:
+        kb_id = option
+    if action == "session_setting" and option:
+        # option encodes the real action (back_providers / open_preset / kb:local)
+        pass
+
     return ParsedCardAction(
         user_id=user_id,
-        open_message_id=payload.get("open_message_id") or "",
-        action=str(value.get("action") or "noop"),
+        open_message_id=str(open_message_id or ""),
+        action=action,
         payload=str(value.get("payload") or ""),
         kind=str(value.get("kind") or ""),
         call_id=str(value.get("call_id") or ""),
-        answers=value.get("answers") if isinstance(value.get("answers"), dict) else {},
-        provider_id=str(value.get("provider_id") or ""),
-        model_name=str(value.get("model_name") or ""),
+        answers=answers if isinstance(answers, dict) else {},
+        provider_id=provider_id,
+        model_name=model_name,
         session_id=str(value.get("session_id") or ""),
-        chat_id=str(value.get("chat_id") or ""),
+        chat_id=str(chat_id or ""),
         page=int(value.get("page") or 0),
+        option=option,
+        options=options,
+        question_id=question_id,
+        permission_preset=permission_preset,
+        kb_id=kb_id,
         raw=payload,
     )
 
