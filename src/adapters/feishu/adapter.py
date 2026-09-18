@@ -358,7 +358,7 @@ class FeishuAdapter(BaseAdapter):
             )
             return
         if action == "pick_provider":
-            provider_id = str(data.provider_id or "").strip()
+            provider_id = str(data.provider_id or "").strip() or str(getattr(data, "option", "") or "").strip()
             if not provider_id:
                 return
             await self._send_model_gate(
