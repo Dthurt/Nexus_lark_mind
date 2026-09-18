@@ -51,8 +51,17 @@ def _env_flag_on(name: str) -> bool:
 
 
 def embedding_base_url() -> str:
-    """Prefer explicit KB_EMBEDDING_*; WEMM_BASE_URL is a local alias."""
-    return (_env("KB_EMBEDDING_BASE_URL") or _env("WEMM_BASE_URL")).rstrip("/")
+    """Prefer explicit KB_EMBEDDING_*; WEMM then GLM/OpenAI chat keys as fallback."""
+    explicit = (_env("KB_EMBEDDING_BASE_URL") or _env("WEMM_BASE_URL")).rstrip("/")
+    if explicit:
+        return explicit
+    glm_base = _env("GLM_BASE_URL").rstrip("/")
+    if _env("GLM_API_KEY"):
+        return glm_base or "https://open.bigmodel.cn/api/paas/v4"
+    openai_base = _env("OPENAI_BASE_URL").rstrip("/")
+    if _env("OPENAI_API_KEY"):
+        return openai_base or "https://api.openai.com/v1"
+    return ""
 
 
 def embeddings_configured() -> bool:
@@ -67,6 +76,8 @@ def embedding_backend() -> str:
         return ""
     if _env("WEMM_BASE_URL") or "wemm" in embedding_base_url().lower():
         return "wemm"
+    if _env("GLM_API_KEY") and not _env("KB_EMBEDDING_BASE_URL"):
+        return "glm"
     return "openai"
 
 
@@ -76,11 +87,18 @@ def embedding_model() -> str:
         return explicit
     if embedding_backend() == "wemm":
         return _WEMM_DEFAULT_MODEL
+    if embedding_backend() == "glm":
+        return "embedding-3"
     return "text-embedding-3-small"
 
 
 def embedding_api_key() -> str:
-    return _env("KB_EMBEDDING_API_KEY") or _env("WEMM_API_KEY")
+    return (
+        _env("KB_EMBEDDING_API_KEY")
+        or _env("WEMM_API_KEY")
+        or _env("GLM_API_KEY")
+        or _env("OPENAI_API_KEY")
+    )
 
 
 def embedding_dim() -> int:

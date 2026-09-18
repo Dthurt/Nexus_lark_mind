@@ -257,10 +257,13 @@ TOOLS = TOOLS + WEKNORA_TOOLS
 
 def _session_bound_weknora_kb(arguments: Dict[str, Any], meta: Dict[str, Any]) -> str:
     """Bound session KB wins so the model cannot search a different / first KB."""
+    from src.core_kernel.plugin_runtime.knowledge_scope import is_remote_kb_id
+
     session_kb = str(meta.get("weknora_kb_id") or "").strip()
-    if session_kb:
+    if is_remote_kb_id(session_kb):
         return session_kb
-    return str(arguments.get("kb_id") or "").strip()
+    arg = str(arguments.get("kb_id") or "").strip()
+    return arg if is_remote_kb_id(arg) else ""
 
 
 class KnowledgeToolsPlugin(BasePlugin):
@@ -300,18 +303,25 @@ class KnowledgeToolsPlugin(BasePlugin):
             return row
 
         if tool_name == "kb_add":
-            return await self._kb_add(store, arguments, ws)
+            args = dict(arguments)
+            if not str(args.get("kb_id") or "").strip():
+                args["kb_id"] = str(meta.get("weknora_kb_id") or "")
+            return await self._kb_add(store, args, ws)
         if tool_name == "kb_search":
             q = str(arguments.get("query") or "").strip()
             if not q:
                 raise PluginError("query required")
             limit = int(arguments.get("limit") or 6)
+            from src.core_kernel.plugin_runtime.knowledge_scope import is_local_kb_id
+
+            raw_kb = str(meta.get("weknora_kb_id") or arguments.get("kb_id") or "")
             hits = await store.search(
                 q,
                 workspace_id=ws,
                 limit=max(1, min(limit, 20)),
                 tag=str(arguments.get("tag") or ""),
                 session_id=str(meta.get("session_id") or ""),
+                kb_id=raw_kb if is_local_kb_id(raw_kb) else "",
             )
             return {
                 "ok": True,
@@ -577,6 +587,7 @@ class KnowledgeToolsPlugin(BasePlugin):
                 source=source,
                 source_uri=source_uri,
                 workspace_id=workspace_id,
+                kb_id=str(arguments.get("kb_id") or ""),
                 content_hash_value=content_hash(content),
             )
             if note:
@@ -598,6 +609,7 @@ class KnowledgeToolsPlugin(BasePlugin):
             source=source,
             source_uri=source_uri,
             workspace_id=workspace_id,
+            kb_id=str(arguments.get("kb_id") or ""),
             content_hash_value=content_hash(content),
         )
 

@@ -17,6 +17,8 @@ from src.core_kernel.plugin_runtime.knowledge_query import (
 def test_wemm_alias_configures_backend(monkeypatch):
     monkeypatch.delenv("KB_EMBEDDING_BASE_URL", raising=False)
     monkeypatch.delenv("KB_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("WEMM_BASE_URL", "http://127.0.0.1:8000/v1")
     monkeypatch.setenv("WEMM_MODEL", "WeMM-Embedding-2B")
     monkeypatch.setenv("WEMM_DIM", "256")
@@ -29,6 +31,7 @@ def test_wemm_alias_configures_backend(monkeypatch):
 
 
 def test_kb_url_wins_over_wemm_for_base(monkeypatch):
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
     monkeypatch.setenv("KB_EMBEDDING_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setenv("WEMM_BASE_URL", "http://127.0.0.1:8000/v1")
     assert ke.embedding_base_url() == "https://api.openai.com/v1"

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.common.schemas import ChatMessage, ChatRole
+from src.core_kernel.plugin_runtime.knowledge_scope import is_remote_kb_id, normalize_local_kb_id
 
 MIN_QUERY_CHARS = 2
 MAX_SNIPPET = 420
@@ -143,7 +144,7 @@ async def retrieve_bound_knowledge(
     workspace_id = str(meta.get("workspace_id") or "")
     n = max(1, min(int(limit or MAX_HITS), 12))
 
-    if bound:
+    if is_remote_kb_id(bound):
         search = weknora_search_fn
         if search is None:
             from src.core_kernel.plugin_runtime.weknora_client import weknora_search as search
@@ -179,13 +180,18 @@ async def retrieve_bound_knowledge(
 
         kb = KnowledgeStore(get_session_factory())
         await kb.ensure_schema()
+    local_id = normalize_local_kb_id(bound)
     hits = await kb.search(
-        q, workspace_id=workspace_id, limit=n, session_id=str(meta.get("session_id") or "")
+        q,
+        workspace_id=workspace_id,
+        limit=n,
+        session_id=str(meta.get("session_id") or ""),
+        kb_id=local_id,
     )
     return {
         "ok": True,
         "source": "local",
-        "kb_id": "",
+        "kb_id": local_id if bound else "",
         "query": q,
         "results": hits,
         "citations_md": citations_markdown(hits),
@@ -202,6 +208,8 @@ def grounding_notice(result: Dict[str, Any]) -> str:
     n = int(result.get("hit_count") or 0)
     if source == "weknora":
         label = f"WeKnora「{kb_id}」"
+    elif kb_id:
+        label = f"本地知识库「{kb_id}」"
     else:
         label = "本地知识库"
     if result.get("error"):
@@ -241,7 +249,7 @@ async def apply_turn_grounding(
         bound = bound_weknora_kb_id(meta)
         result = {
             "ok": False,
-            "source": "weknora" if bound else "local",
+            "source": "weknora" if is_remote_kb_id(bound) else "local",
             "kb_id": bound,
             "query": query,
             "results": [],

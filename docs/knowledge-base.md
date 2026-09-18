@@ -72,13 +72,16 @@ Open it from:
 
 Once open:
 
-- KB selector (**本地知识库** + WeKnora names when `WEKNORA_BASE_URL` is set), search,
+- KB selector (**本地多库** + WeKnora names when `WEKNORA_BASE_URL` is set), search,
   citation results, full-body preview, empty/health/error states.
-- Local library **导入文件** (`POST /api/knowledge/docs/file`) — PDF / Office / Markdown
-  extracted to text (default ~20MB, `KB_INGEST_MAX_BYTES`; PDF pages `KB_PDF_MAX_PAGES`).
+- Local libraries (`local:…` ids in `weknora_kb_id`; empty / `local:default` = 默认知识库).
+- Dropzone / 多文件 / 文件夹 / URL 抓取 enqueue ingest jobs (`pending → processing → completed|failed`)
+  via `POST /api/knowledge/ingest`. PDF / Office / Markdown / HTML extracted to text
+  (default ~20MB, `KB_INGEST_MAX_BYTES`; PDF pages `KB_PDF_MAX_PAGES`). Scanned PDFs try OCR
+  when `pymupdf` + `rapidocr-onnxruntime` are installed (`KB_OCR=1`).
+- Document preview includes **分块预览 / 编辑** (`PATCH /api/knowledge/chunks/{id}`).
 - **去对话** / row **提问** returns to the main chat with that KB already bound.
-- One session ↔ one bound KB (`weknora_kb_id`; empty = local). Changing the picker patches
-  the session and subsequent turns.
+- One session ↔ one bound KB (`weknora_kb_id`; empty / `local:*` = local, other ids = WeKnora).
 
 ### Main composer picker
 
@@ -154,7 +157,7 @@ Upsert key is a stable `file_<sha1(rel)>` id plus `content_hash` skip-if-unchang
 
 ## Optional embeddings (hybrid)
 
-Unset → keyword-only (default). Either `KB_EMBEDDING_BASE_URL` **or** `WEMM_BASE_URL` enables hybrid search. Requests try `/embeddings` then `/v1/embeddings` so a bare host or an OpenAI `/v1` base both work. Failures degrade to keyword-only.
+Keyword-only unless an embedding endpoint can be inferred. **Default on** when `GLM_API_KEY` or `OPENAI_API_KEY` is set (Zhipu `embedding-3` / OpenAI `text-embedding-3-small`). Explicit `KB_EMBEDDING_BASE_URL` or `WEMM_BASE_URL` still wins. `KB_EMBEDDING_ENABLED=0` forces keyword-only. Requests try `/embeddings` then `/v1/embeddings`. Failures degrade to keyword-only.
 
 ```bash
 KB_EMBEDDING_BASE_URL=https://api.openai.com/v1
@@ -186,15 +189,16 @@ Vectors are stored as JSON on chunks. After configuring embeddings on an existin
 | `KB_PARENT_CHILD` | on | Parent/child chunks for long docs |
 | `KB_INGEST_MAX_BYTES` | 20MB | Library file ingest + workspace docs sync (session chips stay 512KB) |
 | `KB_PDF_MAX_PAGES` | 400 | Pages extracted per PDF |
+| `KB_OCR` | on | Scanned PDF OCR when pymupdf + rapidocr-onnxruntime are installed |
 | `KB_QUERY_EXPAND` | on | Local query variants when first pass is thin |
 | `KB_RERANK` | on | Second-stage token rerank of the candidate pool |
 | `KB_RERANK_URL` | off | Optional HTTP reranker (OpenAI/Cohere-shaped JSON) |
-| `KB_EMBEDDING_*` / `WEMM_*` | off | Optional hybrid + image vectors |
+| `KB_EMBEDDING_*` / `WEMM_*` | GLM/OpenAI key | Hybrid vectors; explicit URL optional |
 
 FTS5 has **no env switch**: `ensure_schema` tries trigram → unicode61 and keeps ILIKE if both fail.
 Existing databases get an empty FTS table **backfilled** from `knowledge_chunks` on first open.
 
-Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape (not WeKnora anydoc / OCR). Scanned or image-only PDFs may yield no text. `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags. Pass `session_id` on search to include that session’s temporary uploads.
+Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape, **html**, and **URL fetch** (`POST /api/knowledge/ingest`). Scanned PDFs use RapidOCR when those extras are installed. `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags. Pass `session_id` on search to include that session’s temporary uploads. Local libraries are listed at `GET /api/knowledge/kbs`.
 
 ## Optional WeKnora bridge
 

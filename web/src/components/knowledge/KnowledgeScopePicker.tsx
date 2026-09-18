@@ -1,6 +1,6 @@
 import { BookOpen, Check, ChevronDown, ExternalLink } from "lucide-react";
 
-import type { WeknoraHealth, WeknoraKb } from "@/api/endpoints";
+import type { LocalKnowledgeBase, WeknoraHealth, WeknoraKb } from "@/api/endpoints";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,13 +10,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { kbScopeLabel, LOCAL_KB_ID } from "@/lib/knowledgeScope";
+import { DEFAULT_LOCAL_KB_ID, kbScopeLabel, LOCAL_KB_ID } from "@/lib/knowledgeScope";
 import { cn } from "@/lib/utils";
 
 export type KnowledgeScopePickerProps = {
   value?: string;
   name?: string;
   kbs?: WeknoraKb[];
+  localKbs?: LocalKnowledgeBase[];
   health?: WeknoraHealth | null;
   disabled?: boolean;
   onChange?: (kbId: string, kbName: string) => void;
@@ -28,6 +29,7 @@ export function KnowledgeScopePicker({
   value = "",
   name = "",
   kbs = [],
+  localKbs = [],
   health = null,
   disabled = false,
   onChange,
@@ -38,6 +40,9 @@ export function KnowledgeScopePicker({
   const label = kbScopeLabel(boundId, name);
   const remoteReady = Boolean(health?.configured && !health?.skipped);
   const online = Boolean(health?.online);
+  const extras = localKbs.filter((kb) => kb.id && kb.id !== DEFAULT_LOCAL_KB_ID);
+  const defaultLocal = localKbs.find((kb) => kb.id === DEFAULT_LOCAL_KB_ID);
+  const localActive = !boundId || boundId === DEFAULT_LOCAL_KB_ID;
 
   return (
     <div className={cn("inline-flex min-w-0 items-center gap-0.5", className)}>
@@ -61,19 +66,37 @@ export function KnowledgeScopePicker({
             <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="z-[80] w-[240px]" side="top" sideOffset={6}>
+        <DropdownMenuContent align="start" className="z-[80] w-[260px]" side="top" sideOffset={6}>
           <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            对话绑定的知识库
+            本地知识库
           </DropdownMenuLabel>
           <DropdownMenuItem
             className="gap-2"
             data-testid="knowledge-scope-local"
-            onSelect={() => onChange?.(LOCAL_KB_ID, "本地知识库")}
+            onSelect={() => onChange?.(LOCAL_KB_ID, defaultLocal?.name || "本地知识库")}
           >
-            <Check className={cn("size-3.5", boundId ? "opacity-0" : "opacity-100")} />
-            <span className="min-w-0 flex-1">本地知识库</span>
-            <span className="text-[10px] text-muted-foreground">SQLite</span>
+            <Check className={cn("size-3.5", localActive ? "opacity-100" : "opacity-0")} />
+            <span className="min-w-0 flex-1">{defaultLocal?.name || "本地知识库"}</span>
+            <span className="text-[10px] text-muted-foreground">
+              {defaultLocal?.doc_count != null ? defaultLocal.doc_count : "SQLite"}
+            </span>
           </DropdownMenuItem>
+          {extras.map((kb) => {
+            const active = kb.id === boundId;
+            return (
+              <DropdownMenuItem
+                key={kb.id}
+                className="gap-2"
+                onSelect={() => onChange?.(kb.id, kb.name || kb.id)}
+              >
+                <Check className={cn("size-3.5", active ? "opacity-100" : "opacity-0")} />
+                <span className="min-w-0 flex-1 truncate">{kb.name || kb.id}</span>
+                {kb.doc_count != null ? (
+                  <span className="text-[10px] text-muted-foreground">{kb.doc_count}</span>
+                ) : null}
+              </DropdownMenuItem>
+            );
+          })}
           {remoteReady ? (
             <>
               <DropdownMenuSeparator />
@@ -105,7 +128,7 @@ export function KnowledgeScopePicker({
             </>
           ) : (
             <div className="px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
-              未配置 WeKnora（WEKNORA_BASE_URL）。对话默认使用本地知识库。
+              未配置 WeKnora。多库、拖拽导入、URL 与分块编辑都在本地完成。
             </div>
           )}
           {onOpenKnowledge ? (

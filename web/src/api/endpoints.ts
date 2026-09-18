@@ -753,12 +753,30 @@ export type KnowledgeDoc = {
   source_uri?: string;
   content_hash?: string;
   workspace_id?: string;
+  kb_id?: string;
+  parse_status?: string;
+  parse_error?: string;
   updated_at?: string | null;
   snippet?: string;
   score?: number;
   chunk_id?: string;
   heading?: string;
   citation?: string;
+  chunks?: KnowledgeChunk[];
+};
+
+export type KnowledgeChunk = {
+  chunk_id: string;
+  doc_id?: string;
+  chunk_index?: number;
+  heading?: string;
+  context_header?: string;
+  parent_chunk_id?: string;
+  chunk_type?: string;
+  content?: string;
+  char_start?: number;
+  char_end?: number;
+  has_embedding?: boolean;
 };
 
 export type KnowledgeHit = KnowledgeDoc & {
@@ -776,9 +794,37 @@ export type KnowledgeStats = {
   chunks_with_embedding: number;
   embeddings_configured: boolean;
   embedding_model?: string;
+  embedding_backend?: string;
   hybrid_ready: boolean;
   fts5?: boolean;
   fts5_tokenizer?: string;
+};
+
+export type LocalKnowledgeBase = {
+  id: string;
+  kb_id?: string;
+  name: string;
+  description?: string;
+  source?: string;
+  doc_count?: number | null;
+  updated_at?: string | null;
+};
+
+export type KnowledgeIngestJob = {
+  job_id: string;
+  kind?: string;
+  filename?: string;
+  source_uri?: string;
+  title?: string;
+  status?: string;
+  progress?: number;
+  message?: string;
+  error?: string;
+  bytes?: number;
+  doc_id?: string;
+  kb_id?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export type SessionUploadDoc = KnowledgeDoc & {
@@ -801,10 +847,12 @@ export type KnowledgeSyncEntry = {
 export function listKnowledgeDocs(params?: {
   workspace_id?: string;
   limit?: number;
+  kb_id?: string;
 }): Promise<{ docs: KnowledgeDoc[] }> {
   const q = new URLSearchParams();
   if (params?.workspace_id) q.set("workspace_id", params.workspace_id);
   if (params?.limit != null) q.set("limit", String(params.limit));
+  if (params?.kb_id) q.set("kb_id", params.kb_id);
   const qs = q.toString();
   return apiGet(`/api/knowledge/docs${qs ? `?${qs}` : ""}`);
 }
@@ -813,19 +861,23 @@ export function searchKnowledge(params: {
   query: string;
   workspace_id?: string;
   limit?: number;
+  kb_id?: string;
 }): Promise<{ query: string; results: KnowledgeHit[]; citations_md?: string }> {
   const q = new URLSearchParams();
   q.set("query", params.query);
   if (params.workspace_id) q.set("workspace_id", params.workspace_id);
   if (params.limit != null) q.set("limit", String(params.limit));
+  if (params.kb_id) q.set("kb_id", params.kb_id);
   return apiGet(`/api/knowledge/search?${q.toString()}`);
 }
 
 export function getKnowledgeStats(params?: {
   workspace_id?: string;
+  kb_id?: string;
 }): Promise<KnowledgeStats> {
   const q = new URLSearchParams();
   if (params?.workspace_id) q.set("workspace_id", params.workspace_id);
+  if (params?.kb_id) q.set("kb_id", params.kb_id);
   const qs = q.toString();
   return apiGet(`/api/knowledge/stats${qs ? `?${qs}` : ""}`);
 }
@@ -846,6 +898,7 @@ export function addKnowledgeDoc(body: {
   doc_id?: string;
   source?: string;
   workspace_id?: string;
+  kb_id?: string;
   cwd?: string;
 }): Promise<KnowledgeDoc> {
   return apiPost("/api/knowledge/docs", body);
@@ -855,15 +908,16 @@ export async function uploadKnowledgeFile(
   file: File,
   workspaceId = "",
   title = "",
+  kbId = "",
 ): Promise<KnowledgeDoc> {
   const form = new FormData();
   form.append("file", file);
   if (workspaceId) form.append("workspace_id", workspaceId);
   if (title) form.append("title", title);
-  const qs = workspaceId
-    ? `?workspace_id=${encodeURIComponent(workspaceId)}`
-    : "";
-  const resp = await fetch(`/api/knowledge/docs/file${qs}`, {
+  if (kbId) form.append("kb_id", kbId);
+  const qs = new URLSearchParams();
+  if (workspaceId) qs.set("workspace_id", workspaceId);
+  const resp = await fetch(`/api/knowledge/docs/file${qs.toString() ? `?${qs}` : ""}`, {
     method: "POST",
     body: form,
   });
@@ -872,6 +926,82 @@ export async function uploadKnowledgeFile(
     throw new Error(parseError(json, `HTTP ${resp.status}`));
   }
   return json.data as KnowledgeDoc;
+}
+
+export async function ingestKnowledgeFiles(
+  files: File[],
+  opts?: { workspaceId?: string; kbId?: string },
+): Promise<{ jobs: KnowledgeIngestJob[]; errors?: string[] }> {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("file", file, file.name);
+  }
+  if (opts?.workspaceId) form.append("workspace_id", opts.workspaceId);
+  if (opts?.kbId) form.append("kb_id", opts.kbId);
+  const qs = new URLSearchParams();
+  if (opts?.workspaceId) qs.set("workspace_id", opts.workspaceId);
+  if (opts?.kbId) qs.set("kb_id", opts.kbId);
+  const resp = await fetch(`/api/knowledge/ingest${qs.toString() ? `?${qs}` : ""}`, {
+    method: "POST",
+    body: form,
+  });
+  const json = await resp.json().catch(() => null);
+  if (!resp.ok || !json?.ok) {
+    throw new Error(parseError(json, `HTTP ${resp.status}`));
+  }
+  return json.data as { jobs: KnowledgeIngestJob[]; errors?: string[] };
+}
+
+export function ingestKnowledgeUrl(body: {
+  url: string;
+  workspace_id?: string;
+  kb_id?: string;
+  title?: string;
+}): Promise<{ jobs: KnowledgeIngestJob[] }> {
+  return apiPost("/api/knowledge/ingest", body);
+}
+
+export function listKnowledgeJobs(params?: {
+  workspace_id?: string;
+  kb_id?: string;
+  limit?: number;
+}): Promise<{ jobs: KnowledgeIngestJob[] }> {
+  const q = new URLSearchParams();
+  if (params?.workspace_id) q.set("workspace_id", params.workspace_id);
+  if (params?.kb_id) q.set("kb_id", params.kb_id);
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return apiGet(`/api/knowledge/ingest/jobs${qs ? `?${qs}` : ""}`);
+}
+
+export function listLocalKnowledgeBases(workspaceId = ""): Promise<{
+  knowledge_bases: LocalKnowledgeBase[];
+}> {
+  const q = new URLSearchParams();
+  if (workspaceId) q.set("workspace_id", workspaceId);
+  const qs = q.toString();
+  return apiGet(`/api/knowledge/kbs${qs ? `?${qs}` : ""}`);
+}
+
+export function createLocalKnowledgeBase(body: {
+  name: string;
+  workspace_id?: string;
+  description?: string;
+}): Promise<LocalKnowledgeBase> {
+  return apiPost("/api/knowledge/kbs", body);
+}
+
+export function deleteLocalKnowledgeBase(
+  kbId: string,
+): Promise<{ ok: boolean; kb_id: string }> {
+  return apiDelete(`/api/knowledge/kbs/${encodeURIComponent(kbId)}`);
+}
+
+export function patchKnowledgeChunk(
+  chunkId: string,
+  body: { content?: string; heading?: string },
+): Promise<KnowledgeChunk> {
+  return apiPatch(`/api/knowledge/chunks/${encodeURIComponent(chunkId)}`, body);
 }
 
 export function patchKnowledgeDoc(

@@ -62,7 +62,7 @@ Ledger (DSH-inspired, Nexus-lite):
 
 ## Knowledge page
 
-Topbar **知识库** (`/knowledge`): full-page library (search / citations / body). Chat stays on the main workbench; Composer always shows a **知识库** picker (`weknora_kb_id`; empty = local). See [knowledge-base.md](./knowledge-base.md).
+Topbar **知识库** (`/knowledge`): full-page library (multi-KB, dropzone, jobs, URL, chunk edit). Chat stays on the main workbench; Composer always shows a **知识库** picker (`weknora_kb_id`; empty / `local:*` = local). See [knowledge-base.md](./knowledge-base.md).
 
 Stream failures persist as `metadata.kind=error` assistant bubbles so refresh still shows them.
 

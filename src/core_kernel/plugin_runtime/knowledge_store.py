@@ -6,7 +6,8 @@ import hashlib
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+from uuid import uuid4
 
 from sqlalchemy import (
     DateTime,
@@ -33,6 +34,12 @@ from src.core_kernel.plugin_runtime.knowledge_embeddings import (
     embedding_stats,
     multimodal_embeddings_enabled,
     serialize_embedding,
+)
+from src.core_kernel.plugin_runtime.knowledge_scope import (
+    DEFAULT_LOCAL_KB_ID,
+    DEFAULT_LOCAL_KB_NAME,
+    local_kb_match_values,
+    normalize_local_kb_id,
 )
 from src.infrastructure.storage.database import Base
 
@@ -69,6 +76,9 @@ class KnowledgeDoc(Base):
     source_uri: Mapped[str] = mapped_column(String(1024), default="")
     content_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
     workspace_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    kb_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    parse_status: Mapped[str] = mapped_column(String(32), default="completed")
+    parse_error: Mapped[str] = mapped_column(String(1024), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -93,6 +103,7 @@ class KnowledgeChunk(Base):
     chunk_type: Mapped[str] = mapped_column(String(32), default="text")  # text|parent|image
     context_header: Mapped[str] = mapped_column(String(1024), default="")
     workspace_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    kb_id: Mapped[str] = mapped_column(String(80), default="", index=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -109,6 +120,43 @@ class KnowledgeSyncLog(Base):
     message: Mapped[str] = mapped_column(Text, default="")
     workspace_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KnowledgeBase(Base):
+    __tablename__ = "knowledge_bases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kb_id: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(256), default="")
+    description: Mapped[str] = mapped_column(String(1024), default="")
+    workspace_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeIngestJob(Base):
+    __tablename__ = "knowledge_ingest_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="file")  # file|url
+    filename: Mapped[str] = mapped_column(String(512), default="")
+    source_uri: Mapped[str] = mapped_column(String(2048), default="")
+    title: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(String(512), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    bytes_len: Mapped[int] = mapped_column(Integer, default=0)
+    doc_id: Mapped[str] = mapped_column(String(64), default="")
+    kb_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    workspace_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 def content_hash(text_body: str) -> str:
@@ -485,9 +533,13 @@ class KnowledgeStore:
         for ddl in (
             "ALTER TABLE knowledge_docs ADD COLUMN source_uri VARCHAR(1024) DEFAULT ''",
             "ALTER TABLE knowledge_docs ADD COLUMN content_hash VARCHAR(64) DEFAULT ''",
+            "ALTER TABLE knowledge_docs ADD COLUMN kb_id VARCHAR(80) DEFAULT ''",
+            "ALTER TABLE knowledge_docs ADD COLUMN parse_status VARCHAR(32) DEFAULT 'completed'",
+            "ALTER TABLE knowledge_docs ADD COLUMN parse_error VARCHAR(1024) DEFAULT ''",
             "ALTER TABLE knowledge_chunks ADD COLUMN parent_chunk_id VARCHAR(80) DEFAULT ''",
             "ALTER TABLE knowledge_chunks ADD COLUMN chunk_type VARCHAR(32) DEFAULT 'text'",
             "ALTER TABLE knowledge_chunks ADD COLUMN context_header VARCHAR(1024) DEFAULT ''",
+            "ALTER TABLE knowledge_chunks ADD COLUMN kb_id VARCHAR(80) DEFAULT ''",
         ):
             try:
                 async with self.session_factory() as session:
@@ -496,9 +548,85 @@ class KnowledgeStore:
             except Exception:
                 pass
         async with self.session_factory() as session:
+            try:
+                await session.execute(
+                    text(
+                        "UPDATE knowledge_docs SET kb_id = :d "
+                        "WHERE kb_id IS NULL OR kb_id = ''"
+                    ),
+                    {"d": DEFAULT_LOCAL_KB_ID},
+                )
+                await session.execute(
+                    text(
+                        "UPDATE knowledge_chunks SET kb_id = "
+                        "(SELECT IFNULL(knowledge_docs.kb_id, :d) FROM knowledge_docs "
+                        "WHERE knowledge_docs.doc_id = knowledge_chunks.doc_id) "
+                        "WHERE kb_id IS NULL OR kb_id = ''"
+                    ),
+                    {"d": DEFAULT_LOCAL_KB_ID},
+                )
+                await session.commit()
+            except Exception:
+                await session.rollback()
+        await self.ensure_default_kb()
+        async with self.session_factory() as session:
             conn = await session.connection()
             self._fts_mode = await self._ensure_fts(conn)
             await session.commit()
+
+    def _kb_values(self, kb_id: str = "") -> List[str]:
+        return local_kb_match_values(kb_id)
+
+    async def ensure_default_kb(self, workspace_id: str = "") -> Dict[str, Any]:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeBase).where(KnowledgeBase.kb_id == DEFAULT_LOCAL_KB_ID)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = KnowledgeBase(
+                    kb_id=DEFAULT_LOCAL_KB_ID,
+                    name=DEFAULT_LOCAL_KB_NAME,
+                    description="本机 SQLite 默认库",
+                    workspace_id=workspace_id or "",
+                )
+                session.add(row)
+                await session.commit()
+            return self._kb_public(row)
+
+    @staticmethod
+    def _kb_public(row: KnowledgeBase, *, doc_count: int = 0) -> Dict[str, Any]:
+        return {
+            "id": row.kb_id,
+            "kb_id": row.kb_id,
+            "name": row.name or DEFAULT_LOCAL_KB_NAME,
+            "description": row.description or "",
+            "workspace_id": row.workspace_id or "",
+            "source": "local",
+            "doc_count": doc_count,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+
+    @staticmethod
+    def _job_public(row: KnowledgeIngestJob) -> Dict[str, Any]:
+        return {
+            "job_id": row.job_id,
+            "kind": row.kind,
+            "filename": row.filename,
+            "source_uri": row.source_uri,
+            "title": row.title,
+            "status": row.status,
+            "progress": int(row.progress or 0),
+            "message": row.message or "",
+            "error": row.error or "",
+            "bytes": int(row.bytes_len or 0),
+            "doc_id": row.doc_id or "",
+            "kb_id": row.kb_id or "",
+            "workspace_id": row.workspace_id or "",
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
 
     async def _ensure_fts(self, conn) -> Optional[str]:
         existing = ""
@@ -625,11 +753,15 @@ class KnowledgeStore:
         source: str = "",
         source_uri: str = "",
         workspace_id: str = "",
+        kb_id: str = "",
+        parse_status: str = "completed",
+        parse_error: str = "",
         content_hash_value: Optional[str] = None,
         skip_if_unchanged: bool = False,
     ) -> Dict[str, Any]:
         body = content or ""
         digest = content_hash_value or content_hash(body)
+        local_id = normalize_local_kb_id(kb_id)
         async with self.session_factory() as session:
             row = (
                 await session.execute(select(KnowledgeDoc).where(KnowledgeDoc.doc_id == doc_id))
@@ -651,6 +783,9 @@ class KnowledgeStore:
                 row.source_uri = source[5:]
             row.content_hash = digest
             row.workspace_id = workspace_id or row.workspace_id or ""
+            row.kb_id = local_id or row.kb_id or DEFAULT_LOCAL_KB_ID
+            row.parse_status = parse_status or "completed"
+            row.parse_error = parse_error or ""
             row.updated_at = datetime.now(timezone.utc)
             await session.flush()
 
@@ -719,6 +854,7 @@ class KnowledgeStore:
                         parent_chunk_id=parent_id[:80],
                         chunk_type=ctype[:32],
                         workspace_id=row.workspace_id,
+                        kb_id=row.kb_id or DEFAULT_LOCAL_KB_ID,
                         updated_at=datetime.now(timezone.utc),
                     )
                 )
@@ -821,7 +957,7 @@ class KnowledgeStore:
             }
 
     async def list_docs(
-        self, workspace_id: str = "", limit: int = 50, *, tag: str = ""
+        self, workspace_id: str = "", limit: int = 50, *, tag: str = "", kb_id: str = ""
     ) -> List[Dict[str, Any]]:
         async with self.session_factory() as session:
             stmt = select(KnowledgeDoc).order_by(KnowledgeDoc.updated_at.desc()).limit(limit)
@@ -829,6 +965,8 @@ class KnowledgeStore:
                 stmt = stmt.where(
                     or_(KnowledgeDoc.workspace_id == workspace_id, KnowledgeDoc.workspace_id == "")
                 )
+            if kb_id is not None:
+                stmt = stmt.where(KnowledgeDoc.kb_id.in_(self._kb_values(kb_id)))
             tag_s = (tag or "").strip()
             if tag_s:
                 stmt = stmt.where(KnowledgeDoc.tags.ilike(f"%{tag_s}%"))
@@ -836,6 +974,246 @@ class KnowledgeStore:
                 stmt = stmt.where(KnowledgeDoc.source != "session-upload")
             rows = (await session.execute(stmt)).scalars().all()
             return [self._public(r, include_content=False) for r in rows]
+
+    async def list_local_kbs(self, workspace_id: str = "") -> List[Dict[str, Any]]:
+        await self.ensure_default_kb(workspace_id)
+        async with self.session_factory() as session:
+            stmt = select(KnowledgeBase).order_by(KnowledgeBase.created_at.asc())
+            if workspace_id:
+                stmt = stmt.where(
+                    or_(
+                        KnowledgeBase.workspace_id == workspace_id,
+                        KnowledgeBase.workspace_id == "",
+                        KnowledgeBase.kb_id == DEFAULT_LOCAL_KB_ID,
+                    )
+                )
+            rows = list((await session.execute(stmt)).scalars().all())
+            counts: Dict[str, int] = {}
+            count_stmt = select(KnowledgeDoc.kb_id, func.count()).group_by(KnowledgeDoc.kb_id)
+            if workspace_id:
+                count_stmt = count_stmt.where(
+                    or_(KnowledgeDoc.workspace_id == workspace_id, KnowledgeDoc.workspace_id == "")
+                )
+            count_stmt = count_stmt.where(KnowledgeDoc.source != "session-upload")
+            for kb, n in (await session.execute(count_stmt)).all():
+                counts[str(kb or "")] = int(n or 0)
+            out = []
+            seen = set()
+            for row in rows:
+                seen.add(row.kb_id)
+                n = int(counts.get(row.kb_id, 0))
+                if row.kb_id == DEFAULT_LOCAL_KB_ID:
+                    n += int(counts.get("", 0))
+                out.append(self._kb_public(row, doc_count=n))
+            if DEFAULT_LOCAL_KB_ID not in seen:
+                out.insert(
+                    0,
+                    {
+                        "id": DEFAULT_LOCAL_KB_ID,
+                        "kb_id": DEFAULT_LOCAL_KB_ID,
+                        "name": DEFAULT_LOCAL_KB_NAME,
+                        "description": "本机 SQLite 默认库",
+                        "workspace_id": workspace_id or "",
+                        "source": "local",
+                        "doc_count": int(counts.get(DEFAULT_LOCAL_KB_ID, 0) + counts.get("", 0)),
+                        "updated_at": None,
+                    },
+                )
+            return out
+
+    async def create_local_kb(
+        self, *, name: str, workspace_id: str = "", description: str = ""
+    ) -> Dict[str, Any]:
+        label = (name or "").strip() or "未命名知识库"
+        kb_id = f"local:{uuid4().hex[:10]}"
+        async with self.session_factory() as session:
+            row = KnowledgeBase(
+                kb_id=kb_id,
+                name=label[:256],
+                description=(description or "")[:1024],
+                workspace_id=workspace_id or "",
+            )
+            session.add(row)
+            await session.commit()
+            return self._kb_public(row, doc_count=0)
+
+    async def delete_local_kb(self, kb_id: str) -> bool:
+        nid = normalize_local_kb_id(kb_id)
+        if nid == DEFAULT_LOCAL_KB_ID:
+            raise ValueError("cannot delete the default knowledge base")
+        async with self.session_factory() as session:
+            docs = list(
+                (
+                    await session.execute(select(KnowledgeDoc.doc_id).where(KnowledgeDoc.kb_id == nid))
+                ).scalars().all()
+            )
+            for doc_id in docs:
+                if self._fts_mode:
+                    try:
+                        await session.execute(
+                            text("DELETE FROM knowledge_chunks_fts WHERE doc_id = :d"),
+                            {"d": doc_id},
+                        )
+                    except Exception:
+                        pass
+            if docs:
+                await session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.kb_id == nid))
+                await session.execute(delete(KnowledgeDoc).where(KnowledgeDoc.kb_id == nid))
+            res = await session.execute(delete(KnowledgeBase).where(KnowledgeBase.kb_id == nid))
+            await session.commit()
+            return (res.rowcount or 0) > 0
+
+    async def create_ingest_job(
+        self,
+        *,
+        job_id: str,
+        kind: str = "file",
+        filename: str = "",
+        source_uri: str = "",
+        kb_id: str = "",
+        workspace_id: str = "",
+        bytes_len: int = 0,
+        title: str = "",
+        status: str = "pending",
+        progress: int = 0,
+        message: str = "",
+    ) -> Dict[str, Any]:
+        async with self.session_factory() as session:
+            row = KnowledgeIngestJob(
+                job_id=job_id,
+                kind=(kind or "file")[:16],
+                filename=(filename or "")[:512],
+                source_uri=(source_uri or "")[:2048],
+                title=(title or "")[:512],
+                status=status or "pending",
+                progress=int(progress or 0),
+                message=(message or "")[:512],
+                bytes_len=int(bytes_len or 0),
+                kb_id=normalize_local_kb_id(kb_id),
+                workspace_id=workspace_id or "",
+            )
+            session.add(row)
+            await session.commit()
+            return self._job_public(row)
+
+    async def get_ingest_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeIngestJob).where(KnowledgeIngestJob.job_id == job_id)
+                )
+            ).scalar_one_or_none()
+            return self._job_public(row) if row else None
+
+    async def update_ingest_job(self, job_id: str, **fields: Any) -> Dict[str, Any]:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeIngestJob).where(KnowledgeIngestJob.job_id == job_id)
+                )
+            ).scalar_one_or_none()
+            if not row:
+                raise ValueError(f"job not found: {job_id}")
+            mapping = {
+                "status": "status",
+                "progress": "progress",
+                "message": "message",
+                "error": "error",
+                "doc_id": "doc_id",
+                "bytes_len": "bytes_len",
+                "filename": "filename",
+                "source_uri": "source_uri",
+                "title": "title",
+            }
+            for key, attr in mapping.items():
+                if key in fields and fields[key] is not None:
+                    val = fields[key]
+                    if attr == "progress":
+                        val = int(val)
+                    elif attr == "bytes_len":
+                        val = int(val)
+                    elif isinstance(val, str) and attr in {"status", "message", "filename", "title"}:
+                        val = val[:512]
+                    setattr(row, attr, val)
+            row.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+            return self._job_public(row)
+
+    async def list_ingest_jobs(
+        self,
+        *,
+        workspace_id: str = "",
+        kb_id: str = "",
+        limit: int = 40,
+        status_in: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        async with self.session_factory() as session:
+            stmt = select(KnowledgeIngestJob).order_by(KnowledgeIngestJob.created_at.desc())
+            stmt = stmt.limit(max(1, min(int(limit or 40), 200)))
+            if workspace_id:
+                stmt = stmt.where(
+                    or_(
+                        KnowledgeIngestJob.workspace_id == workspace_id,
+                        KnowledgeIngestJob.workspace_id == "",
+                    )
+                )
+            if kb_id:
+                stmt = stmt.where(KnowledgeIngestJob.kb_id.in_(self._kb_values(kb_id)))
+            if status_in:
+                stmt = stmt.where(KnowledgeIngestJob.status.in_(list(status_in)))
+            rows = list((await session.execute(stmt)).scalars().all())
+            return [self._job_public(r) for r in rows]
+
+    async def update_chunk(
+        self,
+        chunk_id: str,
+        *,
+        content: Optional[str] = None,
+        heading: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeChunk).where(KnowledgeChunk.chunk_id == chunk_id)
+                )
+            ).scalar_one_or_none()
+            if not row:
+                return None
+            if heading is not None:
+                row.heading = str(heading)[:512]
+            if content is not None:
+                row.content = str(content)
+                if embeddings_configured() and (getattr(row, "chunk_type", "") or "text") != "parent":
+                    header = getattr(row, "context_header", "") or ""
+                    text_in = f"{header}\n{row.content}".strip() if header else row.content
+                    vecs = await embed_texts([text_in])
+                    if vecs and vecs[0]:
+                        row.embedding = serialize_embedding(vecs[0])
+            row.updated_at = datetime.now(timezone.utc)
+            if self._fts_mode and (getattr(row, "chunk_type", "") or "text") != "parent":
+                try:
+                    await session.execute(
+                        text("DELETE FROM knowledge_chunks_fts WHERE chunk_id = :id"),
+                        {"id": chunk_id},
+                    )
+                    await session.execute(
+                        text(
+                            "INSERT INTO knowledge_chunks_fts"
+                            "(chunk_id, doc_id, heading, context_header, content) "
+                            "VALUES (:id, :doc, :h, :ctx, :c)"
+                        ),
+                        {
+                            "id": row.chunk_id,
+                            "doc": row.doc_id,
+                            "h": row.heading or "",
+                            "ctx": getattr(row, "context_header", "") or "",
+                            "c": row.content or "",
+                        },
+                    )
+                except Exception:
+                    logger.warning("knowledge FTS chunk update failed for %s", chunk_id, exc_info=True)
+            await session.commit()
+            return self._chunk_public(row)
 
     async def find_by_content_hash(
         self,
@@ -894,6 +1272,7 @@ class KnowledgeStore:
         limit: int = 8,
         tag: str = "",
         session_id: str = "",
+        kb_id: str = "",
     ) -> List[Dict[str, Any]]:
         from src.core_kernel.plugin_runtime.knowledge_query import (
             expand_queries,
@@ -905,7 +1284,7 @@ class KnowledgeStore:
         q = (query or "").strip()
         pool = max(limit * 3, 16)
         hits = await self._search_once(
-            q, workspace_id=workspace_id, limit=pool, tag=tag, session_id=session_id
+            q, workspace_id=workspace_id, limit=pool, tag=tag, session_id=session_id, kb_id=kb_id
         )
         if should_expand(len(hits), limit):
             extras: List[Dict[str, Any]] = []
@@ -919,6 +1298,7 @@ class KnowledgeStore:
                         skip_vector=True,
                         tag=tag,
                         session_id=session_id,
+                        kb_id=kb_id,
                     )
                 )
             hits = merge_hits_by_id(hits, extras, limit=pool)
@@ -944,12 +1324,14 @@ class KnowledgeStore:
         skip_vector: bool = False,
         tag: str = "",
         session_id: str = "",
+        kb_id: str = "",
     ) -> List[Dict[str, Any]]:
         tokens = _tokens(query)
         q = (query or "").strip()
         use_vec = embeddings_configured() and bool(q) and not skip_vector
         if use_vec and query_vec is None:
             query_vec = await embed_one(q)
+        kb_values = self._kb_values(kb_id)
 
         async with self.session_factory() as session:
             ws_filter = None
@@ -970,6 +1352,7 @@ class KnowledgeStore:
             if fts_ids:
                 stmt = select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(fts_ids))
                 stmt = stmt.where(not_parent)
+                stmt = stmt.where(KnowledgeChunk.kb_id.in_(kb_values))
                 if ws_filter is not None:
                     stmt = stmt.where(ws_filter)
                 kw_chunks = list((await session.execute(stmt)).scalars().all())
@@ -983,6 +1366,7 @@ class KnowledgeStore:
                     likes.append(KnowledgeChunk.heading.ilike(f"%{t}%"))
                     likes.append(KnowledgeChunk.context_header.ilike(f"%{t}%"))
                 stmt = select(KnowledgeChunk).where(not_parent)
+                stmt = stmt.where(KnowledgeChunk.kb_id.in_(kb_values))
                 if ws_filter is not None:
                     stmt = stmt.where(ws_filter)
                 stmt = stmt.where(or_(*likes)).limit(160)
@@ -995,6 +1379,7 @@ class KnowledgeStore:
                     select(KnowledgeChunk)
                     .where(KnowledgeChunk.embedding != "")
                     .where(not_parent)
+                    .where(KnowledgeChunk.kb_id.in_(kb_values))
                 )
                 if ws_filter is not None:
                     vstmt = vstmt.where(ws_filter)
@@ -1013,7 +1398,7 @@ class KnowledgeStore:
             if not chunks:
                 # Legacy whole-doc fallback when nothing chunked yet
                 return await self._search_docs(
-                    session, query, tokens, workspace_id, limit, session_id=session_id
+                    session, query, tokens, workspace_id, limit, session_id=session_id, kb_id=kb_id
                 )
 
             extra_ids = {c.parent_chunk_id for c in chunks if getattr(c, "parent_chunk_id", "")}
@@ -1104,6 +1489,7 @@ class KnowledgeStore:
                 "source": doc.source,
                 "source_uri": getattr(doc, "source_uri", "") or "",
                 "workspace_id": doc.workspace_id,
+                "kb_id": getattr(doc, "kb_id", "") or "",
                 "score": round(sc, 3),
                 "snippet": self._snippet(display, tokens or [query]),
                 "citation": cite,
@@ -1123,12 +1509,14 @@ class KnowledgeStore:
         limit: int,
         *,
         session_id: str = "",
+        kb_id: str = "",
     ) -> List[Dict[str, Any]]:
         stmt = select(KnowledgeDoc)
         if workspace_id:
             stmt = stmt.where(
                 or_(KnowledgeDoc.workspace_id == workspace_id, KnowledgeDoc.workspace_id == "")
             )
+        stmt = stmt.where(KnowledgeDoc.kb_id.in_(self._kb_values(kb_id)))
         likes = []
         q = (query or "").strip()
         if q:
@@ -1166,7 +1554,7 @@ class KnowledgeStore:
             out.append(item)
         return out
 
-    async def stats(self, workspace_id: str = "") -> Dict[str, Any]:
+    async def stats(self, workspace_id: str = "", kb_id: str = "") -> Dict[str, Any]:
         async with self.session_factory() as session:
             doc_stmt = select(func.count()).select_from(KnowledgeDoc)
             chunk_stmt = select(func.count()).select_from(KnowledgeChunk)
@@ -1175,6 +1563,10 @@ class KnowledgeStore:
                 .select_from(KnowledgeChunk)
                 .where(KnowledgeChunk.embedding != "")
             )
+            kb_values = self._kb_values(kb_id)
+            doc_stmt = doc_stmt.where(KnowledgeDoc.kb_id.in_(kb_values))
+            chunk_stmt = chunk_stmt.where(KnowledgeChunk.kb_id.in_(kb_values))
+            emb_stmt = emb_stmt.where(KnowledgeChunk.kb_id.in_(kb_values))
             if workspace_id:
                 ws_docs = or_(
                     KnowledgeDoc.workspace_id == workspace_id,
@@ -1256,6 +1648,7 @@ class KnowledgeStore:
             source=str(new_source),
             source_uri=str(new_uri),
             workspace_id=str(existing.get("workspace_id") or ""),
+            kb_id=str(existing.get("kb_id") or ""),
             content_hash_value=content_hash(str(new_content)),
             skip_if_unchanged=False,
         )
@@ -1501,6 +1894,7 @@ class KnowledgeStore:
             "char_start": row.char_start,
             "char_end": row.char_end,
             "has_embedding": bool(row.embedding),
+            "kb_id": getattr(row, "kb_id", "") or "",
         }
 
     @staticmethod
@@ -1513,6 +1907,9 @@ class KnowledgeStore:
             "source_uri": getattr(row, "source_uri", "") or "",
             "content_hash": getattr(row, "content_hash", "") or "",
             "workspace_id": row.workspace_id,
+            "kb_id": getattr(row, "kb_id", "") or DEFAULT_LOCAL_KB_ID,
+            "parse_status": getattr(row, "parse_status", "") or "completed",
+            "parse_error": getattr(row, "parse_error", "") or "",
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }
         if include_content:

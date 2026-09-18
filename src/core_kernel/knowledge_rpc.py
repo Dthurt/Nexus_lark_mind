@@ -37,16 +37,19 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         return row_visible_for_session(row, session_id)
 
     @app.get("/rpc/knowledge/docs")
-    async def kb_list_docs(workspace_id: str = "", limit: int = 50, tag: str = ""):
+    async def kb_list_docs(workspace_id: str = "", limit: int = 50, tag: str = "", kb_id: str = ""):
         store = _kb_store()
         await store.ensure_schema()
         docs = await store.list_docs(
-            workspace_id=workspace_id or "", limit=min(max(limit, 1), 200), tag=tag or ""
+            workspace_id=workspace_id or "",
+            limit=min(max(limit, 1), 200),
+            tag=tag or "",
+            kb_id=kb_id or "",
         )
         return RpcEnvelope(ok=True, data={"docs": docs})
 
     @app.get("/rpc/knowledge/search")
-    async def kb_search(query: str = "", workspace_id: str = "", limit: int = 8, tag: str = "", session_id: str = ""):
+    async def kb_search(query: str = "", workspace_id: str = "", limit: int = 8, tag: str = "", session_id: str = "", kb_id: str = ""):
         from src.core_kernel.plugin_runtime.knowledge_store import citations_markdown
 
         store = _kb_store()
@@ -55,7 +58,12 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         if not q:
             return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "query required"})
         hits = await store.search(
-            q, workspace_id=workspace_id or "", limit=min(max(limit, 1), 40), tag=tag or "", session_id=session_id or ""
+            q,
+            workspace_id=workspace_id or "",
+            limit=min(max(limit, 1), 40),
+            tag=tag or "",
+            session_id=session_id or "",
+            kb_id=kb_id or "",
         )
         return RpcEnvelope(
             ok=True,
@@ -67,10 +75,10 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         )
 
     @app.get("/rpc/knowledge/stats")
-    async def kb_stats(workspace_id: str = ""):
+    async def kb_stats(workspace_id: str = "", kb_id: str = ""):
         store = _kb_store()
         await store.ensure_schema()
-        data = await store.stats(workspace_id=workspace_id or "")
+        data = await store.stats(workspace_id=workspace_id or "", kb_id=kb_id or "")
         return RpcEnvelope(ok=True, data=data)
 
     @app.get("/rpc/knowledge/docs/{doc_id}")
@@ -136,6 +144,7 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         source = str(body.get("source") or "")
         source_uri = str(body.get("source_uri") or "")
         workspace_id = str(body.get("workspace_id") or "")
+        kb_id = str(body.get("kb_id") or "")
         doc_id = str(body.get("doc_id") or "").strip()
         cwd = str(body.get("cwd") or "").strip()
         ingest_note = ""
@@ -199,6 +208,7 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             source=source,
             source_uri=source_uri,
             workspace_id=workspace_id,
+            kb_id=kb_id,
             content_hash_value=content_hash(content),
         )
         if ingest_note:
@@ -249,6 +259,7 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         except ValueError as exc:
             return RpcEnvelope(ok=False, error={"code": "INGEST", "message": str(exc)})
         workspace_id = str(body.get("workspace_id") or "")
+        kb_id = str(body.get("kb_id") or "")
         digest = content_hash(content)
         doc_id = str(body.get("doc_id") or "").strip()
         if not doc_id:
@@ -266,6 +277,7 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             source=f"upload:{filename}",
             source_uri=filename,
             workspace_id=workspace_id,
+            kb_id=kb_id,
             content_hash_value=digest,
         )
         if ingest_note:
@@ -375,6 +387,154 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             workspace_id=workspace_id or "", limit=min(max(limit, 1), 100)
         )
         return RpcEnvelope(ok=True, data={"entries": rows})
+
+    @app.get("/rpc/knowledge/kbs")
+    async def kb_list_local(workspace_id: str = ""):
+        store = _kb_store()
+        await store.ensure_schema()
+        rows = await store.list_local_kbs(workspace_id=workspace_id or "")
+        return RpcEnvelope(ok=True, data={"knowledge_bases": rows})
+
+    @app.post("/rpc/knowledge/kbs")
+    async def kb_create_local(request: Request):
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        row = await store.create_local_kb(
+            name=str(body.get("name") or ""),
+            workspace_id=str(body.get("workspace_id") or ""),
+            description=str(body.get("description") or ""),
+        )
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.delete("/rpc/knowledge/kbs/{kb_id}")
+    async def kb_delete_local(kb_id: str):
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            ok = await store.delete_local_kb(kb_id)
+        except ValueError as exc:
+            return RpcEnvelope(ok=False, error={"code": "FORBIDDEN", "message": str(exc)})
+        return RpcEnvelope(ok=True, data={"ok": ok, "kb_id": kb_id})
+
+    @app.get("/rpc/knowledge/ingest/jobs")
+    async def kb_list_jobs(workspace_id: str = "", kb_id: str = "", limit: int = 40):
+        store = _kb_store()
+        await store.ensure_schema()
+        rows = await store.list_ingest_jobs(
+            workspace_id=workspace_id or "", kb_id=kb_id or "", limit=min(max(limit, 1), 200)
+        )
+        return RpcEnvelope(ok=True, data={"jobs": rows})
+
+    @app.get("/rpc/knowledge/ingest/jobs/{job_id}")
+    async def kb_get_job(job_id: str):
+        store = _kb_store()
+        await store.ensure_schema()
+        row = await store.get_ingest_job(job_id)
+        if not row:
+            return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"job not found: {job_id}"})
+        return RpcEnvelope(ok=True, data=row)
+
+    @app.post("/rpc/knowledge/ingest")
+    async def kb_ingest(request: Request):
+        from src.core_kernel.plugin_runtime.knowledge_jobs import enqueue_file_job, enqueue_url_job
+
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        kb_id = str(body.get("kb_id") or "")
+        workspace_id = str(body.get("workspace_id") or "")
+        title = str(body.get("title") or "")
+        url = str(body.get("url") or "").strip()
+        try:
+            if url:
+                job = await enqueue_url_job(
+                    store, url=url, kb_id=kb_id, workspace_id=workspace_id, title=title
+                )
+                return RpcEnvelope(ok=True, data={"jobs": [job]})
+            filename = Path(str(body.get("filename") or "upload.txt")).name
+            raw_b64 = str(body.get("content_b64") or "")
+            raw = base64.b64decode(raw_b64, validate=False)
+            job = await enqueue_file_job(
+                store,
+                filename=filename,
+                raw=raw,
+                kb_id=kb_id,
+                workspace_id=workspace_id,
+                title=title,
+            )
+            return RpcEnvelope(ok=True, data={"jobs": [job]})
+        except ValueError as exc:
+            return RpcEnvelope(ok=False, error={"code": "INGEST", "message": str(exc)})
+        except Exception as exc:
+            return RpcEnvelope(ok=False, error={"code": "INGEST", "message": str(exc)})
+
+    @app.post("/rpc/knowledge/ingest/batch")
+    async def kb_ingest_batch(request: Request):
+        from src.core_kernel.plugin_runtime.knowledge_jobs import enqueue_file_job
+
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        files = body.get("files")
+        if not isinstance(files, list) or not files:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "files required"})
+        kb_id = str(body.get("kb_id") or "")
+        workspace_id = str(body.get("workspace_id") or "")
+        jobs = []
+        errors = []
+        for item in files[:80]:
+            if not isinstance(item, dict):
+                continue
+            filename = Path(str(item.get("filename") or "upload.txt")).name
+            try:
+                raw = base64.b64decode(str(item.get("content_b64") or ""), validate=False)
+                job = await enqueue_file_job(
+                    store,
+                    filename=filename,
+                    raw=raw,
+                    kb_id=kb_id,
+                    workspace_id=workspace_id,
+                    title=str(item.get("title") or ""),
+                )
+                jobs.append(job)
+            except Exception as exc:
+                errors.append(f"{filename}: {exc}")
+        return RpcEnvelope(ok=True, data={"jobs": jobs, "errors": errors})
+
+    @app.patch("/rpc/knowledge/chunks/{chunk_id}")
+    async def kb_patch_chunk(chunk_id: str, request: Request):
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        row = await store.update_chunk(
+            chunk_id,
+            content=str(body["content"]) if "content" in body else None,
+            heading=str(body["heading"]) if "heading" in body else None,
+        )
+        if not row:
+            return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"chunk not found: {chunk_id}"})
+        return RpcEnvelope(ok=True, data=row)
 
     # ----- WeKnora bridge -----
 

@@ -17,7 +17,7 @@ Linux / macOS：`chmod +x nlm && ./nlm start`
 
 无 Key 时为 demo 回声模式，用于验证链路。
 
-顶栏切换 **对话 / 知识库 / 轨迹**，或直接打开 http://127.0.0.1:8000/knowledge ：知识库是独立页面（检索、**导入文件** PDF/Office、粘贴）。导入抽文本写入本地 SQLite（默认约 20MB）；扫描件可能抽不出字。针对该库提问回到主对话。对话里的 **添加文件** 仍是本会话临时文档（约 512KB，其他会话不可见）。详见 [knowledge-base.md](./knowledge-base.md)。
+顶栏切换 **对话 / 知识库 / 轨迹**，或直接打开 http://127.0.0.1:8000/knowledge ：知识库是独立页面（多库、拖拽/文件夹/URL 导入、进度、分块编辑、粘贴）。导入抽文本写入本地 SQLite（默认约 20MB）；扫描件在安装 OCR 依赖后可识别。有 GLM/OpenAI Key 时默认 hybrid 向量。针对该库提问回到主对话。对话里的 **添加文件** 仍是本会话临时文档（约 512KB，其他会话不可见）。详见 [knowledge-base.md](./knowledge-base.md)。
 
 ### 改前端时
 

@@ -13,8 +13,7 @@ import {
 import { Mic, Paperclip, Plus, Square, ArrowUp, ListTodo, ShieldCheck, Layers2 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 
-import type { InboxItem } from "@/api/endpoints";
-import type { WeknoraHealth, WeknoraKb } from "@/api/endpoints";
+import type { InboxItem, LocalKnowledgeBase, WeknoraHealth, WeknoraKb } from "@/api/endpoints";
 import { deleteSessionUpload, listSessionUploads, uploadSessionDoc } from "@/api/endpoints";
 import { ContextMeter } from "@/components/chat/ContextMeter";
 import { KnowledgeScopePicker } from "@/components/knowledge/KnowledgeScopePicker";
@@ -105,6 +104,7 @@ export type ComposerProps = {
   weknoraKbId?: string;
   weknoraKbName?: string;
   knowledgeKbs?: WeknoraKb[];
+  localKbs?: LocalKnowledgeBase[];
   knowledgeHealth?: WeknoraHealth | null;
   onWeknoraKbChange?: (kbId: string, kbName: string) => void;
   onOpenKnowledge?: () => void;
@@ -172,6 +172,7 @@ export function Composer({
   weknoraKbId = "",
   weknoraKbName = "",
   knowledgeKbs = [],
+  localKbs = [],
   knowledgeHealth = null,
   onWeknoraKbChange,
   onOpenKnowledge,
@@ -1086,6 +1087,7 @@ export function Composer({
             value={weknoraKbId}
             name={weknoraKbName}
             kbs={knowledgeKbs}
+            localKbs={localKbs}
             health={knowledgeHealth}
             onChange={onWeknoraKbChange}
             onOpenKnowledge={onOpenKnowledge}

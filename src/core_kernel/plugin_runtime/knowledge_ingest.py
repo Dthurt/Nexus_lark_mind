@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ".org", ".mdx"}
+HTML_SUFFIXES = {".html", ".htm"}
 PDF_SUFFIXES = {".pdf"}
 OFFICE_SUFFIXES = {".docx", ".xlsx", ".pptx"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-SUPPORTED_SUFFIXES = TEXT_SUFFIXES | PDF_SUFFIXES | OFFICE_SUFFIXES | IMAGE_SUFFIXES
+SUPPORTED_SUFFIXES = TEXT_SUFFIXES | HTML_SUFFIXES | PDF_SUFFIXES | OFFICE_SUFFIXES | IMAGE_SUFFIXES
 
 # Composer session chips stay small; library ingest / workspace sync use the 20MB default.
 MAX_SESSION_UPLOAD_BYTES = 512_000
@@ -47,6 +48,57 @@ def pdf_max_pages() -> int:
     return _env_int("KB_PDF_MAX_PAGES", DEFAULT_PDF_MAX_PAGES, minimum=1, maximum=5000)
 
 
+def ocr_enabled() -> bool:
+    raw = (os.getenv("KB_OCR") or "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def html_to_text(raw_html: str) -> str:
+    """Strip tags / scripts from HTML for library ingest."""
+    from html.parser import HTMLParser
+
+    class _Strip(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self._skip = 0
+            self.parts: List[str] = []
+
+        def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[override]
+            t = (tag or "").lower()
+            if t in {"script", "style", "noscript"}:
+                self._skip += 1
+            elif t in {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "tr", "section", "article"}:
+                self.parts.append("\n")
+
+        def handle_endtag(self, tag: str) -> None:  # type: ignore[override]
+            t = (tag or "").lower()
+            if t in {"script", "style", "noscript"} and self._skip:
+                self._skip -= 1
+            elif t in {"p", "div", "li", "h1", "h2", "h3", "h4", "tr", "section", "article"}:
+                self.parts.append("\n")
+
+        def handle_data(self, data: str) -> None:  # type: ignore[override]
+            if self._skip:
+                return
+            text = (data or "").strip()
+            if text:
+                self.parts.append(text)
+
+    parser = _Strip()
+    try:
+        parser.feed(raw_html or "")
+        parser.close()
+    except Exception:
+        text = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", raw_html or "")
+        text = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", text)
+        text = re.sub(r"<[^>]+>", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+    body = " ".join(parser.parts)
+    body = re.sub(r"[ \t]{2,}", " ", body)
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    return body.strip()
+
+
 def is_ingestible(path: Path) -> bool:
     return path.suffix.lower() in SUPPORTED_SUFFIXES
 
@@ -80,10 +132,23 @@ def read_bytes_as_text(
             f"Visual document: {name}\n",
             "image-placeholder",
         )
+    if suffix in HTML_SUFFIXES:
+        try:
+            html = raw.decode("utf-8", errors="replace")
+        except Exception:
+            html = raw.decode("latin-1", errors="replace")
+        text = html_to_text(html)
+        if not text.strip():
+            raise ValueError("HTML produced no extractable text")
+        return text, "extracted via html"
     if suffix in PDF_SUFFIXES:
         text, note = _extract_pdf(raw)
         if not text.strip():
-            raise ValueError(note or "PDF produced no extractable text")
+            ocr_text, ocr_note = _ocr_pdf(raw)
+            if ocr_text.strip():
+                joined = f"{ocr_note}; {note}".strip("; ")
+                return ocr_text, joined or "extracted via ocr"
+            raise ValueError(note or ocr_note or "PDF produced no extractable text")
         return text, note
     if suffix in OFFICE_SUFFIXES:
         text, note = _extract_office(raw, suffix)
@@ -124,7 +189,90 @@ def _extract_pdf(raw: bytes) -> Tuple[str, str]:
     crude, note = _crude_pdf_text(raw)
     if crude.strip():
         return crude, note or "extracted via crude PDF parser"
-    return "", "PDF text extraction unavailable (install pypdf for better results)"
+    ocr_text, ocr_note = _ocr_pdf(raw)
+    if ocr_text.strip():
+        return ocr_text, ocr_note
+    return "", "PDF text extraction unavailable (install pypdf; scanned pages need OCR)"
+
+
+def _ocr_engine():
+    try:
+        from rapidocr_onnxruntime import RapidOCR  # type: ignore
+
+        return RapidOCR()
+    except Exception:
+        try:
+            from rapidocr import RapidOCR  # type: ignore
+
+            return RapidOCR()
+        except Exception:
+            return None
+
+
+def _ocr_pdf(raw: bytes) -> Tuple[str, str]:
+    """Render scanned PDF pages and OCR them when RapidOCR + PyMuPDF are installed."""
+    if not ocr_enabled():
+        return "", "ocr disabled"
+    try:
+        import fitz  # type: ignore
+    except ImportError:
+        return "", "ocr skipped (install pymupdf)"
+    engine = _ocr_engine()
+    if engine is None:
+        return "", "ocr skipped (install rapidocr-onnxruntime)"
+    try:
+        doc = fitz.open(stream=raw, filetype="pdf")
+    except Exception as exc:
+        return "", f"ocr open failed: {exc}"
+    pages: List[str] = []
+    max_pages = min(pdf_max_pages(), 80)
+    try:
+        for i, page in enumerate(doc):
+            if i >= max_pages:
+                break
+            try:
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                img = pix.tobytes("png")
+            except Exception:
+                continue
+            try:
+                result = engine(img)
+            except Exception:
+                continue
+            lines = _ocr_lines(result)
+            if lines:
+                pages.append("\n".join(lines))
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    text = "\n\n".join(p.strip() for p in pages if p.strip())
+    if not text.strip():
+        return "", "ocr produced no text"
+    return text, "extracted via ocr"
+
+
+def _ocr_lines(result: object) -> List[str]:
+    rows = result
+    if isinstance(result, tuple) and result:
+        rows = result[0]
+    if not isinstance(rows, list):
+        return []
+    lines: List[str] = []
+    for item in rows:
+        text = ""
+        if isinstance(item, dict):
+            text = str(item.get("text") or item.get("txt") or "")
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            maybe = item[1]
+            if isinstance(maybe, (list, tuple)) and maybe:
+                text = str(maybe[0])
+            else:
+                text = str(maybe or "")
+        if text.strip():
+            lines.append(text.strip())
+    return lines
 
 
 def _crude_pdf_text(raw: bytes) -> Tuple[str, str]:
@@ -201,6 +349,8 @@ def default_tags_for_path(path: Path) -> str:
     suf = path.suffix.lower()
     if suf in {".md", ".markdown", ".mdx"}:
         return "file,markdown"
+    if suf in HTML_SUFFIXES:
+        return "file,html"
     if suf == ".pdf":
         return "file,pdf"
     if suf in OFFICE_SUFFIXES:

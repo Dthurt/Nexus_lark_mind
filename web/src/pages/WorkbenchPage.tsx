@@ -162,7 +162,7 @@ export function WorkbenchPage({
   } = usePlugins();
 
   const { workspaces, load: loadWorkspaces } = useWorkspaces();
-  const knowledgeCatalog = useKnowledgeCatalog();
+  const knowledgeCatalog = useKnowledgeCatalog(workspaceId);
 
   const actionsRef = useRef<ReturnType<typeof useChatActions> | null>(null);
   const completedRef = useRef<() => void>(() => {});
@@ -254,9 +254,11 @@ export function WorkbenchPage({
       return;
     }
     if (weknoraKbName) return;
-    const hit = knowledgeCatalog.kbs.find((kb) => kb.id === weknoraKbId);
+    const hit =
+      knowledgeCatalog.kbs.find((kb) => kb.id === weknoraKbId) ||
+      knowledgeCatalog.localKbs.find((kb) => kb.id === weknoraKbId);
     if (hit) setWeknoraKbName(hit.name || hit.id);
-  }, [knowledgeCatalog.kbs, setWeknoraKbName, weknoraKbId, weknoraKbName]);
+  }, [knowledgeCatalog.kbs, knowledgeCatalog.localKbs, setWeknoraKbName, weknoraKbId, weknoraKbName]);
 
   const bindKnowledgeBase = useCallback(
     async (kbId: string, kbName?: string) => {
@@ -708,6 +710,7 @@ export function WorkbenchPage({
                   weknoraKbId={weknoraKbId}
                   weknoraKbName={weknoraKbName}
                   knowledgeKbs={knowledgeCatalog.kbs}
+                  localKbs={knowledgeCatalog.localKbs}
                   knowledgeHealth={knowledgeCatalog.health}
                   onWeknoraKbChange={(id, name) => void bindKnowledgeBase(id, name)}
                   onOpenKnowledge={openKnowledgeView}
@@ -786,9 +789,11 @@ export function WorkbenchPage({
                     boundKbId={weknoraKbId}
                     boundKbName={weknoraKbName}
                     kbs={knowledgeCatalog.kbs}
+                    localKbs={knowledgeCatalog.localKbs}
                     health={knowledgeCatalog.health}
                     catalogLoading={knowledgeCatalog.loading}
                     onBindKb={(id, name) => void bindKnowledgeBase(id, name)}
+                    onCatalogRefresh={() => void knowledgeCatalog.refresh()}
                     onAskAbout={(text) => {
                       if (text) actions.setInput(text);
                       setCenterView("chat");

@@ -101,7 +101,7 @@
 - `plugin_calls` — 插件调用审计
 - `model_calls` — 模型调用审计
 - `system_logs` — 系统日志（可扩展）
-- `knowledge_docs` / `knowledge_chunks` / `knowledge_sync_log` — 本地知识库
+- `knowledge_docs` / `knowledge_chunks` / `knowledge_bases` / `knowledge_ingest_jobs` / `knowledge_sync_log` — 本地知识库
 
 ## 8. 安全边界
 

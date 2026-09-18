@@ -1,4 +1,5 @@
 export const LOCAL_KB_ID = "";
+export const DEFAULT_LOCAL_KB_ID = "local:default";
 
 export type KnowledgeScopeOption = {
   id: string;
@@ -7,10 +8,17 @@ export type KnowledgeScopeOption = {
   docCount?: number | null;
 };
 
+export function isLocalKbId(id?: string): boolean {
+  const kid = String(id || "").trim();
+  return !kid || kid.startsWith("local:");
+}
+
 export function kbScopeLabel(id?: string, name?: string): string {
   const kid = String(id || "").trim();
-  if (!kid) return "本地知识库";
-  return String(name || "").trim() || kid;
+  const label = String(name || "").trim();
+  if (!kid || kid === DEFAULT_LOCAL_KB_ID) return label || "本地知识库";
+  if (kid.startsWith("local:")) return label || kid.slice("local:".length);
+  return label || kid;
 }
 
 export function composerKbPlaceholder(id?: string, name?: string): string {
