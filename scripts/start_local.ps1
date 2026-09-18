@@ -74,16 +74,19 @@ function Test-LocalHealth {
 
 function Resolve-Python {
   $candidates = @(
-    "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+    "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe"
   )
   $py = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
   if (-not $py) {
-    $py = (Get-Command python -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch "WindowsApps" }).Source
+    foreach ($name in @("python3", "python")) {
+      $cmd = Get-Command $name -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch "WindowsApps" }
+      if ($cmd) { $py = $cmd.Source; break }
+    }
   }
   if (-not $py) {
-    Write-Error "Python 3.11+ not found. Install from https://www.python.org/downloads/ (check Add python.exe to PATH)."
+    Write-Error "Python 3.11-3.13 not found (Microsoft Store stub skipped). Run nlm.cmd to auto-install, or: winget install -e --id Python.Python.3.12 --scope user --accept-package-agreements --accept-source-agreements"
   }
   return $py
 }

@@ -458,24 +458,352 @@ def write_env_value(key: str, value: str, path: Path = ENV_PATH) -> None:
     path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
-def find_system_python() -> Optional[str]:
-    if os.name == "nt":
+def is_windows_store_stub(path: Optional[str]) -> bool:
+    """Microsoft Store alias (WindowsApps\\python.exe) is not a real interpreter."""
+    if not path:
+        return False
+    return "windowsapps" in str(path).replace("/", "\\").lower()
+
+
+def is_supported_python_version(ver: Optional[Tuple[int, ...]]) -> bool:
+    if not ver or len(ver) < 2:
+        return False
+    return (3, 11) <= (int(ver[0]), int(ver[1])) <= (3, 13)
+
+
+def probe_python_version(exe: str) -> Optional[Tuple[int, int, int]]:
+    """Return (major, minor, micro) or None if stub / broken / unusable."""
+    if not exe or is_windows_store_stub(exe):
+        return None
+    lowered = exe.replace("/", "\\").lower()
+    if exe in ("py", "py.exe") or lowered.endswith("\\py.exe"):
+        cmd = ([exe] if exe not in ("py", "py.exe") else ["py"]) + ["-3"]
+    else:
+        cmd = [exe]
+    try:
+        out = subprocess.check_output(
+            [*cmd, "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=12,
+        ).strip()
+        parts = out.split(".")
+        if len(parts) < 3:
+            return None
+        return int(parts[0]), int(parts[1]), int(parts[2])
+    except Exception:
+        return None
+
+
+def default_windows_python_exes() -> List[Path]:
+    out: List[Path] = []
+    if os.name != "nt":
+        return out
+    roots = (
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python",
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")),
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")),
+    )
+    for root in roots:
         for ver in ("Python312", "Python311", "Python313"):
-            c = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Python" / ver / "python.exe"
-            if c.is_file():
-                return str(c)
+            out.append(root / ver / "python.exe")
+    return out
+
+
+def refresh_process_path() -> None:
+    """Pick up a just-installed Python without requiring a new login."""
+    if os.name != "nt":
+        return
+    parts: List[str] = []
+    local = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python"
+    for ver in ("Python312", "Python311", "Python313"):
+        parts.append(str(local / ver))
+        parts.append(str(local / ver / "Scripts"))
+    parts.append(str(local / "Launcher"))
+    for pf_key in ("ProgramFiles", "ProgramFiles(x86)"):
+        pf = Path(os.environ.get(pf_key, ""))
+        if str(pf):
+            for ver in ("Python312", "Python311", "Python313"):
+                parts.append(str(pf / ver))
+    try:
+        import winreg
+
+        for hive, sub in (
+            (winreg.HKEY_CURRENT_USER, r"Environment"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        ):
+            try:
+                with winreg.OpenKey(hive, sub) as key:
+                    raw, _ = winreg.QueryValueEx(key, "Path")
+                    if raw:
+                        parts.append(str(raw))
+            except OSError:
+                pass
+    except Exception:
+        pass
+    parts.append(os.environ.get("PATH", ""))
+    os.environ["PATH"] = os.pathsep.join(p for p in parts if p)
+
+
+def find_system_python() -> Optional[str]:
+    candidates: List[str] = []
+    if os.name == "nt":
+        candidates.extend(str(p) for p in default_windows_python_exes())
+        for name in ("python3.13", "python3.12", "python3.11", "python3", "python"):
+            p = shutil.which(name)
+            if p:
+                candidates.append(p)
     else:
         for name in ("python3.13", "python3.12", "python3.11", "python3"):
             p = shutil.which(name)
             if p:
-                return p
-    if sys.version_info >= (3, 11):
-        return sys.executable
-    for name in ("python3", "python"):
-        p = shutil.which(name)
-        if p and "WindowsApps" not in p:
-            return p
+                candidates.append(p)
+
+    if is_supported_python_version(tuple(sys.version_info[:3])) and not is_windows_store_stub(sys.executable):
+        candidates.append(sys.executable)
+
+    if os.name != "nt":
+        p = shutil.which("python")
+        if p:
+            candidates.append(p)
+
+    seen: set[str] = set()
+    for c in candidates:
+        if not c:
+            continue
+        key = os.path.normcase(os.path.abspath(c)) if os.path.isabs(c) else os.path.normcase(c)
+        if key in seen:
+            continue
+        seen.add(key)
+        if is_windows_store_stub(c):
+            continue
+        if c not in ("py", "py.exe") and not Path(c).is_file():
+            continue
+        if is_supported_python_version(probe_python_version(c)):
+            return c
+
+    if os.name == "nt":
+        py = shutil.which("py")
+        if py and not is_windows_store_stub(py) and is_supported_python_version(probe_python_version("py")):
+            return "py"
     return None
+
+
+def is_noninteractive_cli() -> bool:
+    if auto_yes():
+        return True
+    if os.environ.get("CI", "").strip():
+        return True
+    try:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            return True
+    except Exception:
+        return True
+    return False
+
+
+def missing_python_help_text(*, non_interactive: bool = False) -> str:
+    lines = [
+        "[nlm] 未找到可用的 Python 3.11-3.13。",
+        "      Need Python 3.11-3.13 (Microsoft Store stub is not a real interpreter).",
+    ]
+    if os.name == "nt":
+        lines += [
+            "",
+            "  winget install -e --id Python.Python.3.12 --scope user --accept-package-agreements --accept-source-agreements",
+        ]
+    elif sys.platform == "darwin":
+        lines += ["", "  brew install python@3.12"]
+    else:
+        lines += ["", "  sudo apt-get install -y python3 python3-venv python3-pip"]
+        lines += ["  sudo dnf install -y python3.12 python3-pip"]
+        lines += ["  sudo pacman -S --noconfirm python python-pip"]
+    if non_interactive:
+        lines += ["", "非交互 / non-interactive: 安装后重新运行 nlm start"]
+    return "\n".join(lines)
+
+
+def open_python_install_docs() -> None:
+    url = "https://www.python.org/downloads/"
+    if os.name == "nt":
+        info("打开官网下载页。安装时请勾选 Add python.exe to PATH")
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+        return
+    if sys.platform == "darwin":
+        info("macOS: brew install python@3.12")
+        info(f"或下载: {url}macos/")
+        opener = shutil.which("open")
+        if opener:
+            subprocess.run([opener, f"{url}macos/"], check=False)
+        return
+    info("Debian/Ubuntu: sudo apt-get install -y python3 python3-venv python3-pip")
+    info("Fedora: sudo dnf install -y python3.12 python3-pip")
+    info("Arch: sudo pacman -S --noconfirm python python-pip")
+    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        xdg = shutil.which("xdg-open")
+        if xdg:
+            subprocess.run([xdg, url], check=False)
+
+
+def _run_privileged(cmd: List[str]) -> int:
+    if os.name != "nt":
+        try:
+            if hasattr(os, "geteuid") and os.geteuid() == 0:  # type: ignore[attr-defined]
+                return int(subprocess.run(cmd).returncode)
+        except Exception:
+            pass
+        sudo = shutil.which("sudo")
+        if sudo:
+            return int(subprocess.run([sudo, *cmd]).returncode)
+        err("需要 sudo 才能自动安装 Python")
+        return 1
+    return int(subprocess.run(cmd).returncode)
+
+
+def try_install_system_python() -> Optional[str]:
+    """User-consented best-effort install. Reports what was tried. May refresh PATH."""
+    tried: List[str] = []
+    refresh_process_path()
+
+    if os.name == "nt":
+        winget = shutil.which("winget")
+        if winget:
+            for pkg in ("Python.Python.3.12", "Python.Python.3.11"):
+                tried.append(f"winget {pkg}")
+                info(f"正在通过 winget 安装 {pkg}（用户范围）...")
+                subprocess.run(
+                    [
+                        winget,
+                        "install",
+                        "-e",
+                        "--id",
+                        pkg,
+                        "--scope",
+                        "user",
+                        "--accept-package-agreements",
+                        "--accept-source-agreements",
+                    ],
+                    check=False,
+                )
+                refresh_process_path()
+                found = find_system_python()
+                if found:
+                    ok(f"Python ready · {found}")
+                    return found
+        else:
+            tried.append("winget (not installed)")
+            warn("未找到 winget，打开官网下载页。请勾选 Add python.exe to PATH")
+            open_python_install_docs()
+        warn("已尝试: " + "; ".join(tried))
+        return None
+
+    if sys.platform == "darwin":
+        brew = shutil.which("brew")
+        if brew:
+            tried.append("brew python@3.12")
+            info("brew install python@3.12")
+            subprocess.run([brew, "install", "python@3.12"], check=False)
+            found = find_system_python()
+            if found:
+                ok(f"Python ready · {found}")
+                return found
+        else:
+            tried.append("brew (not installed)")
+            err("未找到 Homebrew，不会假装使用 apt。请: brew install python@3.12")
+            info("或打开 https://www.python.org/downloads/macos/")
+        warn("已尝试: " + "; ".join(tried))
+        return None
+
+    if shutil.which("apt-get"):
+        info("使用 apt 安装 Python（可能需要输入 sudo 密码）...")
+        _run_privileged(["apt-get", "update"])
+        for pkgs in (
+            ["python3.12", "python3.12-venv", "python3-pip"],
+            ["python3.11", "python3.11-venv", "python3-pip"],
+            ["python3", "python3-venv", "python3-pip"],
+        ):
+            tried.append("apt " + " ".join(pkgs))
+            info("尝试: sudo apt-get install -y " + " ".join(pkgs))
+            if _run_privileged(["apt-get", "install", "-y", *pkgs]) == 0:
+                found = find_system_python()
+                if found:
+                    ok(f"Python ready · {found}")
+                    return found
+    elif shutil.which("dnf"):
+        info("使用 dnf 安装 Python（可能需要输入 sudo 密码）...")
+        for pkgs in (
+            ["python3.12", "python3-pip"],
+            ["python3.11", "python3-pip"],
+            ["python3", "python3-pip"],
+        ):
+            tried.append("dnf " + " ".join(pkgs))
+            if _run_privileged(["dnf", "install", "-y", *pkgs]) == 0:
+                found = find_system_python()
+                if found:
+                    ok(f"Python ready · {found}")
+                    return found
+    elif shutil.which("pacman"):
+        tried.append("pacman python")
+        info("使用 pacman 安装 Python（可能需要输入 sudo 密码）...")
+        if _run_privileged(["pacman", "-S", "--noconfirm", "python", "python-pip"]) == 0:
+            found = find_system_python()
+            if found:
+                ok(f"Python ready · {found}")
+                return found
+    elif shutil.which("zypper"):
+        tried.append("zypper python3")
+        if _run_privileged(["zypper", "install", "-y", "python3", "python3-pip", "python3-venv"]) == 0:
+            found = find_system_python()
+            if found:
+                ok(f"Python ready · {found}")
+                return found
+    elif shutil.which("apk"):
+        tried.append("apk python3")
+        if _run_privileged(["apk", "add", "python3", "py3-pip"]) == 0:
+            found = find_system_python()
+            if found:
+                ok(f"Python ready · {found}")
+                return found
+    else:
+        tried.append("no package manager")
+        err("无法识别包管理器（apt/dnf/pacman/zypper/apk/brew）")
+
+    warn("已尝试: " + "; ".join(tried) if tried else "已尝试: none")
+    return None
+
+
+def resolve_or_install_python() -> Optional[str]:
+    """Find a real 3.11–3.13 interpreter, or prompt to install (never hang in CI / --yes)."""
+    found = find_system_python()
+    if found:
+        return found
+    print(missing_python_help_text(non_interactive=is_noninteractive_cli()), flush=True)
+    if is_noninteractive_cli():
+        return None
+    while True:
+        print("[1] 自动安装 Python 3.12（推荐）", flush=True)
+        print("[2] 打开说明 / 下载页，我自己装", flush=True)
+        print("[3] 退出", flush=True)
+        try:
+            choice = input("请选择 [1/2/3]: ").strip()
+        except EOFError:
+            return None
+        if choice == "1":
+            found = try_install_system_python()
+            if found:
+                return found
+            warn("安装后仍未找到，可重试或选 2")
+        elif choice == "2":
+            open_python_install_docs()
+            info("装好后重新运行 nlm，或按 1 再试")
+        elif choice in ("3", ""):
+            return None
+        else:
+            info("请输入 1、2 或 3")
+
 
 
 def venv_python() -> Path:
@@ -672,11 +1000,9 @@ def check_python() -> Tuple[bool, str]:
 
 
 def ensure_venv() -> bool:
-    py = find_system_python()
+    py = resolve_or_install_python()
     if not py:
-        err("Python 3.11+ not found. Install from https://www.python.org/downloads/ (Add to PATH).")
-        if os.name != "nt":
-            info("Linux tip: sudo apt install python3 python3-venv python3-pip")
+        err("无法继续：需要 Python 3.11-3.13。Need Python 3.11-3.13.")
         return False
     if venv_python().is_file():
         # Sanity: broken venv?

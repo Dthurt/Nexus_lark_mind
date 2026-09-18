@@ -94,6 +94,76 @@ def test_quiet_setup_when_ready(monkeypatch: pytest.MonkeyPatch) -> None:
         os.environ.pop("NLM_YES", None)
 
 
+def test_is_windows_store_stub() -> None:
+    boot = _load_boot()
+    assert boot.is_windows_store_stub(r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\python.exe")
+    assert boot.is_windows_store_stub(r"C:/Users/x/AppData/Local/Microsoft/WindowsApps/python3.exe")
+    assert not boot.is_windows_store_stub(r"C:\Users\x\AppData\Local\Programs\Python\Python312\python.exe")
+    assert not boot.is_windows_store_stub(None)
+    assert not boot.is_windows_store_stub("")
+
+
+def test_probe_python_version_skips_store_stub() -> None:
+    boot = _load_boot()
+    assert boot.probe_python_version(r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\python.exe") is None
+
+
+def test_is_supported_python_version() -> None:
+    boot = _load_boot()
+    assert boot.is_supported_python_version((3, 11, 0))
+    assert boot.is_supported_python_version((3, 12, 8))
+    assert boot.is_supported_python_version((3, 13, 1))
+    assert not boot.is_supported_python_version((3, 10, 12))
+    assert not boot.is_supported_python_version((3, 14, 0))
+    assert not boot.is_supported_python_version(None)
+
+
+def test_find_system_python_skips_stub_when_nothing_else(monkeypatch: pytest.MonkeyPatch) -> None:
+    boot = _load_boot()
+    stub = r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\python.exe"
+    monkeypatch.setattr(boot, "probe_python_version", lambda _exe: None)
+    monkeypatch.setattr(boot.shutil, "which", lambda _name: stub)
+    monkeypatch.setattr(boot.os, "name", "nt")
+    monkeypatch.setenv("LOCALAPPDATA", r"Z:\nlm_no_such_local")
+    monkeypatch.setenv("ProgramFiles", r"Z:\nlm_no_such_pf")
+    monkeypatch.setenv("ProgramFiles(x86)", r"Z:\nlm_no_such_pfx86")
+    assert boot.find_system_python() is None
+
+
+def test_missing_python_help_text_noninteractive() -> None:
+    boot = _load_boot()
+    text = boot.missing_python_help_text(non_interactive=True)
+    assert "3.11" in text
+    assert "3.13" in text
+    assert "非交互" in text
+    if os.name == "nt":
+        assert "winget" in text
+    else:
+        assert "apt-get" in text or "brew" in text
+
+
+def test_resolve_or_install_python_noninteractive(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    boot = _load_boot()
+    monkeypatch.setattr(boot, "find_system_python", lambda: None)
+    monkeypatch.setattr(boot, "auto_yes", lambda: True)
+    monkeypatch.setattr(boot, "try_install_system_python", lambda: (_ for _ in ()).throw(RuntimeError("must not install")))
+    assert boot.resolve_or_install_python() is None
+    out = capsys.readouterr().out
+    assert "Python 3.11" in out
+    assert "3.13" in out
+
+
+def test_ensure_venv_messages_when_no_python(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    boot = _load_boot()
+    monkeypatch.setattr(boot, "find_system_python", lambda: None)
+    monkeypatch.setattr(boot, "auto_yes", lambda: True)
+    monkeypatch.setattr(boot, "try_install_system_python", lambda: None)
+    assert boot.ensure_venv() is False
+    out = capsys.readouterr().out
+    assert "Python" in out
+    assert "3.11" in out
+
+
 def test_confirm_respects_nlm_yes() -> None:
     boot = _load_boot()
     os.environ["NLM_YES"] = "1"

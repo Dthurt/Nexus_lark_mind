@@ -14,30 +14,277 @@ if [[ ! -f "$BOOT" ]]; then
   exit 1
 fi
 
+nlm_noninteractive() {
+  if [[ -n "${CI:-}" ]]; then
+    return 0
+  fi
+  local y
+  y="$(printf '%s' "${NLM_YES:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$y" in
+    1|true|yes|y) return 0 ;;
+  esac
+  local a
+  for a in "$@"; do
+    if [[ "$a" == "--yes" || "$a" == "-y" ]]; then
+      return 0
+    fi
+  done
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    return 0
+  fi
+  return 1
+}
+
+nlm_pause_if_tty() {
+  if nlm_noninteractive "$@"; then
+    return 0
+  fi
+  if [[ -t 0 && -t 1 ]]; then
+    echo >&2
+    printf '%s' "按 Enter 关闭 / Press Enter to close..." >&2
+    read -r _ || true
+    echo >&2
+  fi
+}
+
+python_ok() {
+  local bin="$1"
+  [[ -n "$bin" ]] || return 1
+  [[ "$bin" == *WindowsApps* ]] && return 1
+  [[ -x "$bin" || -f "$bin" ]] || return 1
+  "$bin" -c 'import sys; raise SystemExit(0 if (3,11)<=sys.version_info<(3,14) else 1)' >/dev/null 2>&1
+}
+
 find_python() {
-  if [[ -x "$VENV_PY" ]]; then
+  if [[ -x "$VENV_PY" ]] && python_ok "$VENV_PY"; then
     echo "$VENV_PY"
     return 0
   fi
-  local c
+  local c resolved
   for c in python3.13 python3.12 python3.11 python3 python; do
     if command -v "$c" >/dev/null 2>&1; then
-      # Skip Windows Store stubs if somehow present under WSL paths
-      local resolved
       resolved="$(command -v "$c")"
       if [[ "$resolved" == *WindowsApps* ]]; then
         continue
       fi
-      echo "$resolved"
-      return 0
+      if python_ok "$resolved"; then
+        echo "$resolved"
+        return 0
+      fi
     fi
   done
   return 1
 }
 
-PY="$(find_python || true)"
+print_missing_python() {
+  echo >&2
+  echo "[nlm] 未找到可用的 Python 3.11-3.13。" >&2
+  echo "      Need Python 3.11-3.13 (not a Windows Store stub / broken launcher)." >&2
+  echo >&2
+}
+
+print_linux_install_hint() {
+  local uname_s
+  uname_s="$(uname -s 2>/dev/null || echo unknown)"
+  echo "安装命令 / install command:" >&2
+  if [[ "$uname_s" == Darwin ]]; then
+    echo "  brew install python@3.12" >&2
+    echo "  或打开 https://www.python.org/downloads/macos/" >&2
+  elif command -v apt-get >/dev/null 2>&1; then
+    echo "  sudo apt-get update && sudo apt-get install -y python3.12 python3.12-venv python3-pip" >&2
+    echo "  # fallback: sudo apt-get install -y python3 python3-venv python3-pip" >&2
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "  sudo dnf install -y python3.12 python3-pip" >&2
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "  sudo pacman -S --noconfirm python python-pip" >&2
+  elif command -v zypper >/dev/null 2>&1; then
+    echo "  sudo zypper install -y python3 python3-pip python3-venv" >&2
+  elif command -v apk >/dev/null 2>&1; then
+    echo "  sudo apk add python3 py3-pip" >&2
+  else
+    echo "  请从 https://www.python.org/downloads/ 安装 Python 3.11-3.13" >&2
+  fi
+}
+
+run_sudo() {
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    echo "[nlm] 需要 root/sudo 才能自动安装 Python。" >&2
+    return 1
+  fi
+}
+
+install_python() {
+  local uname_s tried=""
+  uname_s="$(uname -s 2>/dev/null || echo unknown)"
+  hash -r 2>/dev/null || true
+
+  if [[ "$uname_s" == Darwin ]]; then
+    if command -v brew >/dev/null 2>&1; then
+      echo "[nlm] brew install python@3.12" >&2
+      tried="brew python@3.12"
+      if brew install python@3.12; then
+        hash -r 2>/dev/null || true
+        if find_python >/dev/null; then
+          return 0
+        fi
+      fi
+    else
+      echo "[nlm] 未找到 Homebrew，不会假装使用 apt。" >&2
+      echo "      请先安装 brew，然后: brew install python@3.12" >&2
+      echo "      或打开 https://www.python.org/downloads/macos/" >&2
+      tried="brew (not installed)"
+    fi
+    echo "[nlm] 已尝试: ${tried:-none}" >&2
+    return 1
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "[nlm] 使用 apt 安装 Python（可能需要输入 sudo 密码）..." >&2
+    run_sudo apt-get update || true
+    local pkgs
+    for pkgs in \
+      "python3.12 python3.12-venv python3-pip" \
+      "python3.11 python3.11-venv python3-pip" \
+      "python3 python3-venv python3-pip"; do
+      echo "[nlm] 尝试: sudo apt-get install -y $pkgs" >&2
+      tried="${tried}; apt $pkgs"
+      # shellcheck disable=SC2086
+      if run_sudo apt-get install -y $pkgs; then
+        hash -r 2>/dev/null || true
+        if find_python >/dev/null; then
+          return 0
+        fi
+      fi
+    done
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "[nlm] 使用 dnf 安装 Python（可能需要输入 sudo 密码）..." >&2
+    for pkgs in "python3.12 python3-pip" "python3.11 python3-pip" "python3 python3-pip"; do
+      echo "[nlm] 尝试: sudo dnf install -y $pkgs" >&2
+      tried="${tried}; dnf $pkgs"
+      # shellcheck disable=SC2086
+      if run_sudo dnf install -y $pkgs; then
+        hash -r 2>/dev/null || true
+        if find_python >/dev/null; then
+          return 0
+        fi
+      fi
+    done
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "[nlm] 使用 pacman 安装 Python（可能需要输入 sudo 密码）..." >&2
+    tried="pacman python"
+    if run_sudo pacman -S --noconfirm python python-pip; then
+      hash -r 2>/dev/null || true
+      if find_python >/dev/null; then
+        return 0
+      fi
+    fi
+  elif command -v zypper >/dev/null 2>&1; then
+    echo "[nlm] 使用 zypper 安装 Python（可能需要输入 sudo 密码）..." >&2
+    tried="zypper python3"
+    if run_sudo zypper install -y python3 python3-pip python3-venv; then
+      hash -r 2>/dev/null || true
+      if find_python >/dev/null; then
+        return 0
+      fi
+    fi
+  elif command -v apk >/dev/null 2>&1; then
+    echo "[nlm] 使用 apk 安装 Python（可能需要输入 sudo 密码）..." >&2
+    tried="apk python3"
+    if run_sudo apk add python3 py3-pip; then
+      hash -r 2>/dev/null || true
+      if find_python >/dev/null; then
+        return 0
+      fi
+    fi
+  else
+    echo "[nlm] 无法识别包管理器（apt/dnf/pacman/zypper/apk/brew）。" >&2
+    tried="no package manager"
+  fi
+
+  echo "[nlm] 已尝试: ${tried:-none}" >&2
+  return 1
+}
+
+open_python_docs() {
+  local uname_s url="https://www.python.org/downloads/"
+  uname_s="$(uname -s 2>/dev/null || echo unknown)"
+  print_linux_install_hint
+  if [[ "$uname_s" == Darwin ]]; then
+    if command -v open >/dev/null 2>&1; then
+      open "${url}macos/" >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" >/dev/null 2>&1 || true
+  fi
+}
+
+resolve_python() {
+  local found
+  found="$(find_python || true)"
+  if [[ -n "${found:-}" ]]; then
+    echo "$found"
+    return 0
+  fi
+
+  print_missing_python
+
+  if nlm_noninteractive "$@"; then
+    print_linux_install_hint
+    echo "然后重新运行: ./nlm start" >&2
+    return 1
+  fi
+
+  local choice
+  while true; do
+    echo "[1] 自动安装 Python 3.12（推荐）" >&2
+    echo "[2] 打开说明 / 下载页，我自己装" >&2
+    echo "[3] 退出" >&2
+    echo >&2
+    choice=""
+    if ! read -r -p "请选择 [1/2/3]: " choice; then
+      echo "[nlm] 无法读取输入（非交互），退出。" >&2
+      return 1
+    fi
+    choice="$(printf '%s' "$choice" | tr -d '[:space:]')"
+    case "$choice" in
+      1)
+        if install_python; then
+          found="$(find_python || true)"
+          if [[ -n "${found:-}" ]]; then
+            echo "[nlm] 已找到 Python: $found" >&2
+            echo "$found"
+            return 0
+          fi
+        fi
+        echo "[nlm] 安装后仍未找到可用的 Python 3.11-3.13。可重试 1 或选 2。" >&2
+        echo >&2
+        ;;
+      2)
+        echo "[nlm] 说明：装好后请确保 python3 在 PATH 中。" >&2
+        open_python_docs
+        echo "装好后重新运行 ./nlm，或按 1 再试。" >&2
+        echo >&2
+        ;;
+      3|"")
+        echo "[nlm] 已退出。安装 Python 3.11-3.13 后重新运行 ./nlm。" >&2
+        return 1
+        ;;
+      *)
+        echo "[nlm] 请输入 1、2 或 3" >&2
+        ;;
+    esac
+  done
+}
+
+PY="$(resolve_python "$@" || true)"
 if [[ -z "${PY:-}" ]]; then
-  echo "[nlm] Python 3.11+ not found. Install python3 (e.g. apt install python3 python3-venv)." >&2
+  nlm_pause_if_tty "$@"
   exit 1
 fi
 
