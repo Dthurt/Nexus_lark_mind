@@ -96,7 +96,7 @@ def test_quiet_setup_when_ready(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_list_on_path_prefers_where_then_which(monkeypatch: pytest.MonkeyPatch) -> None:
     boot = _load_boot()
-    monkeypatch.setattr(boot.os, "name", "nt")
+    monkeypatch.setattr(boot, "is_windows", lambda: True)
 
     def fake_check_output(*_args, **_kwargs):
         return "C:\\WindowsApps\\python.exe\nC:\\Python312\\python.exe\n"
@@ -137,7 +137,7 @@ def test_find_system_python_skips_stub_when_nothing_else(monkeypatch: pytest.Mon
     monkeypatch.setattr(boot, "probe_python_version", lambda _exe: None)
     monkeypatch.setattr(boot.shutil, "which", lambda _name: stub)
     monkeypatch.setattr(boot, "list_on_path", lambda _name: [stub])
-    monkeypatch.setattr(boot.os, "name", "nt")
+    monkeypatch.setattr(boot, "is_windows", lambda: True)
     monkeypatch.setenv("LOCALAPPDATA", r"Z:\nlm_no_such_local")
     monkeypatch.setenv("ProgramFiles", r"Z:\nlm_no_such_pf")
     monkeypatch.setenv("ProgramFiles(x86)", r"Z:\nlm_no_such_pfx86")
@@ -160,7 +160,7 @@ def test_find_system_python_skips_stub_then_real(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(boot, "probe_python_version", fake_probe)
     monkeypatch.setattr(boot, "default_windows_python_exes", lambda: [])
     monkeypatch.setattr(boot, "list_on_path", lambda name: [stub, real] if name == "python" else [])
-    monkeypatch.setattr(boot.os, "name", "nt")
+    monkeypatch.setattr(boot, "is_windows", lambda: True)
     monkeypatch.setattr(boot.sys, "executable", stub)
     assert boot.find_system_python() == real
 

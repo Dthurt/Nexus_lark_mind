@@ -495,9 +495,14 @@ def probe_python_version(exe: str) -> Optional[Tuple[int, int, int]]:
         return None
 
 
+def is_windows() -> bool:
+    """Do not monkeypatch os.name — pathlib.Path becomes WindowsPath and crashes on Linux CI."""
+    return os.name == "nt"
+
+
 def default_windows_python_exes() -> List[Path]:
     out: List[Path] = []
-    if os.name != "nt":
+    if not is_windows():
         return out
     roots = (
         Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python",
@@ -512,7 +517,7 @@ def default_windows_python_exes() -> List[Path]:
 
 def refresh_process_path() -> None:
     """Pick up a just-installed Python without requiring a new login."""
-    if os.name != "nt":
+    if not is_windows():
         return
     parts: List[str] = []
     local = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python"
@@ -548,7 +553,7 @@ def refresh_process_path() -> None:
 def list_on_path(name: str) -> List[str]:
     """All PATH hits for *name*. Windows `where` sees Store stub first, then a later real python."""
     found: List[str] = []
-    if os.name == "nt":
+    if is_windows():
         try:
             raw = subprocess.check_output(
                 ["where.exe", name],
@@ -568,7 +573,7 @@ def list_on_path(name: str) -> List[str]:
 
 def find_system_python() -> Optional[str]:
     candidates: List[str] = []
-    if os.name == "nt":
+    if is_windows():
         candidates.extend(str(p) for p in default_windows_python_exes())
         for name in ("python3.13", "python3.12", "python3.11", "python3", "python"):
             candidates.extend(list_on_path(name))
@@ -579,7 +584,7 @@ def find_system_python() -> Optional[str]:
     if is_supported_python_version(tuple(sys.version_info[:3])) and not is_windows_store_stub(sys.executable):
         candidates.append(sys.executable)
 
-    if os.name != "nt":
+    if not is_windows():
         candidates.extend(list_on_path("python"))
 
     seen: set[str] = set()
@@ -597,7 +602,7 @@ def find_system_python() -> Optional[str]:
         if is_supported_python_version(probe_python_version(c)):
             return c
 
-    if os.name == "nt":
+    if is_windows():
         py = shutil.which("py")
         if py and not is_windows_store_stub(py) and is_supported_python_version(probe_python_version("py")):
             return "py"
@@ -622,7 +627,7 @@ def missing_python_help_text(*, non_interactive: bool = False) -> str:
         "[nlm] 未找到可用的 Python 3.11-3.13。",
         "      Need Python 3.11-3.13 (Microsoft Store stub is not a real interpreter).",
     ]
-    if os.name == "nt":
+    if is_windows():
         lines += [
             "",
             "  winget install -e --id Python.Python.3.12 --scope user --accept-package-agreements --accept-source-agreements",
@@ -640,7 +645,7 @@ def missing_python_help_text(*, non_interactive: bool = False) -> str:
 
 def open_python_install_docs() -> None:
     url = "https://www.python.org/downloads/"
-    if os.name == "nt":
+    if is_windows():
         info("打开官网下载页。安装时请勾选 Add python.exe to PATH")
         try:
             webbrowser.open(url)
@@ -664,7 +669,7 @@ def open_python_install_docs() -> None:
 
 
 def _run_privileged(cmd: List[str]) -> int:
-    if os.name != "nt":
+    if not is_windows():
         try:
             if hasattr(os, "geteuid") and os.geteuid() == 0:  # type: ignore[attr-defined]
                 return int(subprocess.run(cmd).returncode)
@@ -683,7 +688,7 @@ def try_install_system_python() -> Optional[str]:
     tried: List[str] = []
     refresh_process_path()
 
-    if os.name == "nt":
+    if is_windows():
         winget = shutil.which("winget")
         if winget:
             for pkg in ("Python.Python.3.12", "Python.Python.3.11"):
@@ -838,7 +843,7 @@ def port_in_use(port: int) -> bool:
 
 def _pids_listening_on_port(port: int) -> set[int]:
     pids: set[int] = set()
-    if os.name == "nt":
+    if is_windows():
         try:
             out = subprocess.check_output(["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL)
         except Exception:
@@ -909,7 +914,7 @@ def free_ports() -> None:
             if pid <= 0 or pid == os.getpid() or pid == 1:
                 continue
             info(f"Stopping PID {pid} on :{port}")
-            if os.name == "nt":
+            if is_windows():
                 subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False)
             else:
                 try:
@@ -1075,8 +1080,8 @@ def install_deps(*, force: bool = False, with_crawl: bool = False) -> bool:
                 warn("Crawl4AI install failed — core stack still usable")
             else:
                 progress.update(t, description="crawl4ai-setup (Playwright)…")
-                crawl_bin = ROOT / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
-                    "crawl4ai-setup.exe" if os.name == "nt" else "crawl4ai-setup"
+                crawl_bin = ROOT / ".venv" / ("Scripts" if is_windows() else "bin") / (
+                    "crawl4ai-setup.exe" if is_windows() else "crawl4ai-setup"
                 )
                 if crawl_bin.exists():
                     run_cmd([str(crawl_bin)], check=False)
@@ -1462,7 +1467,7 @@ def reexec_in_venv() -> None:
         raise RuntimeError("refusing to re-exec under pytest; run via `nlm` CLI instead")
     target = [str(venv_python()), str(Path(__file__).resolve()), *sys.argv[1:]]
     info(f"Switching into .venv …")
-    if os.name == "nt":
+    if is_windows():
         raise SystemExit(subprocess.call(target, cwd=str(ROOT)))
     os.execv(target[0], target)
 
@@ -1476,7 +1481,7 @@ def _terminate_process(proc: subprocess.Popen) -> None:
     if proc.poll() is not None:
         return
     try:
-        if os.name == "nt":
+        if is_windows():
             proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
             try:
                 proc.wait(timeout=5)
@@ -1561,7 +1566,7 @@ def start_flow(*, open_browser: bool = True, skip_setup: bool = False) -> int:
         threading.Thread(target=_open, daemon=True).start()
 
     popen_kwargs: Dict[str, Any] = {"cwd": str(ROOT), "env": env}
-    if os.name == "nt":
+    if is_windows():
         popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
     else:
         popen_kwargs["start_new_session"] = True
