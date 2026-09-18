@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { errorFlagsFromMessage } from "@/lib/chatError";
 import { pretty } from "@/lib/pretty";
 
 let msgSeq = 0;
@@ -84,9 +85,15 @@ export function useChatTimeline() {
     (
       role: string,
       content: string,
-      { rich = null as boolean | null, usage = null as any, streaming = false } = {},
+      {
+        rich = null as boolean | null,
+        usage = null as any,
+        streaming = false,
+        error = false,
+        cancelled = false,
+      } = {},
     ) => {
-      const useRich = rich == null ? role === "assistant" : !!rich;
+      const useRich = rich == null ? role === "assistant" && !error : !!rich;
       const item: TimelineItem = {
         id: mid(),
         kind: "msg",
@@ -98,6 +105,8 @@ export function useChatTimeline() {
         retryNote: "",
         activity: null,
         live: false,
+        error: !!error,
+        cancelled: !!cancelled,
       };
       const next = [...itemsRef.current, item];
       commit(next);
@@ -1011,9 +1020,13 @@ export function useChatTimeline() {
         }
         if (role === "system") continue;
         if (!m.content && role === "assistant") continue;
+        const errFlags = errorFlagsFromMessage(m);
         appendMessage(role === "user" ? "user" : "assistant", m.content || "", {
+          rich: errFlags.error ? false : undefined,
+          error: errFlags.error,
+          cancelled: errFlags.cancelled,
           usage:
-            role === "assistant" && meta.usage && Object.keys(meta.usage).length
+            role === "assistant" && !errFlags.error && meta.usage && Object.keys(meta.usage).length
               ? meta.usage
               : null,
         });

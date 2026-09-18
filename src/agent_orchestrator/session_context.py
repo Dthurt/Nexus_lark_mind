@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from src.common.schemas import ChatMessage
+from src.common.schemas import ChatMessage, ChatRole
+from src.common.session_errors import build_error_message, is_persisted_error
 from src.common.session_inbox import (
     claim_kind,
     claim_next_queue,
@@ -32,6 +33,88 @@ class SessionContext:
         return await self.redis.append_session_message(
             session_id,
             message.model_dump(mode="json"),
+        )
+
+    async def ensure_user_message(
+        self,
+        session_id: str,
+        content: str,
+        *,
+        task_id: str = "",
+    ) -> bool:
+        """Append the user turn if this task has not already recorded it."""
+        text = content or ""
+        msgs = await self.load_messages(session_id)
+        if task_id:
+            for m in msgs:
+                if not isinstance(m, dict) or m.get("role") != "user":
+                    continue
+                meta = m.get("metadata") or {}
+                if isinstance(meta, dict) and meta.get("task_id") == task_id:
+                    return False
+        if msgs:
+            last = msgs[-1]
+            last_meta = last.get("metadata") or {} if isinstance(last, dict) else {}
+            last_task = last_meta.get("task_id") if isinstance(last_meta, dict) else None
+            if (
+                isinstance(last, dict)
+                and last.get("role") == "user"
+                and (last.get("content") or "") == text
+                and (not task_id or not last_task or last_task == task_id)
+            ):
+                return False
+        meta: Dict[str, Any] = {}
+        if task_id:
+            meta["task_id"] = task_id
+        await self.append(
+            session_id,
+            ChatMessage(role=ChatRole.USER, content=text, metadata=meta),
+        )
+        return True
+
+    async def persist_turn_error(
+        self,
+        session_id: str,
+        error: str,
+        *,
+        user_content: str = "",
+        task_id: str = "",
+        cancelled: bool = False,
+        partial: Optional[str] = None,
+        user_id: str = "web-user",
+        channel: str = "web",
+    ) -> None:
+        """Write user (if missing) + a styled assistant error onto the session."""
+        await self.ensure(session_id, user_id=user_id, channel=channel)
+        if user_content:
+            await self.ensure_user_message(session_id, user_content, task_id=task_id)
+        msgs = await self.load_messages(session_id)
+        if task_id:
+            for m in msgs:
+                if is_persisted_error(m):
+                    meta = (m or {}).get("metadata") or {}
+                    if isinstance(meta, dict) and meta.get("task_id") == task_id:
+                        return
+        if cancelled and (partial or "").strip():
+            await self.append(
+                session_id,
+                ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=str(partial),
+                    metadata={"kind": "partial", "cancelled": True, "task_id": task_id} if task_id else {
+                        "kind": "partial",
+                        "cancelled": True,
+                    },
+                ),
+            )
+        await self.append(
+            session_id,
+            build_error_message(
+                error,
+                cancelled=cancelled,
+                task_id=task_id,
+                partial=partial,
+            ),
         )
 
     async def ensure(

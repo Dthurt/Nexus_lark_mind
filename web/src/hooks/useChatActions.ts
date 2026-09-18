@@ -10,6 +10,7 @@ import {
   postApprovals,
   postAskAnswers,
   postChat,
+  persistTurnError,
   postSessionInbox,
   type InboxItem,
 } from "@/api/endpoints";
@@ -20,6 +21,7 @@ import {
   addContextRef,
   type ContextRef,
 } from "@/lib/contextRefs";
+import { formatStreamErrorText } from "@/lib/chatError";
 
 type TrajectoryApi = ReturnType<typeof useTrajectory>;
 
@@ -470,13 +472,15 @@ export function useChatActions(opts: UseChatActionsOpts) {
       if ((data as any)?.task_id) onTaskId?.((data as any).task_id);
       stream.setStatus("queued");
       stream.setActivity("model", "正在调用模型…", modelName || "");
-    } catch (err: any) {
-      timeline.dismissLiveAssistant();
-      timeline.appendMessage("assistant", String(err?.message || err), { rich: false });
-      onBusyChange?.(false);
-      stream.setBusy(false);
-      stream.setStatus("error");
-    }
+      } catch (err: any) {
+        const raw = String(err?.message || err);
+        timeline.dismissLiveAssistant();
+        timeline.appendMessage("assistant", formatStreamErrorText(raw), { rich: false, error: true });
+        void persistTurnError(sessionIdRef.current, { error: raw }).catch(() => undefined);
+        onBusyChange?.(false);
+        stream.setBusy(false);
+        stream.setStatus("error");
+      }
   }, [
     autoAccept,
     cwd,
@@ -637,9 +641,13 @@ export function useChatActions(opts: UseChatActionsOpts) {
         stream.setStatus("queued");
         stream.setActivity("model", "正在调用模型…", modelName || "");
       } catch (err: any) {
+        const raw = String(err?.message || err);
         timeline.dismissLiveAssistant();
-        timeline.appendMessage("assistant", String(err?.message || err), { rich: false });
-        trajectory.addError(String(err?.message || err));
+        timeline.appendMessage("assistant", formatStreamErrorText(raw), { rich: false, error: true });
+        trajectory.addError(raw);
+        void persistTurnError(sessionIdRef.current, { error: raw, user_content: draft }).catch(
+          () => undefined,
+        );
         setInput((cur) => (cur.trim() ? cur : draft));
         onBusyChange?.(false);
         stream.setBusy(false);

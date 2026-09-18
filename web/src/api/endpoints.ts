@@ -122,6 +122,22 @@ export function getSession(sessionId: string): Promise<SessionDetail | null> {
   );
 }
 
+export function persistTurnError(
+  sessionId: string,
+  body: {
+    error: string;
+    user_content?: string;
+    task_id?: string;
+    cancelled?: boolean;
+    partial?: string;
+  },
+): Promise<SessionDetail | null> {
+  return apiPost<SessionDetail | null>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/turn-error`,
+    body,
+  );
+}
+
 export function createSession(body: CreateSessionBody): Promise<SessionDetail> {
   return apiPost<SessionDetail>("/api/sessions", body);
 }

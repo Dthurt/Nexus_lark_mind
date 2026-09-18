@@ -615,6 +615,15 @@ def create_adapters_app() -> FastAPI:
         data = await orch.call("POST", f"/rpc/sessions/{session_id}/files", json=payload)
         return RpcEnvelope(ok=True, data=data)
 
+    @app.post("/api/sessions/{session_id}/turn-error")
+    async def post_session_turn_error(session_id: str, request: Request):
+        """Persist a failed chat turn (user + error) so refresh still shows it."""
+        orch: RpcClient = state["orchestrator"]
+        body = await request.json()
+        payload = dict(body) if isinstance(body, dict) else {}
+        data = await orch.call("POST", f"/rpc/sessions/{session_id}/turn-error", json=payload)
+        return RpcEnvelope(ok=True, data=data)
+
     @app.post("/api/sessions/{session_id}/delivery")
     async def post_session_delivery(session_id: str, request: Request):
         """Publish Delivery markdown to chat + optional ``.nlm/deliveries/`` on local cwd."""

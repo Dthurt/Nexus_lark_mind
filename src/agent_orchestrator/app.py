@@ -81,7 +81,26 @@ def create_orchestrator_app() -> FastAPI:
     @app.post("/rpc/tasks/enqueue")
     async def enqueue(body: EnqueueRequest):
         queue: QueueService = state["queue"]
-        task = await queue.enqueue(body.task)
+        sessions: SessionContext = state["sessions"]
+        task = body.task
+        try:
+            ch = task.channel.value if hasattr(task.channel, "value") else str(task.channel or "web")
+            await sessions.ensure(
+                task.session_id,
+                user_id=task.user_id or "web-user",
+                channel=ch,
+                cwd=(task.metadata or {}).get("cwd"),
+                workspace_id=(task.metadata or {}).get("workspace_id"),
+                workspace_title=(task.metadata or {}).get("workspace_title"),
+                workspace_kind=(task.metadata or {}).get("workspace_kind"),
+                ssh_host_id=(task.metadata or {}).get("ssh_host_id"),
+            )
+            await sessions.ensure_user_message(
+                task.session_id, task.content, task_id=task.task_id
+            )
+        except Exception:
+            logger.exception("persist user on enqueue failed for %s", task.session_id)
+        task = await queue.enqueue(task)
         return RpcEnvelope(
             ok=True,
             data=EnqueueResponse(task_id=task.task_id, session_id=task.session_id).model_dump(),
@@ -240,6 +259,27 @@ def create_orchestrator_app() -> FastAPI:
         await sessions.append(session_id, msg)
         file_meta = (msg.metadata or {}).get("file")
         return RpcEnvelope(ok=True, data={"session_id": session_id, "file": file_meta})
+
+    @app.post("/rpc/sessions/{session_id}/turn-error")
+    async def persist_session_turn_error(session_id: str, request: Request):
+        """Persist a failed chat turn so the error survives refresh."""
+        body = await request.json()
+        if not isinstance(body, dict):
+            body = {}
+        sessions: SessionContext = state["sessions"]
+        error = str(body.get("error") or body.get("message") or "unknown").strip() or "unknown"
+        await sessions.persist_turn_error(
+            session_id,
+            error,
+            user_content=str(body.get("user_content") or body.get("content") or ""),
+            task_id=str(body.get("task_id") or ""),
+            cancelled=bool(body.get("cancelled")),
+            partial=str(body.get("partial") or "") or None,
+            user_id=str(body.get("user_id") or "web-user"),
+            channel=str(body.get("channel") or "web"),
+        )
+        data = await sessions.redis.get_session(session_id)
+        return RpcEnvelope(ok=True, data=data)
 
     @app.get("/rpc/sessions/{session_id}")
     async def get_session(session_id: str):

@@ -19,6 +19,7 @@ from src.common.schemas import (
     TaskStatus,
     new_id,
 )
+from src.common.session_errors import model_history_messages
 from src.infrastructure.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
@@ -64,13 +65,10 @@ class TaskDispatcher:
                     detail = nested.strip()
                 if len(detail) > 500:
                     detail = detail[:500] + "…"
-                await self._publish(
+                await self._fail_turn(
                     task,
-                    EventType.TASK_FAILED,
-                    {
-                        "error": detail,
-                        "error_type": exc.__class__.__name__,
-                    },
+                    detail,
+                    extra={"error_type": exc.__class__.__name__},
                 )
 
     def stop(self) -> None:
@@ -97,11 +95,7 @@ class TaskDispatcher:
 
     async def dispatch(self, task: StandardTask) -> None:
         if self.is_cancelled(task.task_id):
-            await self._publish(
-                task,
-                EventType.TASK_FAILED,
-                {"error": "cancelled", "cancelled": True},
-            )
+            await self._fail_turn(task, "cancelled", cancelled=True)
             self._cancelled.discard(task.task_id)
             return
 
@@ -199,7 +193,19 @@ class TaskDispatcher:
                 "ssh_host_id": session.get("ssh_host_id") or task.metadata.get("ssh_host_id") or "",
             }
 
-        history = await self.sessions.load_messages(task.session_id)
+        history = model_history_messages(await self.sessions.load_messages(task.session_id))
+        # Enqueue may have already persisted this user turn; keep a single copy for the model.
+        if history:
+            last = history[-1]
+            last_meta = last.get("metadata") or {} if isinstance(last, dict) else {}
+            last_task = last_meta.get("task_id") if isinstance(last_meta, dict) else None
+            if (
+                isinstance(last, dict)
+                and last.get("role") == "user"
+                and (last.get("content") or "") == task.content
+                and (not last_task or last_task == task.task_id)
+            ):
+                history = history[:-1]
         messages = []
         for m in history:
             role = m.get("role")
@@ -218,16 +224,14 @@ class TaskDispatcher:
         task.messages = messages
 
         await self._publish(task, EventType.TASK_STARTED, {})
-        await self.sessions.append(task.session_id, ChatMessage(role=ChatRole.USER, content=task.content))
+        await self.sessions.ensure_user_message(
+            task.session_id, task.content, task_id=task.task_id
+        )
         await self.sessions.touch_title(task.session_id, task.content)
 
         try:
             if self.is_cancelled(task.task_id):
-                await self._publish(
-                    task,
-                    EventType.TASK_FAILED,
-                    {"error": "cancelled", "cancelled": True},
-                )
+                await self._fail_turn(task, "cancelled", cancelled=True)
                 return
             if task.stream:
                 await self._dispatch_stream(task, abort)
@@ -440,15 +444,16 @@ class TaskDispatcher:
                     )
 
         if cancelled or (error == "cancelled"):
-            await self._publish(
+            await self._fail_turn(
                 task,
-                EventType.TASK_FAILED,
-                {"error": "已停止生成", "cancelled": True, "partial": collected or None},
+                "已停止生成",
+                cancelled=True,
+                partial=collected or None,
             )
             return
 
-        if error and not collected:
-            await self._publish(task, EventType.TASK_FAILED, {"error": error, "usage": usage})
+        if error:
+            await self._fail_turn(task, error, extra={"usage": usage} if usage else None)
             return
 
         session_usage = await self.sessions.add_usage(task.session_id, usage or {})
@@ -526,6 +531,36 @@ class TaskDispatcher:
                 )
             except Exception:
                 logger.exception("restore queue item failed")
+
+    async def _fail_turn(
+        self,
+        task: StandardTask,
+        error: str,
+        *,
+        cancelled: bool = False,
+        partial: Optional[str] = None,
+        extra: Optional[dict] = None,
+    ) -> None:
+        """Persist the failed turn on the session, then emit task.failed."""
+        try:
+            await self.sessions.persist_turn_error(
+                task.session_id,
+                error,
+                user_content=task.content,
+                task_id=task.task_id,
+                cancelled=cancelled,
+                partial=partial,
+                user_id=task.user_id or "web-user",
+                channel=task.channel.value if hasattr(task.channel, "value") else str(task.channel or "web"),
+            )
+        except Exception:
+            logger.exception("persist_turn_error failed for %s", task.session_id)
+        payload = {"error": error, "cancelled": cancelled}
+        if partial:
+            payload["partial"] = partial
+        if extra:
+            payload.update(extra)
+        await self._publish(task, EventType.TASK_FAILED, payload)
 
     async def _publish(self, task: StandardTask, event_type: EventType, payload: dict) -> None:
         event = BusEvent(

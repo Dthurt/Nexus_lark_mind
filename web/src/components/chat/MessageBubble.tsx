@@ -41,6 +41,8 @@ export type MessageBubbleItem = {
     startedAt?: number;
   } | null;
   planReady?: boolean;
+  error?: boolean;
+  cancelled?: boolean;
 };
 
 export type MessageBubbleProps = {
@@ -153,8 +155,10 @@ export const MessageBubble = memo(function MessageBubble({
   }
 
   const isUser = item.role === "user";
+  const isError = !!item.error;
+  const isCancelled = !!item.cancelled;
   const showUsageFooter =
-    !isUser && !item.streaming && !item.live && hasUsageStats;
+    !isUser && !item.streaming && !item.live && hasUsageStats && !isError;
   const showCopyAction =
     !isUser && !item.streaming && !item.live && !!(content || "").trim();
 
@@ -164,13 +168,22 @@ export const MessageBubble = memo(function MessageBubble({
         "msg max-w-full min-w-0 animate-in fade-in duration-150 rounded-xl border px-3.5 py-2.5",
         isUser
           ? "ml-auto w-fit max-w-[min(92%,720px)] self-end rounded-br-sm border-primary/25 bg-primary/10"
-          : cn(
-              "w-full self-start rounded-bl-sm border-transparent bg-transparent px-1 sm:px-2",
-              compactBottom ? "pb-0.5 pt-1" : "py-1.5",
-            ),
+          : isError
+            ? cn(
+                "w-full self-start rounded-bl-sm px-3.5 py-2.5",
+                isCancelled
+                  ? "border-amber-600/35 bg-amber-600/[0.06] text-amber-900 dark:text-amber-100"
+                  : "border-rose-500/40 bg-rose-500/[0.07] text-rose-800 dark:text-rose-100",
+              )
+            : cn(
+                "w-full self-start rounded-bl-sm border-transparent bg-transparent px-1 sm:px-2",
+                compactBottom ? "pb-0.5 pt-1" : "py-1.5",
+              ),
         (item.live || item.streaming) && "live",
         className,
       )}
+      data-error={isError && !isCancelled ? "true" : undefined}
+      role={isError ? "alert" : undefined}
     >
       {!isUser &&
       !item.hideReasoning &&

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { openChatStream } from "@/api/endpoints";
 import type { ChatTimelineApi } from "@/hooks/useChatTimeline";
 import type { useTrajectory } from "@/hooks/useTrajectory";
+import { formatStreamErrorText } from "@/lib/chatError";
 
 type TrajectoryApi = ReturnType<typeof useTrajectory>;
 
@@ -378,16 +379,19 @@ export function useChatStream(opts: UseChatStreamOpts) {
           } else {
             tl.dismissLiveAssistant();
           }
-          tl.appendMessage("assistant", "已停止生成。", { rich: false });
+          tl.appendMessage("assistant", formatStreamErrorText(err, true), {
+            rich: false,
+            error: true,
+            cancelled: true,
+          });
           tr.addError("已停止生成");
           setStatus("stopped");
         } else {
           tl.dismissLiveAssistant();
-          tl.appendMessage(
-            "assistant",
-            err.includes("限流") || err.includes("429") ? `⚠️ ${err}` : `错误：${err}`,
-            { rich: false },
-          );
+          tl.appendMessage("assistant", formatStreamErrorText(err), {
+            rich: false,
+            error: true,
+          });
           tr.addError(err);
           setStatus("error");
         }

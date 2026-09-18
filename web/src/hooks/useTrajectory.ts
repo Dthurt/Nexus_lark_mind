@@ -408,14 +408,19 @@ export function useTrajectory() {
           addUser(m.content || "");
         } else if (role === "assistant" && m.content) {
           ensureTurn();
-          if (meta.reasoning) addReasoning(String(meta.reasoning));
-          addAssistant(m.content, meta.usage);
+          if (meta.kind === "error") {
+            addError(String(meta.error || m.content));
+          } else {
+            if (meta.reasoning) addReasoning(String(meta.reasoning));
+            addAssistant(m.content, meta.usage);
+          }
         }
       }
       if (opened) endTurn();
     },
     [
       addAssistant,
+      addError,
       addReasoning,
       addToolCall,
       addToolResult,
