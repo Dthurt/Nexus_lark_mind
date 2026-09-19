@@ -11,7 +11,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-Dthurt%2FNexus__lark__mind-181717?logo=github)](https://github.com/Dthurt/Nexus_lark_mind)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Dthurt/Nexus_lark_mind?style=social)](https://github.com/Dthurt/Nexus_lark_mind/stargazers)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io/)
@@ -77,7 +77,7 @@ Dependency direction is one-way: Adapters → Orchestrator → Kernel → Infras
 
 | Method | Best for | Notes |
 |--------|----------|-------|
-| **`./nlm` / `nlm.cmd` / `nlm start`** | **Recommended local one-shot** | Rich TUI (Windows + Linux): env check, **Python 3.11–3.13 prompt/install if missing**, deps, model config, Crawl4AI, start + auto-repair |
+| **`./nlm` / `nlm.cmd` / `nlm start`** | **Recommended local one-shot** | Rich TUI (Windows + Linux): env check, **Python 3.10–3.13 prompt/install if missing**, deps, model config, Crawl4AI, start + auto-repair |
 | `scripts/start_local.bat` | Windows lightweight (no menu) | All-in-one + memory broker; **no Docker / Redis**; serves `web-static` |
 | `scripts/dev.bat` | **UI development** | Backend + Vite HMR (open :5173) |
 | `docker compose` | Integration / server / Docker Desktop | 4 containers (`redis` + `kernel` + `orchestrator` + `adapters`) |
@@ -242,7 +242,7 @@ chmod +x nlm && ./nlm start
 nlm start
 ```
 
-Need **Python 3.11–3.13**. If it is missing (or only the Microsoft Store stub), `nlm` stops and offers `[1]` install / `[2]` download page / `[3]` quit — it will not flash-close. Non-interactive: `nlm start --yes` prints the install command and exits 1.
+Need **Python 3.10–3.13**. If it is missing (or only the Microsoft Store stub), `nlm` stops and offers `[1]` install / `[2]` download page / `[3]` quit — it will not flash-close. Non-interactive: `nlm start --yes` prints the install command and exits 1.
 
 Also: `./nlm` · `nlm status` · `nlm doctor` · `nlm stop` · `nlm repair` · `nlm logs` · `nlm update`
 

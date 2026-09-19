@@ -68,13 +68,17 @@ function Update-NlmProcessPath {
     "$env:LOCALAPPDATA\Programs\Python\Python311\Scripts",
     "$env:LOCALAPPDATA\Programs\Python\Python313",
     "$env:LOCALAPPDATA\Programs\Python\Python313\Scripts",
+    "$env:LOCALAPPDATA\Programs\Python\Python310",
+    "$env:LOCALAPPDATA\Programs\Python\Python310\Scripts",
     "$env:LOCALAPPDATA\Programs\Python\Launcher",
     "$env:ProgramFiles\Python312",
     "$env:ProgramFiles\Python311",
     "$env:ProgramFiles\Python313",
+    "$env:ProgramFiles\Python310",
     "${env:ProgramFiles(x86)}\Python312",
     "${env:ProgramFiles(x86)}\Python311",
-    "${env:ProgramFiles(x86)}\Python313"
+    "${env:ProgramFiles(x86)}\Python313",
+    "${env:ProgramFiles(x86)}\Python310"
   )
   $machine = ""
   $user = ""
@@ -88,7 +92,7 @@ function Test-NlmPythonExe {
   if (-not $Exe) { return $false }
   if ($Exe -match "WindowsApps") { return $false }
   if ($Exe -ne "py" -and -not (Test-Path -LiteralPath $Exe)) { return $false }
-  $code = "import sys; raise SystemExit(0 if (3,11)<=sys.version_info<(3,14) else 1)"
+  $code = "import sys; raise SystemExit(0 if (3,10)<=sys.version_info<(3,14) else 1)"
   try {
     if ($Exe -eq "py") {
       & py -3 -c $code 2>$null | Out-Null
@@ -109,12 +113,15 @@ function Find-NlmPython {
     "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
+    "$env:LOCALAPPDATA\Programs\Python\Python310\python.exe",
     "$env:ProgramFiles\Python312\python.exe",
     "$env:ProgramFiles\Python311\python.exe",
     "$env:ProgramFiles\Python313\python.exe",
+    "$env:ProgramFiles\Python310\python.exe",
     "${env:ProgramFiles(x86)}\Python312\python.exe",
     "${env:ProgramFiles(x86)}\Python311\python.exe",
-    "${env:ProgramFiles(x86)}\Python313\python.exe"
+    "${env:ProgramFiles(x86)}\Python313\python.exe",
+    "${env:ProgramFiles(x86)}\Python310\python.exe"
   )
   foreach ($c in $candidates) {
     if ($c -and (Test-NlmPythonExe $c)) { return $c }
@@ -136,8 +143,8 @@ function Find-NlmPython {
 
 function Write-NlmMissingPython {
   Write-Host ""
-  Write-Host "[nlm] 未找到可用的 Python 3.11-3.13。" -ForegroundColor Red
-  Write-Host "      Need Python 3.11-3.13 (Microsoft Store stub is not a real interpreter)." -ForegroundColor Red
+  Write-Host "[nlm] 未找到可用的 Python 3.10-3.13。" -ForegroundColor Red
+  Write-Host "      Need Python 3.10-3.13 (Microsoft Store stub is not a real interpreter)." -ForegroundColor Red
   Write-Host ""
 }
 
@@ -231,7 +238,7 @@ function Resolve-NlmPython {
       continue
     }
     if ($choice -eq "3") {
-      Write-Host "[nlm] 已退出。安装 Python 3.11-3.13 后重新运行 nlm。"
+      Write-Host "[nlm] 已退出。安装 Python 3.10-3.13 后重新运行 nlm。"
       return $null
     }
     Write-Host "[nlm] 请输入 1、2 或 3"

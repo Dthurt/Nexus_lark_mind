@@ -52,7 +52,7 @@ python_ok() {
   [[ -n "$bin" ]] || return 1
   [[ "$bin" == *WindowsApps* ]] && return 1
   [[ -x "$bin" || -f "$bin" ]] || return 1
-  "$bin" -c 'import sys; raise SystemExit(0 if (3,11)<=sys.version_info<(3,14) else 1)' >/dev/null 2>&1
+  "$bin" -c 'import sys; raise SystemExit(0 if (3,10)<=sys.version_info<(3,14) else 1)' >/dev/null 2>&1
 }
 
 find_python() {
@@ -61,7 +61,7 @@ find_python() {
     return 0
   fi
   local c resolved
-  for c in python3.13 python3.12 python3.11 python3 python; do
+  for c in python3.13 python3.12 python3.11 python3.10 python3 python; do
     if command -v "$c" >/dev/null 2>&1; then
       resolved="$(command -v "$c")"
       if [[ "$resolved" == *WindowsApps* ]]; then
@@ -78,8 +78,8 @@ find_python() {
 
 print_missing_python() {
   echo >&2
-  echo "[nlm] 未找到可用的 Python 3.11-3.13。" >&2
-  echo "      Need Python 3.11-3.13 (not a Windows Store stub / broken launcher)." >&2
+  echo "[nlm] 未找到可用的 Python 3.10-3.13。" >&2
+  echo "      Need Python 3.10-3.13 (not a Windows Store stub / broken launcher)." >&2
   echo >&2
 }
 
@@ -102,7 +102,7 @@ print_linux_install_hint() {
   elif command -v apk >/dev/null 2>&1; then
     echo "  sudo apk add python3 py3-pip" >&2
   else
-    echo "  请从 https://www.python.org/downloads/ 安装 Python 3.11-3.13" >&2
+    echo "  请从 https://www.python.org/downloads/ 安装 Python 3.10-3.13" >&2
   fi
 }
 
@@ -262,7 +262,7 @@ resolve_python() {
             return 0
           fi
         fi
-        echo "[nlm] 安装后仍未找到可用的 Python 3.11-3.13。可重试 1 或选 2。" >&2
+        echo "[nlm] 安装后仍未找到可用的 Python 3.10-3.13。可重试 1 或选 2。" >&2
         echo >&2
         ;;
       2)
@@ -272,7 +272,7 @@ resolve_python() {
         echo >&2
         ;;
       3|"")
-        echo "[nlm] 已退出。安装 Python 3.11-3.13 后重新运行 ./nlm。" >&2
+        echo "[nlm] 已退出。安装 Python 3.10-3.13 后重新运行 ./nlm。" >&2
         return 1
         ;;
       *)

@@ -33,6 +33,7 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -62,13 +63,16 @@ PORTS = (8000, 8001, 8002)
 LOG_DIR = ROOT / "logs"
 TEXT_COL = "[progress.description]{task.description}"
 
-# Prefer official PyPI, then common CN mirrors (helps when one index times out).
+# Mainland China mirrors first (faster when official PyPI is slow); official last.
 PIP_INDEXES: Tuple[str, ...] = (
-    "https://pypi.org/simple",
     "https://pypi.tuna.tsinghua.edu.cn/simple",
     "https://mirrors.aliyun.com/pypi/simple",
-    "https://pypi.douban.com/simple",
+    "https://pypi.mirrors.ustc.edu.cn/simple",
+    "https://pypi.org/simple",
 )
+PIP_OFFICIAL_HOSTS = frozenset({"pypi.org", "test.pypi.org"})
+PYTHON_MIN = (3, 10)
+PYTHON_MAX_EXCLUSIVE = (3, 14)
 
 PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
     "glm": {
@@ -220,65 +224,76 @@ Text: Any = None
 box: Any = None
 
 
-def _pip_install(packages: Sequence[str], *, python: Optional[str] = None, quiet: bool = True) -> bool:
-    """Install packages trying multiple indexes until one succeeds."""
-    py = python or sys.executable
+def _pip_index_args(index: str) -> List[str]:
+    """`-i` plus `--trusted-host` for non-official mirrors (no global pip.conf)."""
+    args = ["-i", index]
+    host = urlparse(index).hostname
+    if host and host not in PIP_OFFICIAL_HOSTS:
+        args.extend(["--trusted-host", host])
+    return args
+
+
+def _build_pip_install_cmd(
+    py: str,
+    extra: Sequence[str],
+    index: str,
+    *,
+    quiet: bool = True,
+    timeout: str = "30",
+) -> List[str]:
     q = ["-q"] if quiet else []
-    last_err = ""
-    for index in PIP_INDEXES:
-        cmd = [
-            py,
-            "-m",
-            "pip",
-            "install",
-            *q,
-            "--retries",
-            "2",
-            "--timeout",
-            "30",
-            "-i",
-            index,
-            *packages,
-        ]
-        print(f"[nlm] pip install ({index}) …", flush=True)
-        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
-        if proc.returncode == 0:
-            return True
-        last_err = (proc.stderr or proc.stdout or "").strip()[-400:]
-        print(f"[nlm] index failed, trying next…", flush=True)
-    if last_err:
-        print(f"[nlm] pip error: {last_err}", flush=True)
-    return False
+    return [
+        py,
+        "-m",
+        "pip",
+        "install",
+        *q,
+        "--retries",
+        "2",
+        "--timeout",
+        timeout,
+        *_pip_index_args(index),
+        *extra,
+    ]
 
 
-def _pip_install_requirements(req_file: Path, *, python: Optional[str] = None) -> bool:
+def _run_pip_with_indexes(
+    extra: Sequence[str],
+    *,
+    python: Optional[str] = None,
+    quiet: bool = True,
+    timeout: str = "30",
+    label: str = "pip install",
+) -> bool:
+    """Try each index until one succeeds; last entry is the official fallback."""
     py = python or sys.executable
     last_err = ""
     for index in PIP_INDEXES:
-        cmd = [
-            py,
-            "-m",
-            "pip",
-            "install",
-            "-q",
-            "--retries",
-            "2",
-            "--timeout",
-            "60",
-            "-i",
-            index,
-            "-r",
-            str(req_file),
-        ]
-        print(f"[nlm] pip install -r {req_file.name} ({index}) …", flush=True)
+        cmd = _build_pip_install_cmd(py, extra, index, quiet=quiet, timeout=timeout)
+        print(f"[nlm] {label} ({index}) …", flush=True)
         proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
         if proc.returncode == 0:
             return True
         last_err = (proc.stderr or proc.stdout or "").strip()[-500:]
-        print(f"[nlm] index failed, trying next…", flush=True)
+        print("[nlm] index failed, trying next…", flush=True)
     if last_err:
         print(f"[nlm] pip error: {last_err}", flush=True)
     return False
+
+
+def _pip_install(packages: Sequence[str], *, python: Optional[str] = None, quiet: bool = True) -> bool:
+    """Install packages trying CN mirrors first, then official PyPI."""
+    return _run_pip_with_indexes(packages, python=python, quiet=quiet, timeout="30")
+
+
+def _pip_install_requirements(req_file: Path, *, python: Optional[str] = None) -> bool:
+    return _run_pip_with_indexes(
+        ["-r", str(req_file)],
+        python=python,
+        quiet=True,
+        timeout="60",
+        label=f"pip install -r {req_file.name}",
+    )
 
 
 def _ensure_rich() -> bool:
@@ -468,7 +483,8 @@ def is_windows_store_stub(path: Optional[str]) -> bool:
 def is_supported_python_version(ver: Optional[Tuple[int, ...]]) -> bool:
     if not ver or len(ver) < 2:
         return False
-    return (3, 11) <= (int(ver[0]), int(ver[1])) <= (3, 13)
+    pair = (int(ver[0]), int(ver[1]))
+    return PYTHON_MIN <= pair < PYTHON_MAX_EXCLUSIVE
 
 
 def probe_python_version(exe: str) -> Optional[Tuple[int, int, int]]:
@@ -510,7 +526,7 @@ def default_windows_python_exes() -> List[Path]:
         Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")),
     )
     for root in roots:
-        for ver in ("Python312", "Python311", "Python313"):
+        for ver in ("Python312", "Python311", "Python313", "Python310"):
             out.append(root / ver / "python.exe")
     return out
 
@@ -521,14 +537,14 @@ def refresh_process_path() -> None:
         return
     parts: List[str] = []
     local = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python"
-    for ver in ("Python312", "Python311", "Python313"):
+    for ver in ("Python312", "Python311", "Python313", "Python310"):
         parts.append(str(local / ver))
         parts.append(str(local / ver / "Scripts"))
     parts.append(str(local / "Launcher"))
     for pf_key in ("ProgramFiles", "ProgramFiles(x86)"):
         pf = Path(os.environ.get(pf_key, ""))
         if str(pf):
-            for ver in ("Python312", "Python311", "Python313"):
+            for ver in ("Python312", "Python311", "Python313", "Python310"):
                 parts.append(str(pf / ver))
     try:
         import winreg
@@ -575,10 +591,10 @@ def find_system_python() -> Optional[str]:
     candidates: List[str] = []
     if is_windows():
         candidates.extend(str(p) for p in default_windows_python_exes())
-        for name in ("python3.13", "python3.12", "python3.11", "python3", "python"):
+        for name in ("python3.13", "python3.12", "python3.11", "python3.10", "python3", "python"):
             candidates.extend(list_on_path(name))
     else:
-        for name in ("python3.13", "python3.12", "python3.11", "python3"):
+        for name in ("python3.13", "python3.12", "python3.11", "python3.10", "python3"):
             candidates.extend(list_on_path(name))
 
     if is_supported_python_version(tuple(sys.version_info[:3])) and not is_windows_store_stub(sys.executable):
@@ -624,8 +640,8 @@ def is_noninteractive_cli() -> bool:
 
 def missing_python_help_text(*, non_interactive: bool = False) -> str:
     lines = [
-        "[nlm] 未找到可用的 Python 3.11-3.13。",
-        "      Need Python 3.11-3.13 (Microsoft Store stub is not a real interpreter).",
+        "[nlm] 未找到可用的 Python 3.10-3.13。",
+        "      Need Python 3.10-3.13 (Microsoft Store stub is not a real interpreter).",
     ]
     if is_windows():
         lines += [
@@ -796,7 +812,7 @@ def try_install_system_python() -> Optional[str]:
 
 
 def resolve_or_install_python() -> Optional[str]:
-    """Find a real 3.11–3.13 interpreter, or prompt to install (never hang in CI / --yes)."""
+    """Find a real 3.10–3.13 interpreter, or prompt to install (never hang in CI / --yes)."""
     found = find_system_python()
     if found:
         return found
@@ -1010,19 +1026,19 @@ def node_major_version() -> Optional[int]:
 def check_python() -> Tuple[bool, str]:
     ver = sys.version_info
     msg = f"Python {ver.major}.{ver.minor}.{ver.micro} ({sys.executable})"
-    if ver < (3, 11):
-        return False, msg + " — need 3.11+"
-    if ver >= (3, 14):
-        return False, msg + " — unsupported (use 3.11–3.13)"
+    if ver < PYTHON_MIN:
+        return False, msg + " — need 3.10+"
+    if ver >= PYTHON_MAX_EXCLUSIVE:
+        return False, msg + " — unsupported (use 3.10–3.13)"
     if ver >= (3, 13):
-        msg += " — OK (prefer 3.11/3.12 if issues)"
+        msg += " — OK (prefer 3.10–3.12 if issues)"
     return True, msg
 
 
 def ensure_venv() -> bool:
     py = resolve_or_install_python()
     if not py:
-        err("无法继续：需要 Python 3.11-3.13。Need Python 3.11-3.13.")
+        err("无法继续：需要 Python 3.10-3.13。Need Python 3.10-3.13.")
         return False
     if venv_python().is_file():
         # Sanity: broken venv?
@@ -1294,7 +1310,7 @@ def doctor() -> int:
     good, _ = check_python()
     if not good:
         issues += 1
-        err("Python < 3.11")
+        err("Python < 3.10")
     if not venv_python().is_file():
         issues += 1
         err("Missing .venv — run: nlm setup")
@@ -1352,7 +1368,7 @@ def setup_flow(
     console.print(diagnose())
     good, _ = check_python()
     if not good:
-        err("Upgrade Python to 3.11+ first")
+        err("Upgrade Python to 3.10+ first")
         return False
     if not ensure_venv():
         return False

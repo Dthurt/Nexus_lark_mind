@@ -11,7 +11,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-Dthurt%2FNexus__lark__mind-181717?logo=github)](https://github.com/Dthurt/Nexus_lark_mind)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Dthurt/Nexus_lark_mind?style=social)](https://github.com/Dthurt/Nexus_lark_mind/stargazers)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io/)
@@ -77,7 +77,7 @@ graph LR
 
 | 方式 | 适用 | 说明 |
 |------|------|------|
-| **`./nlm` / `nlm.cmd` / `nlm start`** | **推荐本机一键** | Rich TUI（Windows + Linux）：环境检查、**缺 Python 3.11–3.13 时提示/安装**、依赖、模型配置、Crawl4AI、启动与自动修复 |
+| **`./nlm` / `nlm.cmd` / `nlm start`** | **推荐本机一键** | Rich TUI（Windows + Linux）：环境检查、**缺 Python 3.10–3.13 时提示/安装**、依赖、模型配置、Crawl4AI、启动与自动修复 |
 | `scripts/start_local.bat` | Windows 无菜单轻量启动 | 三服务 + memory broker，**不需要 Docker / Redis**，UI 为 `web-static` |
 | `scripts/dev.bat` | **改前端** | 后端 + Vite HMR（打开 :5173） |
 | `docker compose` | 联调 / 服务器 / Docker Desktop 部署 | 4 个容器（redis + kernel + orchestrator + adapters） |
@@ -240,7 +240,7 @@ chmod +x nlm && ./nlm start
 nlm start
 ```
 
-需要 **Python 3.11–3.13**。若未安装（或只有商店占位 `python.exe`），`nlm` 会停住并给出 `[1]` 自动安装 / `[2]` 打开下载页 / `[3]` 退出，不会一闪就关。非交互：`nlm start --yes` 只打印安装命令并以退出码 1 结束。
+需要 **Python 3.10–3.13**。若未安装（或只有商店占位 `python.exe`），`nlm` 会停住并给出 `[1]` 自动安装 / `[2]` 打开下载页 / `[3]` 退出，不会一闪就关。非交互：`nlm start --yes` 只打印安装命令并以退出码 1 结束。
 
 也可用：`./nlm` · `nlm status` · `nlm doctor` · `nlm stop` · `nlm repair` · `nlm logs` · `nlm update`
 

@@ -19,8 +19,9 @@ def test_nlm_cmd_skips_store_stub_and_prompts() -> None:
     assert "winget" in text
     assert "Python.Python.3.12" in text
     assert "--yes" in text
-    assert "3.11" in text
+    assert "3.10" in text
     assert "3.13" in text
+    assert "(3,10)<=sys.version_info<(3,14)" in text
     assert "EnsurePythonOnly" in text or "自动安装" in text
 
 
@@ -36,6 +37,8 @@ def test_nlm_ps1_skips_store_stub_and_prompts() -> None:
     assert "Update-NlmProcessPath" in text or "LOCALAPPDATA" in text
     assert "--yes" in text
     assert "ProgramFiles(x86)" in text
+    assert "(3,10)<=sys.version_info<(3,14)" in text
+    assert "3.10-3.13" in text
 
 
 def test_nlm_unix_skips_stub_and_prompts() -> None:
@@ -47,6 +50,9 @@ def test_nlm_unix_skips_stub_and_prompts() -> None:
     assert "--yes" in text
     assert "python3-venv" in text
     assert "xdg-open" in text
+    assert "(3,10)<=sys.version_info<(3,14)" in text
+    assert "3.10-3.13" in text
+    assert "python3.10" in text
 
 
 def test_scripts_nlm_cmd_skips_windowsapps() -> None:
@@ -69,6 +75,13 @@ def test_start_local_ps1_not_silent_exit() -> None:
     assert "Wait-StartLocalIfClosing" in text
     assert "ProgramFiles" in text
     assert "Write-Error" not in text
+    assert "(3,10)<=sys.version_info<(3,14)" in text
+    assert "pypi.tuna.tsinghua.edu.cn" in text
+    assert "mirrors.aliyun.com" in text
+    assert "pypi.mirrors.ustc.edu.cn" in text
+    assert "pypi.org/simple" in text
+    assert "Invoke-VenvPipInstall" in text
+    assert "SkipInstall" in text
 
 
 def test_start_local_bat_pauses_on_double_click() -> None:

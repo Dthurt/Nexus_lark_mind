@@ -123,10 +123,11 @@ def test_probe_python_version_skips_store_stub() -> None:
 
 def test_is_supported_python_version() -> None:
     boot = _load_boot()
+    assert boot.is_supported_python_version((3, 10, 12))
     assert boot.is_supported_python_version((3, 11, 0))
     assert boot.is_supported_python_version((3, 12, 8))
     assert boot.is_supported_python_version((3, 13, 1))
-    assert not boot.is_supported_python_version((3, 10, 12))
+    assert not boot.is_supported_python_version((3, 9, 18))
     assert not boot.is_supported_python_version((3, 14, 0))
     assert not boot.is_supported_python_version(None)
 
@@ -168,7 +169,7 @@ def test_find_system_python_skips_stub_then_real(monkeypatch: pytest.MonkeyPatch
 def test_missing_python_help_text_noninteractive() -> None:
     boot = _load_boot()
     text = boot.missing_python_help_text(non_interactive=True)
-    assert "3.11" in text
+    assert "3.10" in text
     assert "3.13" in text
     assert "非交互" in text
     if os.name == "nt":
@@ -184,7 +185,7 @@ def test_resolve_or_install_python_noninteractive(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(boot, "try_install_system_python", lambda: (_ for _ in ()).throw(RuntimeError("must not install")))
     assert boot.resolve_or_install_python() is None
     out = capsys.readouterr().out
-    assert "Python 3.11" in out
+    assert "Python 3.10" in out
     assert "3.13" in out
 
 
@@ -196,7 +197,7 @@ def test_ensure_venv_messages_when_no_python(monkeypatch: pytest.MonkeyPatch, ca
     assert boot.ensure_venv() is False
     out = capsys.readouterr().out
     assert "Python" in out
-    assert "3.11" in out
+    assert "3.10" in out
 
 
 def test_confirm_respects_nlm_yes() -> None:
@@ -207,6 +208,32 @@ def test_confirm_respects_nlm_yes() -> None:
         assert boot.confirm("anything?", default=True) is True
     finally:
         os.environ.pop("NLM_YES", None)
+
+
+def test_pip_indexes_cn_first_official_last() -> None:
+    boot = _load_boot()
+    assert boot.PIP_INDEXES == (
+        "https://pypi.tuna.tsinghua.edu.cn/simple",
+        "https://mirrors.aliyun.com/pypi/simple",
+        "https://pypi.mirrors.ustc.edu.cn/simple",
+        "https://pypi.org/simple",
+    )
+    cn = boot._pip_index_args(boot.PIP_INDEXES[0])
+    assert cn[:2] == ["-i", boot.PIP_INDEXES[0]]
+    assert "--trusted-host" in cn
+    assert "pypi.tuna.tsinghua.edu.cn" in cn
+    official = boot._pip_index_args(boot.PIP_INDEXES[-1])
+    assert official == ["-i", "https://pypi.org/simple"]
+    cmd = boot._build_pip_install_cmd(
+        "python",
+        ["-r", "requirements.txt"],
+        boot.PIP_INDEXES[1],
+        timeout="60",
+    )
+    assert cmd[:4] == ["python", "-m", "pip", "install"]
+    assert "-i" in cmd and "https://mirrors.aliyun.com/pypi/simple" in cmd
+    assert "--trusted-host" in cmd and "mirrors.aliyun.com" in cmd
+    assert "-r" in cmd and "requirements.txt" in cmd
 
 
 def test_rich_unicode_probe_or_plain_fallback() -> None:

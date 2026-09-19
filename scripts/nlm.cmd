@@ -11,12 +11,15 @@ if exist "%CD%\.venv\Scripts\python.exe" (
 if not defined PY call :try_py "%LocalAppData%\Programs\Python\Python312\python.exe"
 if not defined PY call :try_py "%LocalAppData%\Programs\Python\Python311\python.exe"
 if not defined PY call :try_py "%LocalAppData%\Programs\Python\Python313\python.exe"
+if not defined PY call :try_py "%LocalAppData%\Programs\Python\Python310\python.exe"
 if not defined PY call :try_py "%ProgramFiles%\Python312\python.exe"
 if not defined PY call :try_py "%ProgramFiles%\Python311\python.exe"
 if not defined PY call :try_py "%ProgramFiles%\Python313\python.exe"
+if not defined PY call :try_py "%ProgramFiles%\Python310\python.exe"
 if not defined PY call :try_py "%ProgramFiles(x86)%\Python312\python.exe"
 if not defined PY call :try_py "%ProgramFiles(x86)%\Python311\python.exe"
 if not defined PY call :try_py "%ProgramFiles(x86)%\Python313\python.exe"
+if not defined PY call :try_py "%ProgramFiles(x86)%\Python310\python.exe"
 
 if not defined PY (
   for /f "delims=" %%I in ('where python3 2^>nul') do (
@@ -30,7 +33,7 @@ if not defined PY (
 )
 
 if not defined PY (
-  echo [nlm] Python 3.11-3.13 not found (Store stub skipped).
+  echo [nlm] Python 3.10-3.13 not found (Store stub skipped).
   if exist "%CD%\nlm.cmd" (
     echo [nlm] Handing off to nlm.cmd for install prompt...
     call "%CD%\nlm.cmd" %*
@@ -49,7 +52,7 @@ if not defined _CAND goto :eof
 if not exist "%_CAND%" goto :eof
 echo %_CAND% | find /I "WindowsApps" >nul
 if not errorlevel 1 goto :eof
-"%_CAND%" -c "import sys; raise SystemExit(0 if (3,11)<=sys.version_info<(3,14) else 1)" >nul 2>&1
+"%_CAND%" -c "import sys; raise SystemExit(0 if (3,10)<=sys.version_info<(3,14) else 1)" >nul 2>&1
 if errorlevel 1 goto :eof
 set "PY=%_CAND%"
 goto :eof

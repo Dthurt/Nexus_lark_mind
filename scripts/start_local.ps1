@@ -14,6 +14,13 @@ $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $Root = (Get-Location).Path
 $ReqHashFile = Join-Path $Root ".venv\.nlm_req_hash"
+# CN mirrors first; official PyPI is the last fallback. Used only when pip install runs.
+$PipIndexes = @(
+  "https://pypi.tuna.tsinghua.edu.cn/simple",
+  "https://mirrors.aliyun.com/pypi/simple",
+  "https://pypi.mirrors.ustc.edu.cn/simple",
+  "https://pypi.org/simple"
+)
 
 function Write-Step([string]$Message) {
   if (-not $Quiet) { Write-Host $Message }
@@ -77,7 +84,7 @@ function Test-StartLocalPythonExe {
   if (-not $Exe) { return $false }
   if ($Exe -match "WindowsApps") { return $false }
   if ($Exe -ne "py" -and -not (Test-Path -LiteralPath $Exe)) { return $false }
-  $code = "import sys; raise SystemExit(0 if (3,11)<=sys.version_info<(3,14) else 1)"
+  $code = "import sys; raise SystemExit(0 if (3,10)<=sys.version_info<(3,14) else 1)"
   try {
     if ($Exe -eq "py") {
       & py -3 -c $code 2>$null | Out-Null
@@ -95,12 +102,15 @@ function Find-StartLocalPython {
     "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
+    "$env:LOCALAPPDATA\Programs\Python\Python310\python.exe",
     "$env:ProgramFiles\Python312\python.exe",
     "$env:ProgramFiles\Python311\python.exe",
     "$env:ProgramFiles\Python313\python.exe",
+    "$env:ProgramFiles\Python310\python.exe",
     "${env:ProgramFiles(x86)}\Python312\python.exe",
     "${env:ProgramFiles(x86)}\Python311\python.exe",
-    "${env:ProgramFiles(x86)}\Python313\python.exe"
+    "${env:ProgramFiles(x86)}\Python313\python.exe",
+    "${env:ProgramFiles(x86)}\Python310\python.exe"
   )
   foreach ($c in $candidates) {
     if ($c -and (Test-StartLocalPythonExe $c)) { return $c }
@@ -141,7 +151,7 @@ function Resolve-Python {
 
   $nlmPs1 = Join-Path $Root "nlm.ps1"
   if (Test-Path -LiteralPath $nlmPs1) {
-    Write-Host "Python 3.11-3.13 not found (Microsoft Store stub skipped)."
+    Write-Host "Python 3.10-3.13 not found (Microsoft Store stub skipped)."
     Write-Host "Delegating to nlm.ps1 for the install menu, then continuing start_local..."
     $outFile = Join-Path $env:TEMP ("nlm_ensure_python_{0}.txt" -f [guid]::NewGuid().ToString("N"))
     $env:NLM_PY_FILE = $outFile
@@ -158,7 +168,7 @@ function Resolve-Python {
     Remove-Item Env:NLM_PY_FILE -ErrorAction SilentlyContinue
   }
 
-  Write-Host "Python 3.11-3.13 not found (Microsoft Store stub skipped)." -ForegroundColor Red
+  Write-Host "Python 3.10-3.13 not found (Microsoft Store stub skipped)." -ForegroundColor Red
   Write-Host "Run nlm.cmd to auto-install, or:" -ForegroundColor Yellow
   Write-Host "  winget install -e --id Python.Python.3.12 --scope user --accept-package-agreements --accept-source-agreements"
   Wait-StartLocalIfClosing
@@ -196,8 +206,14 @@ function Ensure-Venv([string]$Python) {
 
   if ($wantInstall) {
     Write-Step "Installing Python deps (requirements.txt)..."
-    & (Join-Path $Root ".venv\Scripts\python.exe") -m pip install -q --upgrade pip
-    & (Join-Path $Root ".venv\Scripts\python.exe") -m pip install -q -r (Join-Path $Root "requirements.txt")
+    if (-not (Invoke-VenvPipInstall -PipTail @("--upgrade", "pip") -TimeoutSec 30)) {
+      Write-Step "pip upgrade failed on all indexes — continuing with existing pip."
+    }
+    if (-not (Invoke-VenvPipInstall -PipTail @("-r", (Join-Path $Root "requirements.txt")) -TimeoutSec 60)) {
+      Write-Host "Failed to install requirements.txt from all mirrors." -ForegroundColor Red
+      Wait-StartLocalIfClosing
+      exit 1
+    }
     $hash = Get-ReqHash
     if ($hash) {
       New-Item -ItemType Directory -Force -Path (Split-Path $ReqHashFile) | Out-Null
@@ -206,6 +222,33 @@ function Ensure-Venv([string]$Python) {
   } else {
     Write-Step "Deps OK (skip pip — use -Install to force)."
   }
+}
+
+function Get-PipIndexArgs([string]$Index) {
+  $idxArgs = @("-i", $Index)
+  try {
+    $hostName = ([Uri]$Index).Host
+    if ($hostName -and $hostName -ne "pypi.org") {
+      $idxArgs += @("--trusted-host", $hostName)
+    }
+  } catch { }
+  return $idxArgs
+}
+
+function Invoke-VenvPipInstall {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$PipTail,
+    [int]$TimeoutSec = 60
+  )
+  $py = Join-Path $Root ".venv\Scripts\python.exe"
+  foreach ($index in $PipIndexes) {
+    $idxArgs = @(Get-PipIndexArgs $index)
+    Write-Step "  trying $index"
+    & $py -m pip install -q --retries 2 --timeout $TimeoutSec @idxArgs @PipTail
+    if ($LASTEXITCODE -eq 0) { return $true }
+    Write-Step "  index failed, trying next..."
+  }
+  return $false
 }
 
 function Set-LocalEnv {

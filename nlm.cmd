@@ -71,7 +71,7 @@ goto :eof
 
 :refresh_python_path
 set "PF86=%ProgramFiles(x86)%"
-set "PATH=%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%LOCALAPPDATA%\Programs\Python\Python313;%LOCALAPPDATA%\Programs\Python\Python313\Scripts;%LOCALAPPDATA%\Programs\Python\Launcher;%ProgramFiles%\Python312;%ProgramFiles%\Python311;%ProgramFiles%\Python313;%PF86%\Python312;%PF86%\Python311;%PF86%\Python313;%PATH%"
+set "PATH=%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%LOCALAPPDATA%\Programs\Python\Python313;%LOCALAPPDATA%\Programs\Python\Python313\Scripts;%LOCALAPPDATA%\Programs\Python\Python310;%LOCALAPPDATA%\Programs\Python\Python310\Scripts;%LOCALAPPDATA%\Programs\Python\Launcher;%ProgramFiles%\Python312;%ProgramFiles%\Python311;%ProgramFiles%\Python313;%ProgramFiles%\Python310;%PF86%\Python312;%PF86%\Python311;%PF86%\Python313;%PF86%\Python310;%PATH%"
 for /f "skip=2 tokens=1,2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do (
   if /I "%%A"=="Path" set "PATH=%%C;!PATH!"
 )
@@ -85,17 +85,23 @@ call :try_py_exe "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
 if defined PY goto :eof
 call :try_py_exe "%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
 if defined PY goto :eof
+call :try_py_exe "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+if defined PY goto :eof
 call :try_py_exe "%ProgramFiles%\Python312\python.exe"
 if defined PY goto :eof
 call :try_py_exe "%ProgramFiles%\Python311\python.exe"
 if defined PY goto :eof
 call :try_py_exe "%ProgramFiles%\Python313\python.exe"
 if defined PY goto :eof
+call :try_py_exe "%ProgramFiles%\Python310\python.exe"
+if defined PY goto :eof
 call :try_py_exe "%ProgramFiles(x86)%\Python312\python.exe"
 if defined PY goto :eof
 call :try_py_exe "%ProgramFiles(x86)%\Python311\python.exe"
 if defined PY goto :eof
 call :try_py_exe "%ProgramFiles(x86)%\Python313\python.exe"
+if defined PY goto :eof
+call :try_py_exe "%ProgramFiles(x86)%\Python310\python.exe"
 if defined PY goto :eof
 for /f "delims=" %%I in ('where python3 2^>nul') do (
   call :try_py_exe "%%I"
@@ -107,7 +113,7 @@ for /f "delims=" %%I in ('where python 2^>nul') do (
 )
 where py >nul 2>&1
 if not errorlevel 1 (
-  py -3 -c "import sys; raise SystemExit(0 if (3,11)<=sys.version_info<(3,14) else 1)" >nul 2>&1
+  py -3 -c "import sys; raise SystemExit(0 if (3,10)<=sys.version_info<(3,14) else 1)" >nul 2>&1
   if not errorlevel 1 (
     set "PY=py"
     goto :eof
@@ -121,7 +127,7 @@ if not defined _CAND goto :eof
 if not exist "%_CAND%" goto :eof
 echo %_CAND% | find /I "WindowsApps" >nul
 if not errorlevel 1 goto :eof
-"%_CAND%" -c "import sys; raise SystemExit(0 if (3,11)<=sys.version_info<(3,14) else 1)" >nul 2>&1
+"%_CAND%" -c "import sys; raise SystemExit(0 if (3,10)<=sys.version_info<(3,14) else 1)" >nul 2>&1
 if errorlevel 1 goto :eof
 set "PY=%_CAND%"
 goto :eof
@@ -129,8 +135,8 @@ goto :eof
 :ensure_python_interactive
 if defined NLM_NONINTERACTIVE (
   echo.
-  echo [nlm] 未找到可用的 Python 3.11-3.13。
-  echo       Need Python 3.11-3.13. Microsoft Store stub is not a real interpreter.
+  echo [nlm] 未找到可用的 Python 3.10-3.13。
+  echo       Need Python 3.10-3.13. Microsoft Store stub is not a real interpreter.
   echo.
   echo Non-interactive / 非交互: install Python, then re-run nlm start
   echo.
@@ -153,8 +159,8 @@ if not errorlevel 1 (
 )
 
 echo.
-echo [nlm] 未找到可用的 Python 3.11-3.13。
-echo       Need Python 3.11-3.13. Microsoft Store stub is not a real interpreter.
+echo [nlm] 未找到可用的 Python 3.10-3.13。
+echo       Need Python 3.10-3.13. Microsoft Store stub is not a real interpreter.
 echo.
 call :cmd_missing_menu
 goto :eof
@@ -188,7 +194,7 @@ if "!NLM_CHOICE!"=="2" (
   goto cmd_missing_menu
 )
 if "!NLM_CHOICE!"=="3" (
-  echo [nlm] Exit. Install Python 3.11-3.13, then run nlm again.
+  echo [nlm] Exit. Install Python 3.10-3.13, then run nlm again.
   goto :eof
 )
 echo [nlm] Please enter 1, 2, or 3
