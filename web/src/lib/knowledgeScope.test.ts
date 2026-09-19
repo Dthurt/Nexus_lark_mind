@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { composerKbPlaceholder, kbScopeLabel, LOCAL_KB_ID, knowledgePath, parseKnowledgePath, sameKnowledgeId } from "@/lib/knowledgeScope";
+import { composerKbPlaceholder, kbScopeLabel, LOCAL_KB_ID, knowledgePath, parseKnowledgeLocation, parseKnowledgePath, sameKnowledgeId } from "@/lib/knowledgeScope";
 
 describe("knowledgeScope", () => {
   it("labels empty id as local KB", () => {
@@ -27,6 +27,20 @@ describe("knowledgeScope", () => {
     expect(parseKnowledgePath("/knowledge/local%3Adefault")).toBe("local:default");
     expect(parseKnowledgePath("/knowledge/local:a9a4eb2093")).toBe("local:a9a4eb2093");
     expect(parseKnowledgePath("/knowledge/local%3Adefault/docs/abc")).toBe("local:default");
+    expect(knowledgePath("local:default", "wiki")).toBe("/knowledge/local%3Adefault/wiki");
+    expect(knowledgePath("local:default", "wiki", "alpha")).toBe("/knowledge/local%3Adefault/wiki/alpha");
+    expect(knowledgePath("local:default", "graph")).toBe("/knowledge/local%3Adefault/graph");
+    expect(knowledgePath("local:default", "docs", "file_abc")).toBe(
+      "/knowledge/local%3Adefault/docs/file_abc",
+    );
+    expect(parseKnowledgeLocation("/knowledge/local%3Adefault/docs/file_abc")?.slug).toBe("file_abc");
+    expect(parseKnowledgeLocation("/knowledge/local%3Adefault/docs/file_abc")?.section).toBe("docs");
+    expect(parseKnowledgeLocation("/knowledge/local%3Adefault", "?doc=file_abc")?.slug).toBe(
+      "file_abc",
+    );
+    expect(parseKnowledgeLocation("/knowledge/local%3Adefault/wiki/hello")?.section).toBe("wiki");
+    expect(parseKnowledgeLocation("/knowledge/local%3Adefault/wiki/hello")?.slug).toBe("hello");
+    expect(parseKnowledgeLocation("/knowledge/local%3Adefault/graph")?.section).toBe("graph");
     expect(parseKnowledgePath("/")).toBeNull();
     expect(sameKnowledgeId("", "local:default")).toBe(true);
     expect(sameKnowledgeId("local:legal", "local:legal")).toBe(true);

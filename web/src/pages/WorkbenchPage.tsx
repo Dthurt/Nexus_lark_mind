@@ -31,7 +31,16 @@ import { DiffDock } from "@/components/chat/DiffDock";
 import { useCanvasSession } from "@/hooks/useCanvasSession";
 import { useDiffReview } from "@/hooks/useDiffReview";
 import { cn } from "@/lib/utils";
-import { DEFAULT_LOCAL_KB_ID, kbScopeLabel, knowledgePath, parseKnowledgePath, sameKnowledgeId } from "@/lib/knowledgeScope";
+import { parseCiteChunkHash, parseKnowledgeCiteHref } from "@/lib/kbCite";
+import {
+  DEFAULT_LOCAL_KB_ID,
+  kbScopeLabel,
+  knowledgePath,
+  parseKnowledgeLocation,
+  parseKnowledgePath,
+  sameKnowledgeId,
+  type KnowledgeSection,
+} from "@/lib/knowledgeScope";
 import type { Workspace } from "@/types/api";
 import { toast } from "sonner";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -63,6 +72,8 @@ export function WorkbenchPage({
   const [toolsEnabled, setToolsEnabled] = useState(true);
   const viewParam = (searchParams.get("view") || "").trim();
   const knowledgeRoute = parseKnowledgePath(location.pathname);
+  const knowledgeLoc = parseKnowledgeLocation(location.pathname, location.search);
+  const citeChunk = parseCiteChunkHash(location.hash);
   const centerView: CenterViewId =
     knowledgeRoute !== null || viewParam === "knowledge"
       ? "knowledge"
@@ -284,12 +295,13 @@ export function WorkbenchPage({
         toast.error(String(err?.message || err || "绑定知识库失败"));
       }
       if (opts?.updateUrl !== false && knowledgeRoute !== null) {
-        const next = knowledgePath(id);
+        const next = knowledgePath(id, knowledgeLoc?.section || "docs");
         if (location.pathname !== next) navigate(next, { replace: true });
       }
     },
     [
       ensureSessionOnServer,
+      knowledgeLoc,
       knowledgeRoute,
       location.pathname,
       navigate,
@@ -333,10 +345,50 @@ export function WorkbenchPage({
     setCenterView("knowledge");
   }, [setCenterView]);
 
-  const prevCenterView = useRef(centerView);
   useEffect(() => {
-    if (centerView === "knowledge" && prevCenterView.current !== "knowledge") {
+    const onCiteOpen = (ev: Event) => {
+      const href = String((ev as CustomEvent<{ href?: string }>).detail?.href || "");
+      const cite = parseKnowledgeCiteHref(href);
+      if (!cite) return;
+      navigate(cite.href);
+    };
+    window.addEventListener("nlm-knowledge-open", onCiteOpen);
+    return () => window.removeEventListener("nlm-knowledge-open", onCiteOpen);
+  }, [navigate]);
+
+  const prevCenterView = useRef<CenterViewId | "">("");
+  const chromeBeforeKnowledge = useRef<{ sidebarCollapsed: boolean; dockCollapsed: boolean } | null>(
+    null,
+  );
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const dockCollapsedRef = useRef(dock.state.collapsed);
+  dockCollapsedRef.current = dock.state.collapsed;
+  useEffect(() => {
+    const entering = centerView === "knowledge" && prevCenterView.current !== "knowledge";
+    const leaving = prevCenterView.current === "knowledge" && centerView !== "knowledge";
+    if (entering) {
+      chromeBeforeKnowledge.current = {
+        sidebarCollapsed: layoutRef.current.sidebarCollapsed,
+        dockCollapsed: dockCollapsedRef.current,
+      };
+      setLayout((l) => ({
+        ...l,
+        sidebarCollapsed: true,
+        sidebarOpen: false,
+        railOpen: false,
+      }));
       dock.setCollapsed(true);
+    } else if (leaving && chromeBeforeKnowledge.current) {
+      const prev = chromeBeforeKnowledge.current;
+      chromeBeforeKnowledge.current = null;
+      setLayout((l) => ({
+        ...l,
+        sidebarCollapsed: prev.sidebarCollapsed,
+        sidebarOpen: false,
+        railOpen: false,
+      }));
+      dock.setCollapsed(prev.dockCollapsed);
     }
     prevCenterView.current = centerView;
   }, [centerView, dock.setCollapsed]);
@@ -796,6 +848,7 @@ export function WorkbenchPage({
                       sessionId={sessionId}
                       items={timeline.items}
                       showWorkspacePicker={!cwd}
+                      kbId={weknoraKbId}
                       modelProvider={providerId}
                       modelName={modelName}
                       experienceTier={actions.experienceTier}
@@ -858,6 +911,12 @@ export function WorkbenchPage({
                     onAskAbout={(text) => {
                       if (text) actions.setInput(text);
                       setCenterView("chat");
+                    }}
+                    section={knowledgeLoc?.section || "docs"}
+                    slug={knowledgeLoc?.slug || ""}
+                    citeChunk={citeChunk}
+                    onNavigateSection={(next: KnowledgeSection, nextSlug?: string) => {
+                      navigate(knowledgePath(weknoraKbId, next, nextSlug));
                     }}
                   />
                 );

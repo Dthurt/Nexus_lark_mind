@@ -10,6 +10,7 @@ import {
   Layers3,
   Link2,
   MessageSquare,
+  Network,
   Plus,
   Presentation,
   RefreshCw,
@@ -17,6 +18,7 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
 
 import {
@@ -60,12 +62,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { GraphLayer } from "@/components/knowledge/GraphLayer";
+import { KnowledgeSegment } from "@/components/knowledge/KnowledgeSegment";
+import { WikiLayer } from "@/components/knowledge/WikiLayer";
 import {
   DEFAULT_LOCAL_KB_ID,
   isLocalKbId,
   kbScopeLabel,
   LOCAL_KB_ID,
+  type KnowledgeSection,
 } from "@/lib/knowledgeScope";
+import { usePrefersReducedMotion } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 export type KnowledgeViewProps = {
@@ -82,6 +89,10 @@ export type KnowledgeViewProps = {
   onCatalogRefresh?: () => void;
   onAskAbout?: (text: string) => void;
   className?: string;
+  section?: KnowledgeSection;
+  slug?: string;
+  citeChunk?: number | null;
+  onNavigateSection?: (section: KnowledgeSection, slug?: string) => void;
 };
 
 type BrowseRow = KnowledgeHit & { content?: string; kb_id?: string; tags?: string };
@@ -205,6 +216,10 @@ export function KnowledgeView({
   onCatalogRefresh,
   onAskAbout,
   className,
+  section = "docs",
+  slug = "",
+  citeChunk = null,
+  onNavigateSection,
 }: KnowledgeViewProps) {
   const remote = !isLocalKbId(boundKbId);
   const localKbId = remote ? "" : boundKbId || DEFAULT_LOCAL_KB_ID;
@@ -260,6 +275,21 @@ export function KnowledgeView({
   const localActive = !boundKbId || boundKbId === DEFAULT_LOCAL_KB_ID;
   const remoteReady = Boolean(health?.configured && !health?.skipped);
   const currentLocalKb = localKbs.find((kb) => kb.id === (localKbId || DEFAULT_LOCAL_KB_ID));
+  const reduced = usePrefersReducedMotion();
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && /INPUT|TEXTAREA|SELECT/.test(el.tagName)) return;
+      if (el?.isContentEditable) return;
+      if (e.key === "1") onNavigateSection?.("docs");
+      if (e.key === "2") onNavigateSection?.("wiki");
+      if (e.key === "3") onNavigateSection?.("graph");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onNavigateSection]);
 
   const groupedRows = useMemo(() => {
     const groups: { prefix: string; items: BrowseRow[] }[] = [];
@@ -487,35 +517,74 @@ export function KnowledgeView({
     }
   };
 
-  const onOpen = async (row: BrowseRow) => {
-    const id = String(row.doc_id || row.source_uri || "").trim();
-    if (!id) return;
-    try {
-      if (remote || row.source === "weknora") {
-        const full = await getWeknoraKnowledge(id);
-        setSelected({
-          doc_id: String(full.id || id),
-          title: full.title || row.title || id,
-          content: full.content || row.content || row.snippet || "",
-          source: "weknora",
-          source_uri: String(full.id || id),
-          content_len: (full.content || row.content || "").length,
-        });
-        setChunks([]);
-        setSideTab("preview");
-        return;
+  useEffect(() => {
+    setSelected(null);
+    setChunks([]);
+  }, [localKbId, remote]);
+
+  const openDoc = useCallback(
+    async (row: BrowseRow, opts?: { syncUrl?: boolean }) => {
+      const id = String(row.doc_id || row.source_uri || "").trim();
+      if (!id) return;
+      try {
+        if (remote || row.source === "weknora") {
+          const full = await getWeknoraKnowledge(id);
+          setSelected({
+            doc_id: String(full.id || id),
+            title: full.title || row.title || id,
+            content: full.content || row.content || row.snippet || "",
+            source: "weknora",
+            source_uri: String(full.id || id),
+            content_len: (full.content || row.content || "").length,
+          });
+          setChunks([]);
+          setSideTab("preview");
+        } else {
+          const doc = await getKnowledgeDoc(id, true);
+          setSelected(doc);
+          setEditTitle(doc.title || "");
+          setEditTags(doc.tags || "");
+          setChunks(
+            (doc.chunks || []).filter(
+              (c) =>
+                (c.chunk_type || "text") !== "parent" ||
+                (citeChunk != null && c.chunk_index === citeChunk),
+            ),
+          );
+          setEditingChunk("");
+          setSideTab("preview");
+        }
+        if (opts?.syncUrl !== false) onNavigateSection?.("docs", id);
+      } catch (err: any) {
+        toast.error(String(err?.message || err));
       }
-      const doc = await getKnowledgeDoc(id, true);
-      setSelected(doc);
-      setEditTitle(doc.title || "");
-      setEditTags(doc.tags || "");
-      setChunks((doc.chunks || []).filter((c) => (c.chunk_type || "text") !== "parent"));
-      setEditingChunk("");
-      setSideTab("preview");
-    } catch (err: any) {
-      toast.error(String(err?.message || err));
-    }
-  };
+    },
+    [citeChunk, onNavigateSection, remote],
+  );
+
+  useEffect(() => {
+    if (section !== "docs" || !slug) return;
+    if (selected?.doc_id === slug) return;
+    void openDoc({ doc_id: slug, title: slug, snippet: "" }, { syncUrl: false });
+  }, [openDoc, section, selected?.doc_id, slug]);
+
+  useEffect(() => {
+    if (citeChunk == null || !selected?.chunks?.length) return;
+    setChunks((prev) => {
+      if (prev.some((c) => c.chunk_index === citeChunk)) return prev;
+      const hit = selected.chunks?.find((c) => c.chunk_index === citeChunk);
+      if (!hit) return prev;
+      return [...prev, hit].sort(
+        (a, b) => (a.chunk_index ?? 0) - (b.chunk_index ?? 0),
+      );
+    });
+  }, [citeChunk, selected]);
+
+  useEffect(() => {
+    if (citeChunk == null || !chunks.length) return;
+    const el = document.getElementById(`c${citeChunk}`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [citeChunk, chunks, selected?.doc_id]);
 
   const onImport = async (knowledgeId: string) => {
     const kid = String(knowledgeId || "").trim();
@@ -841,24 +910,26 @@ export function KnowledgeView({
       className={cn("nlm-knowledge-browse flex min-h-0 flex-1 flex-col bg-card/30", className)}
       data-testid="knowledge-page"
     >
-      <header className="nlm-knowledge-hero shrink-0 border-b border-border px-3 py-2.5">
-        <div className="flex items-start justify-between gap-3">
+      <header className="nlm-knowledge-hero shrink-0">
+        <div className="nlm-knowledge-hero-row">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-[14px] font-semibold tracking-tight">
-              <BookOpen className="size-4 text-teal" />
-              知识库
-              <span className="font-normal text-muted-foreground">›</span>
-              <span className="truncate font-medium">{label}</span>
+            <div className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+              <span className="nlm-knowledge-hero-ico">
+                <BookOpen className="size-3.5" />
+              </span>
+              <span className="truncate">{label}</span>
+              <span className="nlm-knowledge-hero-sub">
+                {remote ? "远程 WeKnora" : "本机"}
+              </span>
             </div>
-            <p className="m-0 mt-0.5 text-[12px] text-foreground/80">
-              {remote ? "远程 WeKnora" : "本机 SQLite"}
-            </p>
-            <div className="mt-1.5 flex flex-wrap gap-1">
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
               <span className="nlm-knowledge-pill">{hybridLabel}</span>
               {stats ? (
                 <>
                   <span className="nlm-knowledge-pill">{stats.docs} 篇</span>
-                  <span className="nlm-knowledge-pill">{stats.chunks} 块</span>
+                  {stats.wiki_pages ? (
+                    <span className="nlm-knowledge-pill">{stats.wiki_pages} Wiki</span>
+                  ) : null}
                 </>
               ) : null}
               {activeJobs.length ? (
@@ -868,19 +939,30 @@ export function KnowledgeView({
               ) : null}
             </div>
           </div>
-          {onAskAbout ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="h-7 px-2"
-              data-testid="knowledge-go-chat"
-              onClick={() => onAskAbout("")}
-            >
-              <MessageSquare className="mr-1 size-3" />
-              去对话
-            </Button>
-          ) : null}
+          <div className="nlm-knowledge-hero-actions">
+            <KnowledgeSegment
+              value={section}
+              onChange={(next) => onNavigateSection?.(next)}
+              items={[
+                { id: "docs", label: "文档", testId: "knowledge-section-docs", Icon: FileText },
+                { id: "wiki", label: "Wiki", testId: "knowledge-section-wiki", Icon: BookOpen },
+                { id: "graph", label: "图谱", testId: "knowledge-section-graph", Icon: Network },
+              ]}
+            />
+            {onAskAbout ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-8 px-2.5"
+                data-testid="knowledge-go-chat"
+                onClick={() => onAskAbout("")}
+              >
+                <MessageSquare className="mr-1 size-3.5" />
+                去对话
+              </Button>
+            ) : null}
+          </div>
         </div>
       </header>
 
@@ -989,6 +1071,37 @@ export function KnowledgeView({
           )}
         </aside>
 
+        <div className="nlm-knowledge-stage">
+        <AnimatePresence initial={false}>
+        <motion.div
+          key={section}
+          className="nlm-knowledge-stage-inner"
+          initial={reduced ? false : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduced ? undefined : { opacity: 0 }}
+          transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
+        >
+        {section === "wiki" ? (
+          <WikiLayer
+            kbId={localKbId || DEFAULT_LOCAL_KB_ID}
+            slug={slug}
+            workspaceId={workspaceId}
+            remote={remote}
+            onOpenSlug={(next) => onNavigateSection?.("wiki", next)}
+            onAskAbout={onAskAbout}
+          />
+        ) : null}
+        {section === "graph" ? (
+          <GraphLayer
+            kbId={localKbId || DEFAULT_LOCAL_KB_ID}
+            remote={remote}
+            onOpenWiki={(next) => onNavigateSection?.("wiki", next)}
+            onOpenDoc={(docId) => onNavigateSection?.("docs", docId)}
+            onGenerateWiki={() => onNavigateSection?.("wiki")}
+          />
+        ) : null}
+        {section === "docs" ? (
+        <div className="nlm-knowledge-docs-split">
         <section className="nlm-knowledge-docs min-h-0">
           <div className="flex shrink-0 flex-col gap-1 border-b border-border px-2 py-2">
             <div className="flex gap-1">
@@ -1043,17 +1156,27 @@ export function KnowledgeView({
           </div>
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-2">
             {loading && !rows.length ? (
-              <p className="m-0 px-1 text-[12px] text-muted-foreground">加载中…</p>
+              <div className="space-y-2 px-0.5 pt-1">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="nlm-wiki-skel" />
+                ))}
+              </div>
             ) : null}
             {!loading && !rows.length ? (
-              <div className="rounded-xl border border-dashed border-border/80 bg-muted/20 px-3 py-5 text-center text-[12px] text-muted-foreground">
-                {remote
-                  ? searched
-                    ? "该远程库没有匹配结果。"
-                    : "远程库暂无文档。换一个库，或到右侧导入到本机。"
-                  : searched
-                    ? "当前本地库没有匹配结果。"
-                    : "从右侧选择一种导入方式：PDF / Word / PPT / Markdown 或网页、粘贴。"}
+              <div className="nlm-kb-empty nlm-kb-empty--inset">
+                <div className="nlm-kb-empty-mark">Docs</div>
+                <p className="nlm-kb-empty-title">
+                  {searched ? "没有匹配的文档" : remote ? "远程库是空的" : "还没有原文"}
+                </p>
+                <p className="nlm-kb-empty-copy">
+                  {remote
+                    ? searched
+                      ? "换个关键词，或清空后再浏览。"
+                      : "换一个库，或到右侧导入到本机。"
+                    : searched
+                      ? "换个关键词，或点标签取消筛选。"
+                      : "从右侧导入 PDF / Word / PPT / Markdown，或抓网页、粘贴摘录。"}
+                </p>
               </div>
             ) : null}
             {groupedRows.map((group) => (
@@ -1069,10 +1192,10 @@ export function KnowledgeView({
               return (
                 <div
                   key={id + (row.chunk_id || "")}
-                  className={cn("nlm-knowledge-card", selected?.doc_id === id && "is-active")}
+                  className={cn("nlm-knowledge-card", (selected?.doc_id === id || slug === id) && "is-active")}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => void onOpen(row)}>
+                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => void openDoc(row)}>
                       <div className="flex items-center gap-1.5">
                         <span className={cn("nlm-knowledge-kind", `is-${kind.id}`)}>{kind.label}</span>
                         <span className="truncate text-[12px] font-medium">{row.title || id}</span>
@@ -1174,6 +1297,7 @@ export function KnowledgeView({
                     setSelected(null);
                     setChunks([]);
                     if (!remote) setSideTab("ingest");
+                    if (slug) onNavigateSection?.("docs");
                   }}
                 >
                   关闭
@@ -1231,13 +1355,23 @@ export function KnowledgeView({
                   </div>
                   {chunks.map((chunk) => {
                     const editing = editingChunk === chunk.chunk_id;
+                    const citeHit = citeChunk != null && citeChunk === chunk.chunk_index;
                     return (
-                      <div key={chunk.chunk_id} className="rounded-md border border-border/60 bg-card/60 p-2">
+                      <div
+                        key={chunk.chunk_id}
+                        id={chunk.chunk_index != null ? `c${chunk.chunk_index}` : undefined}
+                        data-testid={citeHit ? "knowledge-cite-chunk" : undefined}
+                        className={cn(
+                          "nlm-kb-chunk rounded-md border border-border/60 bg-card/60 p-2",
+                          citeHit && "is-cite-hit",
+                        )}
+                      >
                         <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
                           <span>
                             #{chunk.chunk_index}
                             {chunk.heading ? ` · ${chunk.heading}` : ""}
                             {chunk.has_embedding ? " · vec" : ""}
+                            {citeHit ? " · 匹配出处" : ""}
                           </span>
                           {!editing ? (
                             <button
@@ -1648,6 +1782,11 @@ export function KnowledgeView({
             </p>
           ) : null}
         </aside>
+        </div>
+        ) : null}
+        </motion.div>
+        </AnimatePresence>
+        </div>
       </div>
     </div>
   );

@@ -47,6 +47,7 @@ export type MessageBubbleItem = {
 
 export type MessageBubbleProps = {
   item: MessageBubbleItem;
+  kbId?: string;
   modelProvider?: string;
   modelName?: string;
   experienceTier?: "fast" | "balanced" | "high" | string;
@@ -58,6 +59,7 @@ export type MessageBubbleProps = {
 
 export const MessageBubble = memo(function MessageBubble({
   item,
+  kbId = "",
   modelProvider = "",
   modelName = "",
   experienceTier = "balanced",
@@ -204,6 +206,7 @@ export const MessageBubble = memo(function MessageBubble({
                 "max-h-[10.5em] overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
             )}
             content={content}
+            kbId={kbId}
             streaming={!!item.streaming && showCaret}
             plain={!item.rich}
             modelProvider={resolvedProvider}

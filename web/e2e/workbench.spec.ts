@@ -93,6 +93,18 @@ test.describe("knowledge base", () => {
     await page.getByTestId("knowledge-scope-local").click();
     await expect(page).toHaveURL(/\/knowledge\/local(%3A|:)default/);
   });
+
+  test("wiki and graph routes render from knowledge tabs", async ({ page, request }) => {
+    await requireAdapters(request);
+    await page.goto("/knowledge/local%3Adefault/wiki", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("knowledge-wiki-page")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("knowledge-section-wiki")).toBeVisible();
+    await page.getByTestId("knowledge-section-graph").click();
+    await expect(page).toHaveURL(/\/knowledge\/local(%3A|:)default\/graph/);
+    await expect(page.getByTestId("knowledge-graph-page")).toBeVisible();
+    await page.getByTestId("knowledge-section-docs").click();
+    await expect(page.getByTestId("knowledge-search-input")).toBeVisible();
+  });
 });
 
 test.describe("session uploads", () => {

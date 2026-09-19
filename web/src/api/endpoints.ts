@@ -798,6 +798,64 @@ export type KnowledgeStats = {
   hybrid_ready: boolean;
   fts5?: boolean;
   fts5_tokenizer?: string;
+  wiki_pages?: number;
+};
+
+export type WikiLink = {
+  from_page_id?: string;
+  to_kind?: string;
+  to_id?: string;
+  label?: string;
+  raw?: string;
+};
+
+export type WikiRevision = {
+  revision_id: string;
+  page_id?: string;
+  title?: string;
+  author?: string;
+  message?: string;
+  created_at?: string | null;
+  content_len?: number;
+};
+
+export type WikiPage = {
+  page_id: string;
+  kb_id?: string;
+  slug: string;
+  title: string;
+  content?: string;
+  status?: string;
+  source_doc_ids?: string[];
+  content_hash?: string;
+  updated_at?: string | null;
+  created_at?: string | null;
+  content_len?: number;
+  revisions?: WikiRevision[];
+  links_out?: WikiLink[];
+  links_in?: WikiLink[];
+};
+
+export type GraphNode = {
+  node_id: string;
+  kb_id?: string;
+  kind?: string;
+  label?: string;
+  page_id?: string;
+  doc_id?: string;
+  source_doc_id?: string;
+  attrs?: Record<string, unknown>;
+};
+
+export type GraphEdge = {
+  edge_id: string;
+  kb_id?: string;
+  from_id: string;
+  to_id: string;
+  rel?: string;
+  weight?: number;
+  evidence?: string;
+  source_doc_id?: string;
 };
 
 export type LocalKnowledgeBase = {
@@ -1127,6 +1185,63 @@ export function listKnowledgeSyncLog(params?: {
   if (params?.limit != null) q.set("limit", String(params.limit));
   const qs = q.toString();
   return apiGet(`/api/knowledge/sync/log${qs ? `?${qs}` : ""}`);
+}
+
+export function listWikiPages(params: {
+  kb_id: string;
+  limit?: number;
+}): Promise<{ kb_id?: string; pages: WikiPage[] }> {
+  const q = new URLSearchParams();
+  if (params.kb_id) q.set("kb_id", params.kb_id);
+  if (params.limit != null) q.set("limit", String(params.limit));
+  return apiGet(`/api/knowledge/wiki/pages?${q.toString()}`);
+}
+
+export function getWikiPage(slug: string, kbId: string): Promise<WikiPage> {
+  const q = new URLSearchParams();
+  if (kbId) q.set("kb_id", kbId);
+  return apiGet(`/api/knowledge/wiki/pages/${encodeURIComponent(slug)}?${q.toString()}`);
+}
+
+export function putWikiPage(
+  slug: string,
+  body: {
+    kb_id: string;
+    title?: string;
+    content?: string;
+    message?: string;
+    status?: string;
+    workspace_id?: string;
+  },
+): Promise<WikiPage> {
+  return apiPut(`/api/knowledge/wiki/pages/${encodeURIComponent(slug)}`, body);
+}
+
+export function rollbackWikiPage(
+  slug: string,
+  body: { kb_id: string; revision_id: string },
+): Promise<WikiPage> {
+  return apiPost(`/api/knowledge/wiki/pages/${encodeURIComponent(slug)}/rollback`, body);
+}
+
+export function distillWiki(body: {
+  kb_id: string;
+  workspace_id?: string;
+  doc_ids?: string[];
+}): Promise<{ job: KnowledgeIngestJob }> {
+  return apiPost("/api/knowledge/wiki/distill", body);
+}
+
+export function getKnowledgeGraph(params: {
+  kb_id: string;
+  q?: string;
+  limit?: number;
+}): Promise<{ kb_id?: string; nodes: GraphNode[]; edges: GraphEdge[] }> {
+  const q = new URLSearchParams();
+  if (params.kb_id) q.set("kb_id", params.kb_id);
+  if (params.q) q.set("q", params.q);
+  if (params.limit != null) q.set("limit", String(params.limit));
+  return apiGet(`/api/knowledge/graph?${q.toString()}`);
 }
 
 export type WeknoraHealth = {

@@ -139,6 +139,11 @@ class SPAStaticFiles(StaticFiles):
             if exc.status_code != 404 or Path(path).suffix:
                 raise
             return await super().get_response("index.html", scope)
+        except OSError:
+            # Windows rejects path segments like "local:default" as filenames.
+            if Path(path).suffix:
+                raise
+            return await super().get_response("index.html", scope)
 
 
 _MERMAID_REPAIR_SYSTEM = (

@@ -16,6 +16,7 @@ from src.core_kernel.plugin_runtime.knowledge_store import (
     KnowledgeStore,
     citations_markdown,
     content_hash,
+    format_citation,
 )
 from src.core_kernel.plugin_runtime.knowledge_sync import (
     FeishuWikiConnector,
@@ -158,7 +159,9 @@ TOOLS: List[Dict[str, Any]] = [
             "Search the local knowledge base (keyword + optional embeddings hybrid). "
             "Returns ranked hits with stable doc_id, chunk_id, citation, and snippets, "
             "plus citations_md for the reply. Always follow with kb_read before answering "
-            "from KB content; cite source paths from citation / citations_md."
+            "from KB content. In the final answer, paste the markdown links from "
+            "citation / citations_md (and `doc:ID` / `wiki:slug`) so the UI can open "
+            "the original document and matching chunk."
         ),
         "inputSchema": {
             "type": "object",
@@ -249,6 +252,59 @@ TOOLS: List[Dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {"limit": {"type": "integer", "default": 200}},
+        },
+    },
+    {
+        "name": "wiki_list",
+        "description": (
+            "List local Wiki pages distilled from the bound SQLite knowledge base. "
+            "Local libraries only (local:*). Use wiki_read for a page body."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 50}},
+        },
+    },
+    {
+        "name": "wiki_read",
+        "description": (
+            "Read a local Wiki page by slug, including outbound/inbound [[links]] and revisions."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"slug": {"type": "string"}},
+            "required": ["slug"],
+        },
+    },
+    {
+        "name": "wiki_search",
+        "description": (
+            "Search local Wiki pages and wiki chunks. Citations use wiki:slug and "
+            "in-app /knowledge/.../wiki/... links. "
+            "Prefer this when the user asks about distilled notes; still use kb_read for raw docs."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 6},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "graph_neighbors",
+        "description": (
+            "Return a local knowledge-graph neighborhood for a node_id "
+            "(page:… / doc:… / ent:…). Use after wiki_list or wiki_search."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "limit": {"type": "integer", "default": 20},
+            },
+            "required": ["node_id"],
         },
     },
 ]
@@ -343,14 +399,13 @@ class KnowledgeToolsPlugin(BasePlugin):
                 neighbors=int(arguments.get("neighbors") or 1),
             )
             row = _guard(row, doc_id)
-            from src.core_kernel.plugin_runtime.knowledge_store import format_citation
-
             row["citation"] = format_citation(
                 title=str(row.get("title") or ""),
                 source=str(row.get("source") or ""),
                 source_uri=str(row.get("source_uri") or ""),
                 doc_id=doc_id,
                 chunk_index=row.get("chunk_index") if chunk_index is not None else None,
+                kb_id=str(row.get("kb_id") or ""),
             )
             return row
         if tool_name == "kb_get":
@@ -443,6 +498,84 @@ class KnowledgeToolsPlugin(BasePlugin):
             if not kid:
                 raise PluginError("knowledge_id required")
             return await weknora_get_knowledge(kid)
+        if tool_name == "wiki_list":
+            from src.core_kernel.plugin_runtime.knowledge_scope import is_local_kb_id
+
+            raw_kb = str(meta.get("weknora_kb_id") or arguments.get("kb_id") or "")
+            if raw_kb and not is_local_kb_id(raw_kb):
+                raise PluginError("wiki_list is local-only")
+            pages = await store.list_wiki_pages(
+                raw_kb if is_local_kb_id(raw_kb) else "",
+                limit=max(1, min(int(arguments.get("limit") or 50), 200)),
+            )
+            return {"ok": True, "pages": pages}
+        if tool_name == "wiki_read":
+            from src.core_kernel.plugin_runtime.knowledge_scope import is_local_kb_id
+
+            slug = str(arguments.get("slug") or "").strip()
+            if not slug:
+                raise PluginError("slug required")
+            raw_kb = str(meta.get("weknora_kb_id") or arguments.get("kb_id") or "")
+            if raw_kb and not is_local_kb_id(raw_kb):
+                raise PluginError("wiki_read is local-only")
+            page = await store.get_wiki_page(raw_kb if is_local_kb_id(raw_kb) else "", slug)
+            if not page:
+                raise PluginError(f"wiki page not found: {slug}")
+            return page
+        if tool_name == "wiki_search":
+            from src.core_kernel.plugin_runtime.knowledge_scope import is_local_kb_id
+
+            q = str(arguments.get("query") or "").strip()
+            if not q:
+                raise PluginError("query required")
+            raw_kb = str(meta.get("weknora_kb_id") or arguments.get("kb_id") or "")
+            if raw_kb and not is_local_kb_id(raw_kb):
+                raise PluginError("wiki_search is local-only")
+            kb = raw_kb if is_local_kb_id(raw_kb) else ""
+            limit = max(1, min(int(arguments.get("limit") or 6), 20))
+            hits = await store.search(q, workspace_id=ws, limit=limit, session_id=sid, kb_id=kb)
+            wiki_hits = [
+                h for h in hits if str(h.get("cite_kind") or h.get("source") or "") in {"wiki"}
+            ]
+            if not wiki_hits:
+                pages = await store.list_wiki_pages(kb, limit=80)
+                qn = q.lower()
+                for page in pages:
+                    blob = f"{page.get('title') or ''} {page.get('slug') or ''}".lower()
+                    if qn in blob:
+                        wiki_hits.append(
+                            {
+                                "title": page.get("title"),
+                                "slug": page.get("slug"),
+                                "doc_id": f"wiki:{page.get('page_id')}",
+                                "citation": format_citation(
+                                    title=str(page.get("title") or ""),
+                                    source="wiki",
+                                    source_uri=f"wiki:{page.get('slug')}",
+                                    doc_id=f"wiki:{page.get('page_id')}",
+                                    kb_id=kb,
+                                ),
+                                "cite_kind": "wiki",
+                                "source": "wiki",
+                                "source_uri": f"wiki:{page.get('slug')}",
+                                "kb_id": kb,
+                            }
+                        )
+                    if len(wiki_hits) >= limit:
+                        break
+            return {
+                "ok": True,
+                "query": q,
+                "results": wiki_hits[:limit],
+                "citations_md": citations_markdown(wiki_hits[:limit]),
+            }
+        if tool_name == "graph_neighbors":
+            nid = str(arguments.get("node_id") or "").strip()
+            if not nid:
+                raise PluginError("node_id required")
+            return await store.graph_neighbors(
+                nid, limit=max(1, min(int(arguments.get("limit") or 20), 80))
+            )
         raise PluginError(f"unknown knowledge tool: {tool_name}")
 
     async def _weknora_push(
@@ -630,7 +763,8 @@ def knowledge_tools_manifest() -> PluginManifest:
         version="0.4.0",
         description=(
             "Local SQLite knowledge base with chunked keyword search, citations, "
-            "workspace ingest, optional embeddings hybrid, and WeKnora bidirectional bridge."
+            "workspace ingest, optional embeddings hybrid, a distilled Wiki + graph, "
+            "and WeKnora bidirectional bridge."
         ),
         enabled=True,
         tools=list(TOOLS),

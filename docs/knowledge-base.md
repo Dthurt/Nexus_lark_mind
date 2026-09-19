@@ -1,6 +1,6 @@
 # Local knowledge base (Nexus Lark Mind)
 
-NLM keeps a **local SQLite knowledge base** for the coding-agent workbench (Feishu + React). It is **not** a WeKnora Wiki / GraphRAG / RBAC clone. Default path needs no Docker, GPU, or external vector DB.
+NLM keeps a **local SQLite knowledge base** for the coding-agent workbench (Feishu + React). It is **not** a WeKnora / GraphRAG / RBAC clone. Default path needs no Docker, GPU, or external vector DB. Local libraries can distill a second **Wiki + graph** layer on top of raw documents.
 
 ## Architecture
 
@@ -24,10 +24,12 @@ Optional               ──► WeKnora HTTP (weknora_client) when WEKNORA_BASE
 | Kernel RPC | `src/core_kernel/knowledge_rpc.py` (`/rpc/knowledge/*`, registered from `rpc_server.py`) |
 | Adapters REST | `src/adapters/knowledge_routes.py` (`/api/knowledge/*` + session uploads) |
 | Knowledge page | `web/src/components/knowledge/KnowledgeView.tsx` |
+| Wiki / graph panes | `web/src/components/knowledge/WikiLayer.tsx`, `GraphLayer.tsx` |
+| Wiki distill | `src/core_kernel/plugin_runtime/knowledge_wiki.py` |
 | Composer picker | `web/src/components/knowledge/KnowledgeScopePicker.tsx` |
 | Dock admin panel | `web/src/components/layout/KnowledgePanel.tsx` |
 
-**Tables:** `knowledge_docs`, `knowledge_chunks`, `knowledge_sync_log`, plus optional FTS5 virtual table `knowledge_chunks_fts`.
+**Tables:** `knowledge_docs`, `knowledge_chunks`, `knowledge_sync_log`, `knowledge_wiki_pages` / `_revisions` / `_links`, `knowledge_graph_nodes` / `_edges`, plus optional FTS5 virtual table `knowledge_chunks_fts`.
 
 Documents are split heading-aware (breadcrumb `context_header` stored separately from body). Long docs use **parent/child** chunks (WeKnora-style, `KB_PARENT_CHILD=1` default): search the ~384-char child, expand a short hit from its ~2048-char parent. Overlap stays ~15%. Keyword recall uses **SQLite FTS5** when the build supports it (`tokenize='trigram'` first for CJK substrings, else `unicode61`). If FTS5 is missing (some slim SQLite builds), search falls back to ILIKE token matching. Thin recall optionally runs **local query expansion** (stopword strip / quoted phrases / question-word peel — no LLM; `KB_QUERY_EXPAND=0` to disable). When `KB_EMBEDDING_*` or `WEMM_BASE_URL` is set, hybrid merge also scores chunks that have stored vectors — **even if keyword FTS/ILIKE misses**. Embeddings index `context_header + body`. A second-stage token rerank (`rerank_hits`) is unchanged. `kb_stats` reports `fts5` / `fts5_tokenizer`. `kb_read` / GET read return a char window or a chunk plus neighbors, with a `citation` provenance line (heading path included).
 
@@ -46,8 +48,12 @@ Documents are split heading-aware (breadcrumb `context_header` stored separately
 | `weknora_list_kbs` | List remote knowledge bases |
 | `weknora_push` / `weknora_sync` | Push doc or bidirectional sync (content_hash) |
 | `weknora_health` | Connectivity / latency probe |
+| `wiki_list` / `wiki_read` / `wiki_search` | Local distilled Wiki (local:* only) |
+| `graph_neighbors` | Local entity / page / doc neighborhood |
 
-System prompt: search → read before answering; cite `source_uri` / citation like web_search.
+System prompt: search → read before answering; paste markdown citation links
+(`/knowledge/:kb/docs/:docId#cN` or `/wiki/:slug`) plus `doc:ID` / `wiki:slug`.
+Chat turns those into in-app links with hover original-text preview.
 
 Each **agent turn** also runs a **deterministic retrieval step** (`kb_grounding.py`) against the
 session-bound KB *before* the LLM: local `kb_search`, or `weknora_search` with that session
@@ -72,6 +78,10 @@ Open it from:
 
 Once open:
 
+- Nested routes: `/knowledge/:kbId` (文档), `/knowledge/:kbId/docs/:docId`,
+  `/knowledge/:kbId/wiki` (+ `/:slug`), `/knowledge/:kbId/graph`.
+  Chat citations deep-link a document (`#cN` highlights the matched chunk).
+  Top tabs **文档 | Wiki | 图谱**.
 - KB selector (**本地多库** + WeKnora names when `WEKNORA_BASE_URL` is set), search,
   citation results, full-body preview, empty/health/error states.
 - Local libraries (`local:…` ids in `weknora_kb_id`; empty / `local:default` = 默认知识库).
@@ -142,6 +152,13 @@ Query/body may include `workspace_id` and `cwd` where relevant.
 - `POST /api/knowledge/weknora/search`
 - `POST /api/knowledge/weknora/push`
 - `POST /api/knowledge/weknora/sync`
+- `GET /api/knowledge/wiki/pages?kb_id=`
+- `GET /api/knowledge/wiki/pages/{slug}?kb_id=`
+- `PUT /api/knowledge/wiki/pages/{slug}` — user edit → revision
+- `POST /api/knowledge/wiki/pages/{slug}/rollback`
+- `POST /api/knowledge/wiki/distill` — `{ kb_id, doc_ids? }`
+- `GET /api/knowledge/graph?kb_id=&q=`
+- `GET /api/knowledge/graph/neighbors?node_id=`
 - `POST /api/sessions/{session_id}/uploads` — multipart session file → tagged KB doc
 - `GET /api/sessions/{session_id}/uploads`
 - `DELETE /api/sessions/{session_id}/uploads/{doc_id}`
@@ -195,11 +212,31 @@ Vectors are stored as JSON on chunks. After configuring embeddings on an existin
 | `KB_RERANK` | on | Second-stage token rerank of the candidate pool |
 | `KB_RERANK_URL` | off | Optional HTTP reranker (OpenAI/Cohere-shaped JSON) |
 | `KB_EMBEDDING_*` / `WEMM_*` | GLM/OpenAI key | Hybrid vectors; explicit URL optional |
+| `KB_WIKI` | on | Local second-layer Wiki + graph tables / APIs |
+| `KB_WIKI_AUTO` | off | After ingest `completed`, enqueue `kind=wiki_distill` |
 
 FTS5 has **no env switch**: `ensure_schema` tries trigram → unicode61 and keeps ILIKE if both fail.
 Existing databases get an empty FTS table **backfilled** from `knowledge_chunks` on first open.
 
 Ingest also covers **docx / xlsx / pptx** via dep-free OOXML text scrape, **html**, and **URL fetch** (`POST /api/knowledge/ingest`). Outlined or scanned PDFs use RapidOCR when those extras are installed. `kb_search` / `GET /api/knowledge/search?tag=` and `list_docs?tag=` filter by comma tags. Pass `session_id` on search to include that session’s temporary uploads. Local libraries are listed at `GET /api/knowledge/kbs`.
+
+## Local Wiki + graph
+
+Raw `knowledge_docs` stay. Distill writes editable Markdown pages (`[[WikiLink]]`),
+revisions (user/agent), and a clickable graph (entity / page / doc). Wiki bodies are
+also upserted as `source=wiki` docs with `chunk_type=wiki` so `kb_search` / turn
+grounding already retrieve them; citations look like `wiki:slug`.
+
+- Trigger: knowledge page **生成本库 Wiki**, or `POST /api/knowledge/wiki/distill`.
+- With GLM/OpenAI chat keys: LLM JSON pages + triples. Without: heading outline +
+  an `_index` hub page (UI shows 规则蒸馏).
+- User edits (`author=user`) are not overwritten; distill appends a `status=draft`
+  `slug--draft` page instead.
+- Remote WeKnora ids are not distilled here. GraphRAG community retrieval is still
+  out of scope.
+
+`nlm start` serves `web-static/`. Rebuild the SPA (`npm run build` in `web/`) after
+UI changes or :8000 stays on the old bundle.
 
 ## Optional WeKnora bridge
 

@@ -221,3 +221,19 @@ def test_format_grounding_mentions_tools():
     )
     assert "weknora_read" in text
     assert "kb-1" in text
+    linked = format_grounding_block(
+        {
+            "source": "local",
+            "kb_id": "local:default",
+            "results": [
+                {
+                    "title": "Guide",
+                    "snippet": "hello",
+                    "doc_id": "file_abc",
+                    "cite_href": "/knowledge/local%3Adefault/docs/file_abc#c1",
+                }
+            ],
+        }
+    )
+    assert "[Guide](/knowledge/local%3Adefault/docs/file_abc#c1)" in linked
+    assert "copy the markdown links" in linked

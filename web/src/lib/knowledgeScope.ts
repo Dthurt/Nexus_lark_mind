@@ -34,21 +34,71 @@ export function sameKnowledgeId(a?: string, b?: string): boolean {
   return canonicalKbId(a) === canonicalKbId(b);
 }
 
-export function knowledgePath(kbId?: string): string {
-  return `/knowledge/${encodeURIComponent(canonicalKbId(kbId))}`;
-}
+export type KnowledgeSection = "docs" | "wiki" | "graph";
 
-export function parseKnowledgePath(pathname: string): string | null {
-  const path = String(pathname || "");
-  if (path === "/knowledge" || path === "/knowledge/") return "";
-  if (!path.startsWith("/knowledge/")) return null;
-  const raw = path.slice("/knowledge/".length).split("/").filter(Boolean)[0] || "";
-  if (!raw) return "";
+export type KnowledgeLocation = {
+  kbId: string;
+  section: KnowledgeSection;
+  slug: string;
+};
+
+function decodePathPart(raw: string): string {
   try {
     return decodeURIComponent(raw);
   } catch {
     return raw;
   }
+}
+
+export function knowledgePath(
+  kbId?: string,
+  section: KnowledgeSection = "docs",
+  slug?: string,
+): string {
+  const base = `/knowledge/${encodeURIComponent(canonicalKbId(kbId))}`;
+  if (section === "wiki") {
+    return slug ? `${base}/wiki/${encodeURIComponent(slug)}` : `${base}/wiki`;
+  }
+  if (section === "graph") return `${base}/graph`;
+  if (section === "docs" && slug) {
+    return `${base}/docs/${encodeURIComponent(slug)}`;
+  }
+  return base;
+}
+
+export function parseKnowledgeLocation(pathname: string, search = ""): KnowledgeLocation | null {
+  const path = String(pathname || "");
+  if (path === "/knowledge" || path === "/knowledge/") {
+    return withDocQuery({ kbId: "", section: "docs", slug: "" }, search);
+  }
+  if (!path.startsWith("/knowledge/")) return null;
+  const parts = path.slice("/knowledge/".length).split("/").filter(Boolean);
+  const kbId = decodePathPart(parts[0] || "");
+  const sectionRaw = parts[1] || "";
+  if (sectionRaw === "wiki") {
+    return { kbId, section: "wiki", slug: decodePathPart(parts[2] || "") };
+  }
+  if (sectionRaw === "graph") {
+    return { kbId, section: "graph", slug: "" };
+  }
+  if (sectionRaw === "docs") {
+    return { kbId, section: "docs", slug: decodePathPart(parts[2] || "") };
+  }
+  return withDocQuery({ kbId, section: "docs", slug: "" }, search);
+}
+
+function withDocQuery(loc: KnowledgeLocation, search: string): KnowledgeLocation {
+  if (loc.section !== "docs" || loc.slug) return loc;
+  const raw = String(search || "");
+  if (!raw) return loc;
+  const q = new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw);
+  const doc = (q.get("doc") || "").trim();
+  return doc ? { ...loc, slug: doc } : loc;
+}
+
+export function parseKnowledgePath(pathname: string): string | null {
+  const loc = parseKnowledgeLocation(pathname);
+  return loc ? loc.kbId : null;
 }
 
 export function isKnowledgeRoute(pathname: string): boolean {

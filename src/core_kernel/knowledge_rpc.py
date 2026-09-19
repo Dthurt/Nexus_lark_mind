@@ -119,6 +119,7 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             source_uri=str(row.get("source_uri") or ""),
             doc_id=doc_id,
             chunk_index=row.get("chunk_index") if chunk_index is not None else None,
+            kb_id=str(row.get("kb_id") or ""),
         )
         return RpcEnvelope(ok=True, data=row)
 
@@ -978,4 +979,137 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         except OSError:
             logger.debug("session upload dir cleanup failed: %s", dest, exc_info=True)
         return RpcEnvelope(ok=True, data={"ok": True, "deleted": deleted, "session_id": sid})
+
+    def _wiki_local_or_error(kb_id: str):
+        from src.core_kernel.plugin_runtime.knowledge_scope import is_remote_kb_id, normalize_local_kb_id
+
+        if is_remote_kb_id(kb_id):
+            return None, RpcEnvelope(
+                ok=False,
+                error={"code": "REMOTE", "message": "Wiki / graph is local-only"},
+            )
+        return normalize_local_kb_id(kb_id), None
+
+    @app.get("/rpc/knowledge/wiki/pages")
+    async def kb_wiki_list(kb_id: str = "", limit: int = 200):
+        local_id, err = _wiki_local_or_error(kb_id)
+        if err:
+            return err
+        store = _kb_store()
+        await store.ensure_schema()
+        pages = await store.list_wiki_pages(local_id or "", limit=min(max(limit, 1), 500))
+        return RpcEnvelope(ok=True, data={"kb_id": local_id, "pages": pages})
+
+    @app.get("/rpc/knowledge/wiki/pages/{slug}")
+    async def kb_wiki_get(slug: str, kb_id: str = ""):
+        local_id, err = _wiki_local_or_error(kb_id)
+        if err:
+            return err
+        store = _kb_store()
+        await store.ensure_schema()
+        page = await store.get_wiki_page(local_id or "", slug)
+        if not page:
+            return RpcEnvelope(ok=False, error={"code": "NOT_FOUND", "message": f"wiki page not found: {slug}"})
+        return RpcEnvelope(ok=True, data=page)
+
+    @app.put("/rpc/knowledge/wiki/pages/{slug}")
+    async def kb_wiki_put(slug: str, request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        local_id, err = _wiki_local_or_error(str(body.get("kb_id") or ""))
+        if err:
+            return err
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            page = await store.save_wiki_page(
+                kb_id=local_id or "",
+                slug=slug,
+                title=str(body.get("title") or slug),
+                content=str(body.get("content") or ""),
+                author="user",
+                message=str(body.get("message") or "edit"),
+                status=str(body.get("status") or "published"),
+                workspace_id=str(body.get("workspace_id") or ""),
+            )
+        except ValueError as exc:
+            return RpcEnvelope(ok=False, error={"code": "BAD", "message": str(exc)})
+        return RpcEnvelope(ok=True, data=page)
+
+    @app.post("/rpc/knowledge/wiki/pages/{slug}/rollback")
+    async def kb_wiki_rollback(slug: str, request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        local_id, err = _wiki_local_or_error(str(body.get("kb_id") or ""))
+        if err:
+            return err
+        rev = str(body.get("revision_id") or "").strip()
+        if not rev:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "revision_id required"})
+        store = _kb_store()
+        await store.ensure_schema()
+        try:
+            page = await store.rollback_wiki_page(local_id or "", slug, rev, author="user")
+        except ValueError as exc:
+            return RpcEnvelope(ok=False, error={"code": "BAD", "message": str(exc)})
+        return RpcEnvelope(ok=True, data=page)
+
+    @app.post("/rpc/knowledge/wiki/distill")
+    async def kb_wiki_distill(request: Request):
+        from src.core_kernel.plugin_runtime.knowledge_wiki import enqueue_wiki_distill, wiki_enabled
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        if not wiki_enabled():
+            return RpcEnvelope(ok=False, error={"code": "DISABLED", "message": "KB_WIKI is disabled"})
+        kb_id = str(body.get("kb_id") or "")
+        local_id, err = _wiki_local_or_error(kb_id)
+        if err:
+            return err
+        store = _kb_store()
+        await store.ensure_schema()
+        doc_ids = body.get("doc_ids")
+        ids = [str(x) for x in doc_ids] if isinstance(doc_ids, list) else None
+        try:
+            job = await enqueue_wiki_distill(
+                store,
+                kb_id=local_id or "",
+                workspace_id=str(body.get("workspace_id") or ""),
+                doc_ids=ids,
+            )
+        except ValueError as exc:
+            return RpcEnvelope(ok=False, error={"code": "BAD", "message": str(exc)})
+        return RpcEnvelope(ok=True, data={"job": job})
+
+    @app.get("/rpc/knowledge/graph")
+    async def kb_graph(kb_id: str = "", q: str = "", limit: int = 80):
+        local_id, err = _wiki_local_or_error(kb_id)
+        if err:
+            return err
+        store = _kb_store()
+        await store.ensure_schema()
+        data = await store.list_graph(local_id or "", q=q or "", limit=min(max(limit, 8), 200))
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/rpc/knowledge/graph/neighbors")
+    async def kb_graph_neighbors(node_id: str = "", limit: int = 40):
+        nid = (node_id or "").strip()
+        if not nid:
+            return RpcEnvelope(ok=False, error={"code": "EMPTY", "message": "node_id required"})
+        store = _kb_store()
+        await store.ensure_schema()
+        data = await store.graph_neighbors(nid, limit=min(max(limit, 1), 80))
+        return RpcEnvelope(ok=True, data=data)
 

@@ -55,7 +55,9 @@ def format_grounding_block(result: Dict[str, Any]) -> str:
     lines = [
         f'<knowledge_context source="{source}" kb_id="{kb_id}">',
         "Server-side retrieval against the bound knowledge base for this turn. "
-        f"Answer from these hits first. Cite titles/paths. Call `{read_tool}` "
+        f"Answer from these hits first. When you cite, copy the markdown links "
+        f"(and `doc:ID` / `wiki:slug`) from Knowledge references so the UI can "
+        f"open the original document and matching chunk. Call `{read_tool}` "
         f"(after `{search_tool}` if you need more) for full bodies — do not invent.",
     ]
     if error:
@@ -73,15 +75,22 @@ def format_grounding_block(result: Dict[str, Any]) -> str:
             title = str(hit.get("title") or hit.get("doc_id") or hit.get("source_uri") or "untitled")
             doc_id = str(hit.get("doc_id") or hit.get("knowledge_id") or "")
             cite = str(hit.get("citation") or hit.get("source_uri") or "")
+            href = str(hit.get("cite_href") or "")
+            kind = str(hit.get("cite_kind") or "")
+            if kind == "wiki" and "wiki:" not in cite:
+                slug = str(hit.get("source_uri") or "")
+                if slug.startswith("wiki:"):
+                    cite = f"{cite} wiki:{slug[5:]}" if cite else f"wiki:{slug[5:]}"
             section = str(hit.get("context_header") or hit.get("heading") or "").replace("\n", " › ")
             snip = str(hit.get("snippet") or hit.get("content") or "").replace("\n", " ").strip()
             if len(snip) > MAX_SNIPPET:
                 snip = snip[: MAX_SNIPPET - 1] + "…"
-            head = f"{i}. **{title}**"
+            label = f"[{title}]({href})" if href else f"**{title}**"
+            head = f"{i}. {label}"
             if section:
                 head += f" § {section}"
             if doc_id:
-                head += f" [{doc_id}]"
+                head += f" `doc:{doc_id}`"
             if cite and cite not in head:
                 head += f" — {cite}"
             lines.append(head)

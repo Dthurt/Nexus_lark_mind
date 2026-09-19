@@ -13,6 +13,8 @@ def test_spa_fallback_serves_index_for_knowledge(tmp_path: Path):
     client = TestClient(app, raise_server_exceptions=False)
     assert client.get("/").status_code == 200
     assert "nlm" in client.get("/knowledge").text
+    assert "nlm" in client.get("/knowledge/local:default/wiki").text
+    assert "nlm" in client.get("/knowledge/local:default/graph").text
     assert "nlm" in client.get("/settings").text
     js = client.get("/assets/app.js")
     assert js.status_code == 200

@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from datetime import datetime, timezone
+from urllib.parse import quote
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from sqlalchemy import (
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     delete,
     func,
     or_,
@@ -142,7 +146,7 @@ class KnowledgeIngestJob(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    kind: Mapped[str] = mapped_column(String(16), default="file")  # file|url
+    kind: Mapped[str] = mapped_column(String(16), default="file")  # file|url|wiki_distill
     filename: Mapped[str] = mapped_column(String(512), default="")
     source_uri: Mapped[str] = mapped_column(String(2048), default="")
     title: Mapped[str] = mapped_column(String(512), default="")
@@ -158,6 +162,94 @@ class KnowledgeIngestJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class KnowledgeWikiPage(Base):
+    __tablename__ = "knowledge_wiki_pages"
+    __table_args__ = (UniqueConstraint("kb_id", "slug", name="uq_wiki_page_kb_slug"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    page_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    kb_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    slug: Mapped[str] = mapped_column(String(160), default="", index=True)
+    title: Mapped[str] = mapped_column(String(512), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="published")
+    source_doc_ids: Mapped[str] = mapped_column(Text, default="[]")
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeWikiRevision(Base):
+    __tablename__ = "knowledge_wiki_revisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    revision_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    page_id: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(512), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    author: Mapped[str] = mapped_column(String(16), default="agent")  # user|agent
+    message: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KnowledgeWikiLink(Base):
+    __tablename__ = "knowledge_wiki_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    from_page_id: Mapped[str] = mapped_column(String(64), index=True)
+    to_kind: Mapped[str] = mapped_column(String(16), default="page")  # page|doc
+    to_id: Mapped[str] = mapped_column(String(160), default="")
+    label: Mapped[str] = mapped_column(String(256), default="")
+    raw: Mapped[str] = mapped_column(String(512), default="")
+
+
+class KnowledgeGraphNode(Base):
+    __tablename__ = "knowledge_graph_nodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    node_id: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    kb_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="entity")  # entity|page|doc
+    label: Mapped[str] = mapped_column(String(512), default="")
+    page_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    doc_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    source_doc_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    attrs: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class KnowledgeGraphEdge(Base):
+    __tablename__ = "knowledge_graph_edges"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    edge_id: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    kb_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    from_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    to_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    rel: Mapped[str] = mapped_column(String(32), default="related")  # wiki_link|mentions|related
+    weight: Mapped[float] = mapped_column(Float, default=1.0)
+    evidence: Mapped[str] = mapped_column(String(1024), default="")
+    source_doc_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+
+
+def wiki_index_doc_id(page_id: str) -> str:
+    return f"wiki:{page_id}"
+
+
+def _json_list(raw: Any) -> List[str]:
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if isinstance(raw, str) and raw.strip():
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                return [str(x).strip() for x in data if str(x).strip()]
+        except Exception:
+            return [raw.strip()] if raw.strip() else []
+    return []
 
 
 def content_hash(text_body: str) -> str:
@@ -207,6 +299,30 @@ def _tokens(q: str) -> List[str]:
     return out[:24]
 
 
+def knowledge_cite_href(
+    kb_id: str = "",
+    *,
+    kind: str = "doc",
+    slug: str = "",
+    doc_id: str = "",
+    chunk_index: Optional[int] = None,
+) -> str:
+    """In-app path the chat UI can open as original preview."""
+    kid = (kb_id or "").strip() or "local:default"
+    if kid in {"default", "local"}:
+        kid = "local:default"
+    base = f"/knowledge/{quote(kid, safe='')}"
+    if kind == "wiki":
+        href = f"{base}/wiki/{quote(slug or 'page', safe='')}"
+    elif doc_id:
+        href = f"{base}/docs/{quote(doc_id, safe='')}"
+    else:
+        href = base
+    if chunk_index is not None:
+        href += f"#c{int(chunk_index)}"
+    return href
+
+
 def format_citation(
     *,
     title: str,
@@ -216,6 +332,7 @@ def format_citation(
     chunk_index: Optional[int] = None,
     heading: str = "",
     context_header: str = "",
+    kb_id: str = "",
 ) -> str:
     """Human-readable provenance line for chat / tool results."""
     label = (title or doc_id or "untitled").strip()
@@ -225,7 +342,20 @@ def format_citation(
     section = (context_header or heading or "").strip()
     if section:
         section = re.sub(r"^#+\s*", "", section.replace("\n", " › "))
-    parts = [f"**{label}**"]
+    wiki = (source or "") == "wiki" or path.startswith("wiki:")
+    if wiki:
+        slug = path[5:] if path.startswith("wiki:") else path
+        href = knowledge_cite_href(kb_id, kind="wiki", slug=slug, chunk_index=chunk_index)
+        parts = [f"[{label}]({href})", f"`wiki:{slug or 'page'}`"]
+        if section:
+            parts.append(f"§ {section}")
+        if chunk_index is not None:
+            parts.append(f"chunk #{chunk_index}")
+        if doc_id:
+            parts.append(f"`doc:{doc_id}`")
+        return " — ".join(parts)
+    href = knowledge_cite_href(kb_id, kind="doc", doc_id=doc_id, chunk_index=chunk_index)
+    parts = [f"[{label}]({href})"]
     if path:
         parts.append(f"`{path}`")
     elif source:
@@ -235,7 +365,7 @@ def format_citation(
     if chunk_index is not None:
         parts.append(f"chunk #{chunk_index}")
     if doc_id:
-        parts.append(f"[{doc_id}]")
+        parts.append(f"`doc:{doc_id}`")
     return " — ".join(parts)
 
 
@@ -252,6 +382,7 @@ def citations_markdown(hits: List[Dict[str, Any]]) -> str:
             chunk_index=h.get("chunk_index") if "chunk_index" in h else None,
             heading=str(h.get("heading") or ""),
             context_header=str(h.get("context_header") or ""),
+            kb_id=str(h.get("kb_id") or ""),
         )
         snip = (h.get("snippet") or "").replace("\n", " ").strip()
         if len(snip) > 160:
@@ -901,6 +1032,7 @@ class KnowledgeStore:
         parse_error: str = "",
         content_hash_value: Optional[str] = None,
         skip_if_unchanged: bool = False,
+        force_chunk_type: str = "",
     ) -> Dict[str, Any]:
         body = content or ""
         digest = content_hash_value or content_hash(body)
@@ -975,6 +1107,8 @@ class KnowledgeStore:
 
             for i, piece in enumerate(pieces):
                 ctype = str(piece.get("chunk_type") or "text")
+                if force_chunk_type and ctype != "parent":
+                    ctype = force_chunk_type[:32]
                 parent_id = ""
                 pidx = piece.get("parent_index")
                 if pidx is not None and int(pidx) >= 0:
@@ -1123,6 +1257,7 @@ class KnowledgeStore:
                 stmt = stmt.where(KnowledgeDoc.tags.ilike(f"%{tag_s}%"))
             if not tag_s.startswith("session:"):
                 stmt = stmt.where(KnowledgeDoc.source != "session-upload")
+                stmt = stmt.where(KnowledgeDoc.source != "wiki")
             rows = (await session.execute(stmt)).scalars().all()
             return [self._public(r, include_content=False) for r in rows]
 
@@ -1279,6 +1414,23 @@ class KnowledgeStore:
             if docs:
                 await session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.kb_id == nid))
                 await session.execute(delete(KnowledgeDoc).where(KnowledgeDoc.kb_id == nid))
+            page_ids = list(
+                (
+                    await session.execute(
+                        select(KnowledgeWikiPage.page_id).where(KnowledgeWikiPage.kb_id == nid)
+                    )
+                ).scalars().all()
+            )
+            if page_ids:
+                await session.execute(
+                    delete(KnowledgeWikiLink).where(KnowledgeWikiLink.from_page_id.in_(page_ids))
+                )
+                await session.execute(
+                    delete(KnowledgeWikiRevision).where(KnowledgeWikiRevision.page_id.in_(page_ids))
+                )
+                await session.execute(delete(KnowledgeWikiPage).where(KnowledgeWikiPage.kb_id == nid))
+            await session.execute(delete(KnowledgeGraphNode).where(KnowledgeGraphNode.kb_id == nid))
+            await session.execute(delete(KnowledgeGraphEdge).where(KnowledgeGraphEdge.kb_id == nid))
             res = await session.execute(delete(KnowledgeBase).where(KnowledgeBase.kb_id == nid))
             await session.commit()
             return (res.rowcount or 0) > 0
@@ -1691,6 +1843,7 @@ class KnowledgeStore:
                 chunk_index=c.chunk_index,
                 heading=c.heading or "",
                 context_header=header,
+                kb_id=getattr(doc, "kb_id", "") or kb_id,
             )
             display = c.content or ""
             parent = parents_by_id.get(getattr(c, "parent_chunk_id", "") or "")
@@ -1713,6 +1866,17 @@ class KnowledgeStore:
                 "score": round(sc, 3),
                 "snippet": self._snippet(display, tokens or [query]),
                 "citation": cite,
+                "cite_href": knowledge_cite_href(
+                    getattr(doc, "kb_id", "") or kb_id,
+                    kind="wiki" if (doc.source or "") == "wiki" else "doc",
+                    slug=(getattr(doc, "source_uri", "") or "")[5:]
+                    if (doc.source or "") == "wiki"
+                    and str(getattr(doc, "source_uri", "") or "").startswith("wiki:")
+                    else "",
+                    doc_id=doc.doc_id,
+                    chunk_index=c.chunk_index,
+                ),
+                "cite_kind": "wiki" if (doc.source or "") == "wiki" else "doc",
                 "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             }
             out.append(item)
@@ -1770,7 +1934,18 @@ class KnowledgeStore:
                 source=r.source or "",
                 source_uri=getattr(r, "source_uri", "") or "",
                 doc_id=r.doc_id,
+                kb_id=getattr(r, "kb_id", "") or kb_id,
             )
+            item["cite_href"] = knowledge_cite_href(
+                getattr(r, "kb_id", "") or kb_id,
+                kind="wiki" if (r.source or "") == "wiki" else "doc",
+                slug=(getattr(r, "source_uri", "") or "")[5:]
+                if (r.source or "") == "wiki"
+                and str(getattr(r, "source_uri", "") or "").startswith("wiki:")
+                else "",
+                doc_id=r.doc_id,
+            )
+            item["cite_kind"] = "wiki" if (r.source or "") == "wiki" else "doc"
             out.append(item)
         return out
 
@@ -1799,12 +1974,18 @@ class KnowledgeStore:
                 doc_stmt = doc_stmt.where(ws_docs)
                 chunk_stmt = chunk_stmt.where(ws_chunks)
                 emb_stmt = emb_stmt.where(ws_chunks)
+            doc_stmt = doc_stmt.where(KnowledgeDoc.source != "wiki")
             docs = int((await session.execute(doc_stmt)).scalar() or 0)
             chunks = int((await session.execute(chunk_stmt)).scalar() or 0)
             embedded = int((await session.execute(emb_stmt)).scalar() or 0)
+            wiki_stmt = select(func.count()).select_from(KnowledgeWikiPage).where(
+                KnowledgeWikiPage.kb_id.in_(kb_values)
+            )
+            wiki_pages = int((await session.execute(wiki_stmt)).scalar() or 0)
         info = embedding_stats()
         return {
             "docs": docs,
+            "wiki_pages": wiki_pages,
             "chunks": chunks,
             "chunks_with_embedding": embedded,
             "embeddings_configured": bool(info.get("configured")),
@@ -1872,6 +2053,591 @@ class KnowledgeStore:
             content_hash_value=content_hash(str(new_content)),
             skip_if_unchanged=False,
         )
+
+    def _wiki_public(
+        self,
+        row: KnowledgeWikiPage,
+        *,
+        include_content: bool = True,
+        revisions: Optional[List[Dict[str, Any]]] = None,
+        links_out: Optional[List[Dict[str, Any]]] = None,
+        links_in: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "page_id": row.page_id,
+            "kb_id": row.kb_id,
+            "slug": row.slug,
+            "title": row.title,
+            "status": row.status or "published",
+            "source_doc_ids": _json_list(row.source_doc_ids),
+            "content_hash": row.content_hash or "",
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        if include_content:
+            out["content"] = row.content or ""
+        else:
+            out["content_len"] = len(row.content or "")
+        if revisions is not None:
+            out["revisions"] = revisions
+        if links_out is not None:
+            out["links_out"] = links_out
+        if links_in is not None:
+            out["links_in"] = links_in
+        return out
+
+    @staticmethod
+    def _revision_public(row: KnowledgeWikiRevision) -> Dict[str, Any]:
+        return {
+            "revision_id": row.revision_id,
+            "page_id": row.page_id,
+            "title": row.title,
+            "author": row.author,
+            "message": row.message or "",
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "content_len": len(row.content or ""),
+        }
+
+    @staticmethod
+    def _link_public(row: KnowledgeWikiLink) -> Dict[str, Any]:
+        return {
+            "from_page_id": row.from_page_id,
+            "to_kind": row.to_kind,
+            "to_id": row.to_id,
+            "label": row.label or "",
+            "raw": row.raw or "",
+        }
+
+    @staticmethod
+    def _node_public(row: KnowledgeGraphNode) -> Dict[str, Any]:
+        attrs: Any = {}
+        try:
+            attrs = json.loads(row.attrs or "{}")
+        except Exception:
+            attrs = {}
+        return {
+            "node_id": row.node_id,
+            "kb_id": row.kb_id,
+            "kind": row.kind,
+            "label": row.label,
+            "page_id": row.page_id or "",
+            "doc_id": row.doc_id or "",
+            "source_doc_id": row.source_doc_id or "",
+            "attrs": attrs if isinstance(attrs, dict) else {},
+        }
+
+    @staticmethod
+    def _edge_public(row: KnowledgeGraphEdge) -> Dict[str, Any]:
+        return {
+            "edge_id": row.edge_id,
+            "kb_id": row.kb_id,
+            "from_id": row.from_id,
+            "to_id": row.to_id,
+            "rel": row.rel,
+            "weight": float(row.weight or 1.0),
+            "evidence": row.evidence or "",
+            "source_doc_id": row.source_doc_id or "",
+        }
+
+    async def list_wiki_pages(
+        self, kb_id: str = "", *, limit: int = 200, status: str = ""
+    ) -> List[Dict[str, Any]]:
+        local_id = normalize_local_kb_id(kb_id)
+        async with self.session_factory() as session:
+            stmt = (
+                select(KnowledgeWikiPage)
+                .where(KnowledgeWikiPage.kb_id.in_(self._kb_values(local_id)))
+                .order_by(KnowledgeWikiPage.updated_at.desc())
+                .limit(max(1, min(int(limit or 200), 500)))
+            )
+            if status:
+                stmt = stmt.where(KnowledgeWikiPage.status == status)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._wiki_public(r, include_content=False) for r in rows]
+
+    async def get_wiki_page(
+        self,
+        kb_id: str,
+        slug: str,
+        *,
+        include_revisions: bool = True,
+        include_content: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        local_id = normalize_local_kb_id(kb_id)
+        slug_s = (slug or "").strip()
+        if not slug_s:
+            return None
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeWikiPage).where(
+                        KnowledgeWikiPage.kb_id.in_(self._kb_values(local_id)),
+                        KnowledgeWikiPage.slug == slug_s,
+                    )
+                )
+            ).scalar_one_or_none()
+            if not row:
+                return None
+            revisions: List[Dict[str, Any]] = []
+            if include_revisions:
+                revs = (
+                    await session.execute(
+                        select(KnowledgeWikiRevision)
+                        .where(KnowledgeWikiRevision.page_id == row.page_id)
+                        .order_by(KnowledgeWikiRevision.created_at.desc())
+                        .limit(40)
+                    )
+                ).scalars().all()
+                revisions = [self._revision_public(r) for r in revs]
+            links_out = (
+                await session.execute(
+                    select(KnowledgeWikiLink).where(KnowledgeWikiLink.from_page_id == row.page_id)
+                )
+            ).scalars().all()
+            links_in = (
+                await session.execute(
+                    select(KnowledgeWikiLink).where(
+                        KnowledgeWikiLink.to_kind == "page",
+                        KnowledgeWikiLink.to_id == row.slug,
+                    )
+                )
+            ).scalars().all()
+            return self._wiki_public(
+                row,
+                include_content=include_content,
+                revisions=revisions,
+                links_out=[self._link_public(x) for x in links_out],
+                links_in=[self._link_public(x) for x in links_in],
+            )
+
+    async def get_wiki_page_by_id(self, page_id: str) -> Optional[Dict[str, Any]]:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeWikiPage).where(KnowledgeWikiPage.page_id == page_id)
+                )
+            ).scalar_one_or_none()
+            return self._wiki_public(row) if row else None
+
+    async def list_wiki_revisions(self, page_id: str, *, limit: int = 40) -> List[Dict[str, Any]]:
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(KnowledgeWikiRevision)
+                    .where(KnowledgeWikiRevision.page_id == page_id)
+                    .order_by(KnowledgeWikiRevision.created_at.desc())
+                    .limit(max(1, min(int(limit or 40), 100)))
+                )
+            ).scalars().all()
+            return [self._revision_public(r) for r in rows]
+
+    async def wiki_page_is_user_dirty(self, page_id: str) -> bool:
+        revs = await self.list_wiki_revisions(page_id, limit=40)
+        if not revs:
+            return False
+        latest = revs[0]
+        if str(latest.get("author") or "") != "user":
+            return False
+        last_agent = next((r for r in revs if str(r.get("author") or "") == "agent"), None)
+        if not last_agent:
+            return True
+        async with self.session_factory() as session:
+            latest_row = (
+                await session.execute(
+                    select(KnowledgeWikiRevision).where(
+                        KnowledgeWikiRevision.revision_id == str(latest.get("revision_id") or "")
+                    )
+                )
+            ).scalar_one_or_none()
+            agent_row = (
+                await session.execute(
+                    select(KnowledgeWikiRevision).where(
+                        KnowledgeWikiRevision.revision_id == str(last_agent.get("revision_id") or "")
+                    )
+                )
+            ).scalar_one_or_none()
+        user_hash = content_hash((latest_row.content if latest_row else "") or "")
+        agent_hash = content_hash((agent_row.content if agent_row else "") or "")
+        return user_hash != agent_hash
+
+    async def replace_wiki_links(
+        self, page_id: str, links: Sequence[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        async with self.session_factory() as session:
+            await session.execute(
+                delete(KnowledgeWikiLink).where(KnowledgeWikiLink.from_page_id == page_id)
+            )
+            out: List[KnowledgeWikiLink] = []
+            for item in links:
+                row = KnowledgeWikiLink(
+                    from_page_id=page_id,
+                    to_kind=str(item.get("to_kind") or "page")[:16],
+                    to_id=str(item.get("to_id") or "")[:160],
+                    label=str(item.get("label") or "")[:256],
+                    raw=str(item.get("raw") or "")[:512],
+                )
+                session.add(row)
+                out.append(row)
+            await session.commit()
+            return [self._link_public(r) for r in out]
+
+    async def save_wiki_page(
+        self,
+        *,
+        kb_id: str,
+        slug: str,
+        title: str,
+        content: str,
+        author: str = "user",
+        message: str = "",
+        status: str = "published",
+        source_doc_ids: Optional[Sequence[str]] = None,
+        page_id: str = "",
+        workspace_id: str = "",
+    ) -> Dict[str, Any]:
+        from src.core_kernel.plugin_runtime.knowledge_wiki import parse_wikilinks
+
+        local_id = normalize_local_kb_id(kb_id)
+        slug_s = (slug or "").strip()
+        if not slug_s:
+            raise ValueError("slug required")
+        body = content or ""
+        digest = content_hash(body)
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeWikiPage).where(
+                        KnowledgeWikiPage.kb_id == local_id,
+                        KnowledgeWikiPage.slug == slug_s,
+                    )
+                )
+            ).scalar_one_or_none()
+            now = datetime.now(timezone.utc)
+            if row is None:
+                row = KnowledgeWikiPage(
+                    page_id=page_id or f"wpg_{uuid4().hex[:16]}",
+                    kb_id=local_id,
+                    slug=slug_s,
+                    created_at=now,
+                )
+                session.add(row)
+            elif page_id and row.page_id != page_id:
+                row = KnowledgeWikiPage(
+                    page_id=page_id,
+                    kb_id=local_id,
+                    slug=slug_s,
+                    created_at=now,
+                )
+                session.add(row)
+            row.title = (title or row.title or slug_s)[:512]
+            row.content = body
+            row.status = (status or "published")[:32]
+            if source_doc_ids is not None:
+                row.source_doc_ids = json.dumps(_json_list(list(source_doc_ids)), ensure_ascii=False)
+            row.content_hash = digest
+            row.updated_at = now
+            await session.flush()
+            rev = KnowledgeWikiRevision(
+                revision_id=f"wrev_{uuid4().hex[:16]}",
+                page_id=row.page_id,
+                title=row.title,
+                content=body,
+                author=(author if author in {"user", "agent"} else "user")[:16],
+                message=(message or "")[:512],
+                created_at=now,
+            )
+            session.add(rev)
+            await session.commit()
+            saved = self._wiki_public(row)
+        links = parse_wikilinks(body)
+        await self.replace_wiki_links(saved["page_id"], links)
+        await self.upsert(
+            doc_id=wiki_index_doc_id(saved["page_id"]),
+            title=saved["title"],
+            content=body,
+            tags="wiki",
+            source="wiki",
+            source_uri=f"wiki:{saved['slug']}",
+            workspace_id=workspace_id,
+            kb_id=local_id,
+            content_hash_value=digest,
+            force_chunk_type="wiki",
+        )
+        await self.sync_wiki_page_graph(local_id, saved["page_id"])
+        return (await self.get_wiki_page(local_id, slug_s)) or saved
+
+    async def rollback_wiki_page(
+        self, kb_id: str, slug: str, revision_id: str, *, author: str = "user"
+    ) -> Dict[str, Any]:
+        page = await self.get_wiki_page(kb_id, slug, include_revisions=False)
+        if not page:
+            raise ValueError("wiki page not found")
+        async with self.session_factory() as session:
+            rev = (
+                await session.execute(
+                    select(KnowledgeWikiRevision).where(
+                        KnowledgeWikiRevision.revision_id == revision_id,
+                        KnowledgeWikiRevision.page_id == str(page.get("page_id") or ""),
+                    )
+                )
+            ).scalar_one_or_none()
+            if not rev:
+                raise ValueError("revision not found")
+            title = rev.title
+            body = rev.content or ""
+        return await self.save_wiki_page(
+            kb_id=kb_id,
+            slug=slug,
+            title=title,
+            content=body,
+            author=author,
+            message=f"rollback to {revision_id}",
+            status=str(page.get("status") or "published"),
+            source_doc_ids=page.get("source_doc_ids") or [],
+            workspace_id="",
+        )
+
+    async def upsert_graph_node(
+        self,
+        *,
+        kb_id: str,
+        node_id: str,
+        kind: str,
+        label: str,
+        page_id: str = "",
+        doc_id: str = "",
+        source_doc_id: str = "",
+        attrs: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        local_id = normalize_local_kb_id(kb_id)
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeGraphNode).where(KnowledgeGraphNode.node_id == node_id)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = KnowledgeGraphNode(node_id=node_id)
+                session.add(row)
+            row.kb_id = local_id
+            row.kind = (kind or "entity")[:16]
+            row.label = (label or node_id)[:512]
+            row.page_id = (page_id or "")[:64]
+            row.doc_id = (doc_id or "")[:64]
+            row.source_doc_id = (source_doc_id or "")[:64]
+            row.attrs = json.dumps(attrs or {}, ensure_ascii=False)
+            await session.commit()
+            return self._node_public(row)
+
+    async def upsert_graph_edge(
+        self,
+        *,
+        kb_id: str,
+        from_id: str,
+        to_id: str,
+        rel: str,
+        weight: float = 1.0,
+        evidence: str = "",
+        source_doc_id: str = "",
+        edge_id: str = "",
+    ) -> Dict[str, Any]:
+        local_id = normalize_local_kb_id(kb_id)
+        eid = edge_id or (
+            "e_"
+            + hashlib.sha1(f"{local_id}:{from_id}:{to_id}:{rel}".encode("utf-8")).hexdigest()[:16]
+        )
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeGraphEdge).where(KnowledgeGraphEdge.edge_id == eid)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = KnowledgeGraphEdge(edge_id=eid)
+                session.add(row)
+            row.kb_id = local_id
+            row.from_id = from_id
+            row.to_id = to_id
+            row.rel = (rel or "related")[:32]
+            row.weight = float(weight or 1.0)
+            row.evidence = (evidence or "")[:1024]
+            row.source_doc_id = (source_doc_id or "")[:64]
+            await session.commit()
+            return self._edge_public(row)
+
+    async def delete_graph_for_sources(self, kb_id: str, source_doc_ids: Sequence[str]) -> None:
+        local_id = normalize_local_kb_id(kb_id)
+        ids = [str(x) for x in source_doc_ids if str(x).strip()]
+        if not ids:
+            return
+        async with self.session_factory() as session:
+            await session.execute(
+                delete(KnowledgeGraphNode).where(
+                    KnowledgeGraphNode.kb_id == local_id,
+                    KnowledgeGraphNode.source_doc_id.in_(ids),
+                )
+            )
+            await session.execute(
+                delete(KnowledgeGraphEdge).where(
+                    KnowledgeGraphEdge.kb_id == local_id,
+                    KnowledgeGraphEdge.source_doc_id.in_(ids),
+                )
+            )
+            await session.commit()
+
+    async def sync_wiki_page_graph(self, kb_id: str, page_id: str) -> None:
+        page = await self.get_wiki_page_by_id(page_id)
+        if not page:
+            return
+        local_id = normalize_local_kb_id(kb_id or str(page.get("kb_id") or ""))
+        slug = str(page.get("slug") or "")
+        node_id = f"page:{page_id}"
+        sources = _json_list(page.get("source_doc_ids"))
+        source_doc = sources[0] if sources else ""
+        await self.upsert_graph_node(
+            kb_id=local_id,
+            node_id=node_id,
+            kind="page",
+            label=str(page.get("title") or slug),
+            page_id=page_id,
+            source_doc_id=source_doc,
+            attrs={"slug": slug},
+        )
+        async with self.session_factory() as session:
+            await session.execute(
+                delete(KnowledgeGraphEdge).where(
+                    KnowledgeGraphEdge.kb_id == local_id,
+                    KnowledgeGraphEdge.from_id == node_id,
+                    KnowledgeGraphEdge.rel == "wiki_link",
+                )
+            )
+            await session.commit()
+        links = (
+            await self.get_wiki_page(local_id, slug, include_revisions=False)
+        ) or {}
+        for link in links.get("links_out") or []:
+            to_kind = str(link.get("to_kind") or "page")
+            to_id = str(link.get("to_id") or "")
+            if not to_id:
+                continue
+            if to_kind == "doc":
+                dest = f"doc:{to_id}"
+                await self.upsert_graph_node(
+                    kb_id=local_id,
+                    node_id=dest,
+                    kind="doc",
+                    label=to_id,
+                    doc_id=to_id,
+                    source_doc_id=to_id,
+                )
+                rel = "mentions"
+            else:
+                dest_page = await self.get_wiki_page(local_id, to_id, include_revisions=False)
+                if dest_page:
+                    dest = f"page:{dest_page['page_id']}"
+                else:
+                    dest = f"page-slug:{to_id}"
+                    await self.upsert_graph_node(
+                        kb_id=local_id,
+                        node_id=dest,
+                        kind="page",
+                        label=str(link.get("label") or to_id),
+                        attrs={"slug": to_id, "missing": True},
+                    )
+                rel = "wiki_link"
+            await self.upsert_graph_edge(
+                kb_id=local_id,
+                from_id=node_id,
+                to_id=dest,
+                rel=rel,
+                evidence=str(link.get("raw") or ""),
+                source_doc_id=source_doc,
+            )
+
+    async def list_graph(
+        self, kb_id: str = "", *, q: str = "", limit: int = 80
+    ) -> Dict[str, Any]:
+        local_id = normalize_local_kb_id(kb_id)
+        cap = max(8, min(int(limit or 80), 200))
+        query = (q or "").strip().lower()
+        async with self.session_factory() as session:
+            nstmt = select(KnowledgeGraphNode).where(
+                KnowledgeGraphNode.kb_id.in_(self._kb_values(local_id))
+            )
+            nodes = list((await session.execute(nstmt)).scalars().all())
+            estmt = select(KnowledgeGraphEdge).where(
+                KnowledgeGraphEdge.kb_id.in_(self._kb_values(local_id))
+            )
+            edges = list((await session.execute(estmt)).scalars().all())
+        if query:
+            seed = {
+                n.node_id
+                for n in nodes
+                if query in (n.label or "").lower()
+                or query in (n.kind or "").lower()
+                or query in (n.page_id or "").lower()
+                or query in (n.doc_id or "").lower()
+            }
+            extra: set[str] = set()
+            for e in edges:
+                if e.from_id in seed:
+                    extra.add(e.to_id)
+                if e.to_id in seed:
+                    extra.add(e.from_id)
+            keep = seed | extra
+            nodes = [n for n in nodes if n.node_id in keep]
+            edges = [e for e in edges if e.from_id in keep and e.to_id in keep]
+        if len(nodes) > cap:
+            rank = {"page": 0, "doc": 1, "entity": 2}
+            nodes.sort(key=lambda n: (rank.get(n.kind, 9), n.label or ""))
+            keep_ids = {n.node_id for n in nodes[:cap]}
+            nodes = [n for n in nodes if n.node_id in keep_ids]
+            edges = [e for e in edges if e.from_id in keep_ids and e.to_id in keep_ids]
+        return {
+            "kb_id": local_id,
+            "nodes": [self._node_public(n) for n in nodes],
+            "edges": [self._edge_public(e) for e in edges],
+        }
+
+    async def graph_neighbors(self, node_id: str, *, limit: int = 40) -> Dict[str, Any]:
+        nid = (node_id or "").strip()
+        if not nid:
+            return {"node": None, "nodes": [], "edges": []}
+        cap = max(1, min(int(limit or 40), 80))
+        async with self.session_factory() as session:
+            center = (
+                await session.execute(
+                    select(KnowledgeGraphNode).where(KnowledgeGraphNode.node_id == nid)
+                )
+            ).scalar_one_or_none()
+            edges = list(
+                (
+                    await session.execute(
+                        select(KnowledgeGraphEdge).where(
+                            or_(
+                                KnowledgeGraphEdge.from_id == nid,
+                                KnowledgeGraphEdge.to_id == nid,
+                            )
+                        )
+                    )
+                ).scalars().all()
+            )[:cap]
+            ids = {nid}
+            for e in edges:
+                ids.add(e.from_id)
+                ids.add(e.to_id)
+            nodes = list(
+                (
+                    await session.execute(
+                        select(KnowledgeGraphNode).where(KnowledgeGraphNode.node_id.in_(list(ids)))
+                    )
+                ).scalars().all()
+            )
+        return {
+            "node": self._node_public(center) if center else None,
+            "nodes": [self._node_public(n) for n in nodes],
+            "edges": [self._edge_public(e) for e in edges],
+        }
 
     async def reindex_embeddings(
         self, *, workspace_id: str = "", kb_id: str = "", limit: int = 200

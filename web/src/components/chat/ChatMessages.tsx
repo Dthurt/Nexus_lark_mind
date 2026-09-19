@@ -41,6 +41,7 @@ export type ChatMessagesProps = {
   /** When this changes, scroll is forced to the bottom. */
   sessionId?: string | null;
   showWorkspacePicker?: boolean;
+  kbId?: string;
   modelProvider?: string;
   modelName?: string;
   experienceTier?: "fast" | "balanced" | "high" | string;
@@ -201,6 +202,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
       items = [],
       sessionId = null,
       showWorkspacePicker = false,
+      kbId = "",
       modelProvider = "",
       modelName = "",
       experienceTier = "balanced",
@@ -473,6 +475,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(
                   block.id,
                   <MessageBubble
                     item={block.item as any}
+                    kbId={kbId}
                     modelProvider={modelProvider}
                     modelName={modelName}
                     experienceTier={experienceTier}

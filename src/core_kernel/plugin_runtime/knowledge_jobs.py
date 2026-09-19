@@ -133,6 +133,11 @@ async def process_ingest_job(store: KnowledgeStore, job_id: str) -> Dict[str, An
             return {"job_id": job_id, "status": "failed", "error": "job not found"}
         if job.get("status") == "completed":
             return job
+        kind = str(job.get("kind") or "file")
+        if kind == "wiki_distill":
+            from src.core_kernel.plugin_runtime.knowledge_wiki import process_wiki_distill
+
+            return await process_wiki_distill(store, job_id)
         await store.update_ingest_job(
             job_id,
             status="processing",
@@ -140,7 +145,6 @@ async def process_ingest_job(store: KnowledgeStore, job_id: str) -> Dict[str, An
             message="parsing",
             error="",
         )
-        kind = str(job.get("kind") or "file")
         kb_id = normalize_local_kb_id(str(job.get("kb_id") or ""))
         workspace_id = str(job.get("workspace_id") or "")
         title = str(job.get("title") or "").strip()
@@ -229,6 +233,14 @@ async def process_ingest_job(store: KnowledgeStore, job_id: str) -> Dict[str, An
             updated = {**updated, "ingest_note": ingest_note, "doc": row}
         else:
             updated = {**updated, "doc": row}
+        try:
+            from src.core_kernel.plugin_runtime.knowledge_wiki import maybe_auto_distill
+
+            await maybe_auto_distill(
+                store, kb_id=kb_id, workspace_id=workspace_id, doc_ids=[doc_id]
+            )
+        except Exception:
+            logger.debug("auto wiki distill skipped", exc_info=True)
         return updated
     except Exception as exc:
         logger.exception("ingest job %s crashed", job_id)
@@ -268,7 +280,7 @@ async def retry_ingest_job(store: KnowledgeStore, job_id: str) -> Dict[str, Any]
     if status != "failed":
         raise ValueError("only failed jobs can be retried")
     kind = str(job.get("kind") or "file")
-    if kind != "url":
+    if kind not in {"url", "wiki_distill"}:
         path = _job_path(jid)
         if not path.is_file():
             raise ValueError("原始文件已丢失，请重新导入")

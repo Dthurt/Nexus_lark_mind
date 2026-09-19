@@ -93,6 +93,8 @@ def test_format_citation_and_markdown():
         heading="Intro",
     )
     assert "Guide" in cite and "docs/guide.md" in cite
+    assert "](/knowledge/" in cite and "/docs/file_abc" in cite and "#c1" in cite
+    assert "`doc:file_abc`" in cite
     md = citations_markdown(
         [{"title": "Guide", "source_uri": "docs/guide.md", "doc_id": "x", "snippet": "hello"}]
     )

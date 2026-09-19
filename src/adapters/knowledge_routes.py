@@ -518,3 +518,85 @@ def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
         )
         return RpcEnvelope(ok=True, data=data)
 
+    @app.get("/api/knowledge/wiki/pages")
+    async def knowledge_wiki_list(kb_id: str = "", limit: int = 200):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            "/rpc/knowledge/wiki/pages",
+            params={"kb_id": kb_id or "", "limit": limit},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/wiki/pages/{slug}")
+    async def knowledge_wiki_get(slug: str, kb_id: str = ""):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            f"/rpc/knowledge/wiki/pages/{slug}",
+            params={"kb_id": kb_id or ""},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.put("/api/knowledge/wiki/pages/{slug}")
+    async def knowledge_wiki_put(slug: str, request: Request):
+        kernel: RpcClient = state["kernel"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await kernel.call(
+            "PUT",
+            f"/rpc/knowledge/wiki/pages/{slug}",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/wiki/pages/{slug}/rollback")
+    async def knowledge_wiki_rollback(slug: str, request: Request):
+        kernel: RpcClient = state["kernel"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await kernel.call(
+            "POST",
+            f"/rpc/knowledge/wiki/pages/{slug}/rollback",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.post("/api/knowledge/wiki/distill")
+    async def knowledge_wiki_distill(request: Request):
+        kernel: RpcClient = state["kernel"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data = await kernel.call(
+            "POST",
+            "/rpc/knowledge/wiki/distill",
+            json=body if isinstance(body, dict) else {},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/graph")
+    async def knowledge_graph(kb_id: str = "", q: str = "", limit: int = 80):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            "/rpc/knowledge/graph",
+            params={"kb_id": kb_id or "", "q": q or "", "limit": limit},
+        )
+        return RpcEnvelope(ok=True, data=data)
+
+    @app.get("/api/knowledge/graph/neighbors")
+    async def knowledge_graph_neighbors(node_id: str = "", limit: int = 40):
+        kernel: RpcClient = state["kernel"]
+        data = await kernel.call(
+            "GET",
+            "/rpc/knowledge/graph/neighbors",
+            params={"node_id": node_id or "", "limit": limit},
+        )
+        return RpcEnvelope(ok=True, data=data)
+

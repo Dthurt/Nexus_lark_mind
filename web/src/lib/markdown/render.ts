@@ -26,6 +26,7 @@ import { applyMathPlaceholders, protectMath } from "./math";
 import { enhanceChatImages } from "./chatImages";
 import { diagramInk, diagramPanelBg, mermaidThemeName } from "./diagramTheme";
 import { isMindmapLang, mindmapMarkdownHtml, renderMindmapIn } from "./mindmap";
+import { isKnowledgeCiteHref, parseKnowledgeCiteHref, parseKnowledgeCiteToken } from "@/lib/kbCite";
 import { linkifyElement } from "./linkify";
 
 const HLJS_LANG_ALIASES: Record<string, string> = {
@@ -303,9 +304,34 @@ export function decorateMarkdownLinks(root: HTMLElement | null) {
   linkifyElement(root);
   root.querySelectorAll("a[href]").forEach((a) => {
     const el = a as HTMLAnchorElement;
+    const href = el.getAttribute("href") || "";
+    if (isKnowledgeCiteHref(href)) {
+      el.removeAttribute("target");
+      el.rel = "noopener";
+      el.classList.add("nlm-md-link", "nlm-kb-cite");
+      const cite = parseKnowledgeCiteHref(href);
+      if (cite) el.dataset.kbCite = cite.kind;
+      return;
+    }
     el.target = "_blank";
     el.rel = "noopener noreferrer";
     el.classList.add("nlm-md-link");
+  });
+}
+
+export function decorateKnowledgeCiteTokens(root: HTMLElement | null) {
+  if (!root) return;
+  const kb = root.getAttribute("data-kb-id") || "";
+  root.querySelectorAll("code").forEach((code) => {
+    if (code.closest("pre, a")) return;
+    const cite = parseKnowledgeCiteToken((code.textContent || "").trim(), kb);
+    if (!cite) return;
+    const a = document.createElement("a");
+    a.href = cite.href;
+    a.className = "nlm-md-link nlm-kb-cite nlm-kb-cite-token";
+    a.textContent = code.textContent || cite.slug;
+    a.dataset.kbCite = cite.kind;
+    code.replaceWith(a);
   });
 }
 
@@ -1185,6 +1211,7 @@ export async function renderMermaidIn(
 export function enhanceMarkdownRoot(root: HTMLElement | null) {
   if (!root) return;
   decorateMarkdownLinks(root);
+  decorateKnowledgeCiteTokens(root);
   enhanceCodeBlocks(root);
   enhanceChatImages(root);
 }

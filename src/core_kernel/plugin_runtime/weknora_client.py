@@ -601,7 +601,7 @@ async def _search_native(
         logger.debug("WeKnora native search failed: %s", exc)
         return None
 
-    results = _normalize_results(data, limit=limit)
+    results = _normalize_results(data, limit=limit, kb_id=kb_ids[0] if kb_ids else "")
     return {
         "ok": True,
         "source": "weknora",
@@ -657,7 +657,7 @@ async def _search_legacy(
             "endpoint": path,
         }
 
-    results = _normalize_results(data, limit=int(params["limit"]))
+    results = _normalize_results(data, limit=int(params["limit"]), kb_id=kb)
     return {
         "ok": True,
         "source": "weknora",
@@ -701,7 +701,7 @@ def _as_int(value: Any) -> Optional[int]:
         return None
 
 
-def _normalize_results(data: Any, *, limit: int) -> List[Dict[str, Any]]:
+def _normalize_results(data: Any, *, limit: int, kb_id: str = "") -> List[Dict[str, Any]]:
     rows: List[Any] = []
     if isinstance(data, list):
         rows = data
@@ -760,7 +760,11 @@ def _normalize_results(data: Any, *, limit: int) -> List[Dict[str, Any]]:
             or row.get("id")
             or ""
         )
-        citation = f"**{title}**"
+        kid = str(row.get("knowledge_base_id") or row.get("kb_id") or kb_id or "")
+        from src.core_kernel.plugin_runtime.knowledge_store import knowledge_cite_href
+
+        href = knowledge_cite_href(kid, kind="doc", doc_id=doc_id) if doc_id else ""
+        citation = f"[{title}]({href})" if href else f"**{title}**"
         if source_uri:
             citation += f" — `{source_uri}`"
         citation += " (WeKnora)"
@@ -772,8 +776,10 @@ def _normalize_results(data: Any, *, limit: int) -> List[Dict[str, Any]]:
                 "score": score_f,
                 "doc_id": doc_id,
                 "citation": citation,
+                "cite_href": href,
+                "cite_kind": "doc",
                 "source": "weknora",
-                "kb_id": str(row.get("knowledge_base_id") or row.get("kb_id") or ""),
+                "kb_id": kid,
             }
         )
     return out

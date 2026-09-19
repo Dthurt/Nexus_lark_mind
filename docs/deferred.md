@@ -12,7 +12,7 @@ Original “full DSH port” items:
 | Offline / bundled Draw.io viewer | **Partial** — offline SVG preview by default; optional `/drawio/` bundle ([diagrams.md](./diagrams.md)) |
 | Feishu cards for tool approval / ask_user | **Done** (Wave E) — interactive cards + gate resolve |
 | Feishu Card Kit 2.0 (stream / think / select / chart) | **Done** — [channels.md](./channels.md) |
-| Local KB + WeKnora / WeMM bridge | **Done** — [knowledge-base.md](./knowledge-base.md); Wiki / GraphRAG **not** planned |
+| Local KB + WeKnora / WeMM bridge | **Done** — [knowledge-base.md](./knowledge-base.md); local Wiki + graph distill **done**; GraphRAG community retrieval still out of scope |
 | `nlm` missing-Python prompt / install | **Done** — [local-start.md](./local-start.md) |
 | Feishu plan review cards | **Done** — `build_plan_review_card` + `task.plan_review` |
 | Delivery artifact (Plan→Diagram→Changes) | **Done** — RightDock Delivery + session file |
