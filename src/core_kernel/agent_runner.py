@@ -20,6 +20,33 @@ ASK_USER_TOOL = "ask_user"
 TODO_WRITE_TOOL = "todo_write"
 OPEN_CANVAS_TOOL = "open_canvas"
 EXIT_PLAN_MODE_TOOL = "exit_plan_mode"
+OFFICE_TOOLS = {"office_create", "office_append", "office_revise_plan", "office_replace", "office_save"}
+
+
+def _office_result_dict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = payload.get("result")
+    return result if isinstance(result, dict) else {}
+
+
+def office_save_succeeded(payload: Dict[str, Any]) -> bool:
+    """True when office_save persisted the document — wrap up without an error toast."""
+    if not payload.get("success"):
+        return False
+    result = _office_result_dict(payload)
+    if result.get("ok") is False:
+        return False
+    outline = result.get("outline") if isinstance(result.get("outline"), dict) else {}
+    last_op = str(result.get("last_op") or outline.get("last_op") or "").strip().lower()
+    status = str(result.get("status") or outline.get("status") or "").strip().lower()
+    return last_op == "save" or status == "ready"
+
+
+def office_plan_round_budget(payload: Dict[str, Any], *, base: int, cap: int = 192) -> int:
+    result = _office_result_dict(payload)
+    outline = result.get("outline") if isinstance(result.get("outline"), dict) else {}
+    plan = outline.get("plan") or result.get("plan") or []
+    n = len(plan) if isinstance(plan, list) else 0
+    return max(int(base or 0), min(int(cap), n + 16))
 APPROVAL_TOOLS = {"run_shell", "run_code", "write_file", "edit_file"}
 # Read / search tools never require approval
 SAFE_TOOLS = {
@@ -44,6 +71,11 @@ SAFE_TOOLS = {
     "web_crawl",
     "todo_write",
     "open_canvas",
+    "office_create",
+    "office_append",
+    "office_revise_plan",
+    "office_replace",
+    "office_save",
     "ask_user",
     "exit_plan_mode",
 }
@@ -246,6 +278,7 @@ def _known_short_tools() -> set:
         | APPROVAL_TOOLS
         | PLAN_ALLOWED_TOOLS
         | {ASK_USER_TOOL, TODO_WRITE_TOOL, OPEN_CANVAS_TOOL, EXIT_PLAN_MODE_TOOL}
+        | OFFICE_TOOLS
     )
 
 
@@ -352,7 +385,7 @@ async def run_agent_stream(
     model: Optional[str],
     tools_enabled: bool,
     task_id: Optional[str] = None,
-    max_rounds: int = 6,
+    max_rounds: int = 0,
     workspace_cwd: Optional[str] = None,
     workspace_meta: Optional[Dict[str, Any]] = None,
     allow_subagents: bool = True,
@@ -553,6 +586,45 @@ async def _run_agent_stream_inner(
         )
         return payload
 
+    async def _tool_free_wrapup(prompt: str, *, error: Optional[str] = None):
+        from src.core_kernel.context_compact import compact_messages
+        from src.core_kernel.tool_history import sanitize_tool_call_messages
+
+        nonlocal usage_total
+        final_msgs = compact_messages(
+            working + [ChatMessage(role=ChatRole.USER, content=prompt)],
+            model_name=model,
+        )
+        wrap_req = ModelRequest(
+            provider=provider,
+            model=model,
+            messages=sanitize_tool_call_messages(final_msgs),
+            tools=None,
+            stream=True,
+            reasoning_effort=reasoning_effort,
+        )
+        collected = ""
+        try:
+            async for chunk in gateway.stream(wrap_req, task_id=task_id):
+                if getattr(chunk, "reasoning", None):
+                    yield {"delta": "", "done": False, "reasoning_delta": chunk.reasoning}
+                if chunk.content:
+                    collected += chunk.content
+                    yield {"delta": chunk.content, "done": False}
+                if chunk.usage:
+                    usage_total = _add_usage(usage_total, _extract_usage(chunk.usage))
+        except Exception:
+            collected = collected or last_collected
+        out = {
+            "delta": "",
+            "done": True,
+            "content": collected or last_collected,
+            "usage": _stamp_usage(),
+        }
+        if error:
+            out["error"] = error
+        yield _finish_turn(out)
+
     def _refresh_tools() -> None:
         nonlocal openai_tools, tool_map, active_tools
         if not tools_enabled:
@@ -566,7 +638,10 @@ async def _run_agent_stream_inner(
         openai_tools = _assemble_tools()
         tool_map = plugins.tool_name_map()
 
-    for round_i in range(max_rounds):
+    office_saved_ok = False
+    round_limit = max(1, int(max_rounds or 0))
+    round_i = 0
+    while round_i < round_limit:
         if cancel_event and cancel_event.is_set():
             yield _finish_turn(
                 {
@@ -897,16 +972,30 @@ async def _run_agent_stream_inner(
             yield {"delta": "", "done": False, "tool_call": tool_payload}
             pending.append({"call_id": call_id, "name": name, "base": base, "args": args})
 
+        def _is_office_tool(base: str) -> bool:
+            leaf = _tool_leaf_name(base)
+            return base in OFFICE_TOOLS or leaf in OFFICE_TOOLS
+
         stream_items = [p for p in pending if p["base"] in SUBAGENT_STREAM_TOOLS]
         ask_items = [p for p in pending if p["base"] == ASK_USER_TOOL]
         exit_plan_items = [p for p in pending if p["base"] == EXIT_PLAN_MODE_TOOL]
+        office_items = [p for p in pending if _is_office_tool(p["base"])]
         other_items = [
             p
             for p in pending
             if p["base"] not in SUBAGENT_STREAM_TOOLS
             and p["base"] != ASK_USER_TOOL
             and p["base"] != EXIT_PLAN_MODE_TOOL
+            and not _is_office_tool(p["base"])
         ]
+        _office_order = {
+            "office_create": 0,
+            "office_revise_plan": 1,
+            "office_append": 2,
+            "office_replace": 2,
+            "office_save": 3,
+        }
+        office_items.sort(key=lambda p: _office_order.get(_tool_leaf_name(p["base"]), 1))
 
         def _append_tool_result(payload: Dict[str, Any]) -> None:
             working.append(
@@ -1134,6 +1223,56 @@ async def _run_agent_stream_inner(
                         }
                     yield {"delta": "", "done": False, "tool_result": payload}
                     _append_tool_result(payload)
+
+        def _office_canvas_open(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            if not payload.get("success"):
+                return None
+            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            doc_id = str(result.get("doc_id") or "")
+            outline = None
+            if doc_id:
+                try:
+                    from src.core_kernel.plugin_runtime.office_store import get_outline
+
+                    outline = get_outline(doc_id)
+                except Exception:
+                    outline = None
+            if not isinstance(outline, dict):
+                outline = result.get("outline") if isinstance(result.get("outline"), dict) else None
+            if not isinstance(outline, dict):
+                return None
+            return {
+                "kind": "office",
+                "title": outline.get("title") or result.get("title") or "Office",
+                "body": json.dumps(outline, ensure_ascii=False),
+                "doc_id": doc_id,
+                "dedupeKey": doc_id or result.get("dedupe_key") or "nlm.office.session",
+                "path": result.get("path") or outline.get("path") or "",
+                "download_url": result.get("download_url") or outline.get("download_url") or "",
+                "op": result.get("last_op") or outline.get("last_op") or "",
+                "appended_ids": result.get("appended_ids") or outline.get("last_ids") or [],
+                "writing": False,
+                "call_id": payload.get("id"),
+            }
+
+        for item in office_items:
+            if cancel_event and cancel_event.is_set():
+                break
+            payload = await _invoke_tool(item)
+            payload = {**payload, "kind": "office"}
+            canvas = _office_canvas_open(payload)
+            if canvas:
+                yield {"delta": "", "done": False, "canvas_open": canvas}
+            yield {"delta": "", "done": False, "tool_result": payload}
+            _append_tool_result(payload)
+            leaf = _tool_leaf_name(item["base"])
+            if leaf == "office_create" and payload.get("success"):
+                from src.common.config import get_settings as _get_office_settings
+
+                cap = int(_get_office_settings().agent_max_rounds_office or 160)
+                round_limit = office_plan_round_budget(payload, base=round_limit, cap=cap)
+            if leaf == "office_save" and office_save_succeeded(payload):
+                office_saved_ok = True
 
         for item in risky_items:
             if cancel_event and cancel_event.is_set():
@@ -1410,69 +1549,32 @@ async def _run_agent_stream_inner(
                 else:
                     yield ev
 
-    # budget exceeded
-    from src.core_kernel.context_compact import compact_messages
+        if office_saved_ok:
+            async for ev in _tool_free_wrapup(
+                "The office document was saved successfully. "
+                "Briefly confirm the workspace path and that writing is complete. "
+                "Do not call more tools."
+            ):
+                yield ev
+            return
+        round_i += 1
 
-    final_msgs = compact_messages(
-        working
-        + [
-            ChatMessage(
-                role=ChatRole.USER,
-                content=(
-                    "Tool loop budget reached. Summarize what you already changed or found, "
-                    "and list remaining steps. Do not call more tools unless a single critical read is required."
-                ),
-            )
-        ],
-        model_name=model,
-    )
-    from src.core_kernel.tool_history import sanitize_tool_call_messages
+    # budget exceeded — if the paper is already saved, treat as success (no error toast)
+    if office_saved_ok:
+        async for ev in _tool_free_wrapup(
+            "The office document was saved successfully. "
+            "Briefly confirm the workspace path and that writing is complete. "
+            "Do not call more tools."
+        ):
+            yield ev
+        return
 
-    req = ModelRequest(
-        provider=provider,
-        model=model,
-        messages=sanitize_tool_call_messages(final_msgs),
-        tools=openai_tools or None,
-        stream=True,
-        reasoning_effort=reasoning_effort,
-    )
-    emit_extension_event(
-        "model_request",
-        {
-            "session_id": parent_session_id,
-            "provider": provider,
-            "model": model,
-            "round": "budget",
-            "tool_count": len(openai_tools or []),
-        },
-    )
-    collected = ""
-    async for chunk in gateway.stream(req, task_id=task_id):
-        if getattr(chunk, "reasoning", None):
-            yield {"delta": "", "done": False, "reasoning_delta": chunk.reasoning}
-        if chunk.content:
-            collected += chunk.content
-            yield {"delta": chunk.content, "done": False}
-        if chunk.usage:
-            usage_total = _add_usage(usage_total, _extract_usage(chunk.usage))
-    emit_extension_event(
-        "model_response",
-        {
-            "session_id": parent_session_id,
-            "round": "budget",
-            "content_len": len(collected or ""),
-            "had_tool_calls": False,
-        },
-    )
-    yield _finish_turn(
-        {
-            "delta": "",
-            "done": True,
-            "content": collected or last_collected,
-            "usage": _stamp_usage(),
-            "error": "tool loop exceeded max rounds",
-        }
-    )
+    async for ev in _tool_free_wrapup(
+        "Tool loop budget reached. Summarize what you already changed or found, "
+        "and list remaining steps. Do not call more tools unless a single critical read is required.",
+        error="tool loop exceeded max rounds",
+    ):
+        yield ev
 
 
 async def _execute_subagent_tool(

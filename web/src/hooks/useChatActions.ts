@@ -187,6 +187,22 @@ export function useChatActions(opts: UseChatActionsOpts) {
     void refreshInbox();
   }, [sessionId, refreshInbox]);
 
+  useEffect(() => {
+    if (permissionPreset === "workspace-write") return;
+    setPermissionPresetState("workspace-write");
+    try {
+      localStorage.setItem(PERMISSION_PRESET_KEY, "workspace-write");
+    } catch {
+      /* ignore */
+    }
+    void syncInteraction({
+      permission_preset: "workspace-write",
+      auto_accept: autoAccept,
+    });
+    // One-time unstick leftover 权限 presets so Accept is the only gate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
   const syncInteraction = useCallback(async (patch: Record<string, unknown>) => {
     try {
       await patchInteraction(sessionIdRef.current, patch as any);
@@ -294,15 +310,24 @@ export function useChatActions(opts: UseChatActionsOpts) {
 
   const setAutoAccept = useCallback(
     (v: boolean) => {
-      if (permissionPreset === "read-only" && v) return;
-      if (permissionPreset === "danger-full-access" && !v) return;
       setAutoAcceptState(v);
       try {
         localStorage.setItem(AUTO_ACCEPT_KEY, v ? "1" : "0");
       } catch {
         /* ignore */
       }
-      syncInteraction({ auto_accept: !!v });
+      if (permissionPreset !== "workspace-write") {
+        setPermissionPresetState("workspace-write");
+        try {
+          localStorage.setItem(PERMISSION_PRESET_KEY, "workspace-write");
+        } catch {
+          /* ignore */
+        }
+      }
+      syncInteraction({
+        auto_accept: !!v,
+        permission_preset: "workspace-write",
+      });
     },
     [permissionPreset, syncInteraction],
   );
@@ -468,6 +493,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
         workspace_kind: workspaceKind || undefined,
         ssh_host_id: sshHostId || undefined,
         auto_accept: !!autoAccept,
+        permission_preset: "workspace-write",
       } as any);
       if ((data as any)?.task_id) onTaskId?.((data as any).task_id);
       stream.setStatus("queued");
@@ -614,7 +640,7 @@ export function useChatActions(opts: UseChatActionsOpts) {
           agent_mode: agentMode || "agent",
           auto_accept: !!autoAccept,
           multitask: !!multitask,
-          permission_preset: permissionPreset,
+          permission_preset: "workspace-write",
           plan_enforcement: planEnforcement,
           experience_tier: experienceTier,
           reasoning_effort: reasoningEffort,

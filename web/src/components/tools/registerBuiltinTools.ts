@@ -3,6 +3,7 @@
  * Import from main.tsx or ChatMessages so registrations happen before first render.
  */
 import { registerToolView } from "@/components/tools/toolRegistry";
+import { OfficeToolCard } from "@/components/tools/OfficeToolCard";
 import { WebSearchToolCard } from "@/components/tools/WebSearchToolCard";
 import { WorkspaceToolCard } from "@/components/tools/WorkspaceToolCard";
 
@@ -26,5 +27,10 @@ for (const key of workspaceToolKeys) {
 
 registerToolView("open_canvas", WorkspaceToolCard);
 registerToolView("builtin_workspace_open_canvas", WorkspaceToolCard);
+
+for (const key of ["office_create", "office_append", "office_revise_plan", "office_replace", "office_save"]) {
+  registerToolView(key, OfficeToolCard);
+  registerToolView(`builtin_office_${key}`, OfficeToolCard);
+}
 
 export {};

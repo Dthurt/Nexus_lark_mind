@@ -92,6 +92,29 @@ export async function applyMathPlaceholders(html: string, slots: { tex: string; 
   return out;
 }
 
+/** Render one LaTeX string into an element (Office canvas + chat). */
+export async function renderLatex(target: HTMLElement | null, latex: string, display = true) {
+  if (!target) return;
+  const tex = String(latex || "").trim();
+  if (!tex) {
+    target.textContent = "";
+    return;
+  }
+  const { katex } = await ensureKatex();
+  try {
+    katex.render(tex, target, {
+      displayMode: !!display,
+      throwOnError: false,
+      strict: "ignore",
+      trust: false,
+      output: "html",
+    });
+  } catch {
+    target.textContent = tex;
+    target.classList.add("katex-fallback");
+  }
+}
+
 /** DOM pass for any leftover delimiters (rare). */
 export async function renderMathIn(root: HTMLElement | null) {
   if (!root) return;

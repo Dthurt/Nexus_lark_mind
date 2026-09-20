@@ -133,6 +133,56 @@ html[data-theme="day"] {
   padding-inline: 2px;
 }
 
+.nlm-canvas-recent-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 2px 6px;
+  padding: 6px 10px;
+  border: 1px solid hsl(var(--border) / 0.72);
+  border-radius: 10px;
+  background: hsl(var(--card) / 0.72);
+  color: hsl(var(--foreground) / 0.88);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.nlm-canvas-recent-bar:hover {
+  border-color: hsl(var(--primary) / 0.35);
+  background: hsl(var(--primary) / 0.08);
+}
+
+.nlm-todo-dock {
+  margin: 0 2px 6px;
+  border: 1px solid hsl(var(--border) / 0.72);
+  border-radius: 10px;
+  background: hsl(var(--card) / 0.78);
+  box-shadow: 0 1px 0 hsl(var(--background) / 0.4);
+}
+
+.nlm-todo-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 6px 10px;
+  color: hsl(var(--foreground) / 0.9);
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+}
+
+.nlm-todo-dock-head:hover {
+  background: hsl(var(--foreground) / 0.03);
+}
+
+.nlm-todo-dock-body {
+  margin: 0 !important;
+  border-top: 1px solid hsl(var(--border) / 0.55);
+}
+
 .nlm-center-split {
   flex: 1;
   min-height: 0;
@@ -140,6 +190,10 @@ html[data-theme="day"] {
   grid-template-columns: minmax(0, 1fr) minmax(280px, 42%);
   gap: 0;
   overflow: hidden;
+}
+
+.nlm-center-split--office {
+  grid-template-columns: minmax(280px, 1fr) minmax(420px, 54%);
 }
 
 .nlm-center-split > .nlm-chat-column {

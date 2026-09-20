@@ -21,6 +21,9 @@ asyncssh==2.19.0
 cryptography==44.0.0
 pypdf>=5.1.0,<7
 pymupdf>=1.24.14,<2
+python-docx>=1.1.2,<2
+python-pptx>=1.0.2,<2
+latex2mathml>=3.77.0,<4
 # Optional scanned/outlined-PDF OCR (large): rapidocr-onnxruntime>=1.4.0,<2
 
 # Optional browser crawl (Crawl4AI) — also installable via `nlm` wizard:

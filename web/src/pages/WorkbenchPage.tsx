@@ -146,7 +146,7 @@ export function WorkbenchPage({
     [navigate, weknoraKbId],
   );
 
-  const canvas = useCanvasSession(sessionId);
+  const canvas = useCanvasSession(sessionId, { cwd, workspaceKind });
 
   const {
     providerId,
@@ -779,6 +779,8 @@ export function WorkbenchPage({
             onClear={() => void clearSession()}
             onOpenCommand={commandPalette.show}
             canvasOpen={canvas.open}
+            canvasHasLast={canvas.hasLast}
+            canvasLastTitle={canvas.lastDoc?.title || ""}
             onToggleCanvas={canvas.togglePane}
             weknoraKbId={weknoraKbId}
             weknoraKbName={weknoraKbName}
@@ -888,6 +890,21 @@ export function WorkbenchPage({
                     />
                   )}
 
+                  {!canvas.open && canvas.hasLast ? (
+                    <button
+                      type="button"
+                      data-testid="canvas-reopen-last"
+                      className="nlm-canvas-recent-bar"
+                      onClick={() => canvas.reopenLast()}
+                    >
+                      <span className="truncate">
+                        最近文档
+                        {canvas.lastDoc?.title ? ` · ${canvas.lastDoc.title}` : ""}
+                      </span>
+                      <span className="shrink-0 text-muted-foreground">点此恢复 Canvas</span>
+                    </button>
+                  ) : null}
+
                   <ApprovalDock
                     items={timeline.items.filter((it) => it.kind === "approval") as any}
                     onResolve={(p) => void actions.resolveApproval(p)}
@@ -948,7 +965,12 @@ export function WorkbenchPage({
               if (!canvas.open) return chatColumn;
 
               return (
-                <div className="nlm-center-split">
+                <div
+                  className={cn(
+                    "nlm-center-split",
+                    canvas.active?.kind === "office" && "nlm-center-split--office",
+                  )}
+                >
                   <div className="nlm-chat-column">{chatColumn}</div>
                   <CanvasPane
                     canvas={canvas}
@@ -1165,6 +1187,7 @@ export function WorkbenchPage({
         }}
         onSetCenterView={setCenterView}
         onToggleCanvas={canvas.togglePane}
+        onReopenCanvas={() => canvas.reopenLast()}
         onNewCanvas={() =>
           canvas.openDoc({
             kind: "markdown",

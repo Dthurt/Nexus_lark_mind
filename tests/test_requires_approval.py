@@ -1,6 +1,11 @@
 """Unit tests for agent_runner._requires_approval."""
 
-from src.core_kernel.agent_runner import _requires_approval, _tool_leaf_name
+from src.core_kernel.agent_runner import (
+    _requires_approval,
+    _tool_leaf_name,
+    office_plan_round_budget,
+    office_save_succeeded,
+)
 
 
 def test_tool_leaf_strips_prefixes():
@@ -14,6 +19,8 @@ def test_safe_tools_skip_approval():
     for name in ("read_file", "grep", "glob", "list_dir", "web_search", "kb_search"):
         assert _requires_approval(name) is False
         assert _requires_approval(f"builtin_workspace_{name}") is False
+    for name in ("office_create", "office_append", "office_revise_plan", "office_replace", "office_save"):
+        assert _requires_approval(name) is False
 
 
 def test_mutating_tools_need_approval():
@@ -38,3 +45,16 @@ def test_substring_false_positives_not_blocked():
 def test_empty_name():
     assert _requires_approval("") is False
     assert _requires_approval("   ") is False
+
+
+def test_office_save_succeeded_detects_ready_payload():
+    assert office_save_succeeded({"success": True, "result": {"ok": True, "last_op": "save"}}) is True
+    assert office_save_succeeded({"success": True, "result": {"outline": {"status": "ready"}}}) is True
+    assert office_save_succeeded({"success": True, "result": {"ok": True, "last_op": "append"}}) is False
+    assert office_save_succeeded({"success": False, "result": {"last_op": "save"}}) is False
+
+
+def test_office_plan_round_budget_scales_with_plan():
+    payload = {"result": {"outline": {"plan": [{"id": "p1"}] * 40}}}
+    assert office_plan_round_budget(payload, base=8, cap=192) == 56
+    assert office_plan_round_budget({"result": {}}, base=12, cap=192) == 16

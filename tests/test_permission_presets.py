@@ -27,10 +27,12 @@ def test_apply_preset_sets_auto_accept():
     assert apply_preset_to_session_fields("workspace-write")["auto_accept"] is False
 
 
-def test_effective_auto_accept_respects_preset():
-    assert effective_auto_accept(permission_preset="read-only", auto_accept=True) is False
-    assert effective_auto_accept(permission_preset="danger-full-access", auto_accept=False) is True
+def test_effective_auto_accept_respects_explicit_flag():
+    assert effective_auto_accept(permission_preset="read-only", auto_accept=True) is True
+    assert effective_auto_accept(permission_preset="danger-full-access", auto_accept=False) is False
     assert effective_auto_accept(permission_preset="workspace-write", auto_accept=True) is True
+    assert effective_auto_accept(permission_preset="danger-full-access", auto_accept=None) is True
+    assert effective_auto_accept(permission_preset="read-only", auto_accept=None) is False
 
 
 def test_plan_enforcement():

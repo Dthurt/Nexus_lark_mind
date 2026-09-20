@@ -399,13 +399,11 @@ class SessionContext:
             elif plan_status is None and working.get("plan_status") == "drafting":
                 working["plan_status"] = "idle"
         if auto_accept is not None:
+            working["auto_accept"] = bool(auto_accept)
+            # Accept is the web control; leftover presets must not pin the flag.
             preset = normalize_preset(working.get("permission_preset"))
-            if preset == "read-only":
-                working["auto_accept"] = False
-            elif preset == "danger-full-access":
-                working["auto_accept"] = True
-            else:
-                working["auto_accept"] = bool(auto_accept)
+            if preset in ("read-only", "danger-full-access"):
+                working["permission_preset"] = "workspace-write"
         if plan_status is not None:
             status = str(plan_status).strip().lower()
             if status not in ("idle", "drafting", "accepted"):

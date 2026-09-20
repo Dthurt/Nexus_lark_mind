@@ -62,6 +62,8 @@ export type TopbarProps = {
   centerView?: CenterViewId;
   onCenterViewChange?: (view: CenterViewId) => void;
   canvasOpen?: boolean;
+  canvasHasLast?: boolean;
+  canvasLastTitle?: string;
   onToggleCanvas?: () => void;
   workspaceTitle?: string;
   cwd?: string;
@@ -81,6 +83,8 @@ export function Topbar({
   centerView = "chat",
   onCenterViewChange,
   canvasOpen = false,
+  canvasHasLast = false,
+  canvasLastTitle = "",
   onToggleCanvas,
   workspaceTitle = "",
   cwd = "",
@@ -164,9 +168,18 @@ export function Topbar({
       />
 
       <IconButton
-        title={canvasOpen ? "关闭 Canvas" : "打开 Canvas"}
-        aria-label={canvasOpen ? "关闭 Canvas" : "打开 Canvas"}
+        title={
+          canvasOpen
+            ? "关闭 Canvas（保留最近文档）"
+            : canvasHasLast
+              ? `打开上次文档${canvasLastTitle ? ` · ${canvasLastTitle}` : ""}`
+              : "打开 Canvas"
+        }
+        aria-label={
+          canvasOpen ? "关闭 Canvas" : canvasHasLast ? "打开上次文档" : "打开 Canvas"
+        }
         aria-pressed={canvasOpen}
+        data-testid="canvas-toggle"
         onClick={onToggleCanvas}
         className={cn(canvasOpen && "bg-primary/15 text-primary")}
       >

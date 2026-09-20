@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { openChatStream } from "@/api/endpoints";
 import type { ChatTimelineApi } from "@/hooks/useChatTimeline";
 import type { useTrajectory } from "@/hooks/useTrajectory";
+import { OFFICE_SESSION_SOURCE } from "@/lib/canvasDoc";
 import { formatStreamErrorText } from "@/lib/chatError";
 
 type TrajectoryApi = ReturnType<typeof useTrajectory>;
@@ -63,6 +64,7 @@ function shortToolName(name: string) {
   return raw
     .replace(/^builtin_workspace_/, "")
     .replace(/^builtin_subagent_/, "")
+    .replace(/^builtin_office_/, "")
     .replace(/^cli_/, "")
     .split(".")
     .pop();
@@ -219,7 +221,14 @@ export function useChatStream(opts: UseChatStreamOpts) {
         tr.addToolCall(payload, actId);
         const tname = shortToolName(payload.name);
         setStatus("tool call…");
-        if (["subagent", "subagent_fork", "send_message"].includes(tname || "")) {
+        if (/^office_(create|append|revise_plan|replace|save)$/.test(tname || "")) {
+          window.dispatchEvent(
+            new CustomEvent("nlm-office-writing", {
+              detail: { name: tname, arguments: payload.arguments || {} },
+            }),
+          );
+          setActivity("tool", "正在写入文档…", tname || "");
+        } else if (["subagent", "subagent_fork", "send_message"].includes(tname || "")) {
           setActivity(
             "subagent",
             "正在启动子 agent…",
@@ -295,22 +304,33 @@ export function useChatStream(opts: UseChatStreamOpts) {
       } else if (type === "task.canvas_open") {
         tl.clearRetry();
         const body = String(payload.body || "").trim();
-        if (body) {
+        const kind = String(payload.kind || "markdown");
+        if (body || kind === "office") {
+          const reuseKey =
+            payload.dedupeKey ||
+            payload.doc_id ||
+            (kind === "office" ? OFFICE_SESSION_SOURCE : "") ||
+            payload.path ||
+            "";
           window.dispatchEvent(
             new CustomEvent("nlm-canvas-open", {
               detail: {
-                kind: payload.kind || "markdown",
-                title: payload.title || "Canvas",
-                body,
-                dedupeKey: payload.dedupeKey || payload.path || "",
-                source: payload.path || "",
+                kind,
+                title: payload.title || (kind === "office" ? "Office" : "Canvas"),
+                body: body || "{}",
+                dedupeKey: reuseKey,
+                source: reuseKey,
               },
             }),
           );
         }
-        tr.addStatus(`canvas ${payload.kind || "open"}`);
+        tr.addStatus(`canvas ${kind || "open"}`);
         setStatus("canvas…");
-        setActivity("tool", "已打开 Canvas", String(payload.title || payload.kind || ""));
+        setActivity(
+          "tool",
+          kind === "office" ? "文档预览已更新" : "已打开 Canvas",
+          String(payload.title || kind || ""),
+        );
       } else if (type === "task.plan_ready") {
         tl.markPlanReady(payload.content || "");
         setActivity("model", "计划已就绪，可接受并执行", "");

@@ -140,6 +140,46 @@ DIAGRAMS_MATH = (
 )
 
 # ---------------------------------------------------------------------------
+# Office documents (Word / PowerPoint)
+# ---------------------------------------------------------------------------
+
+OFFICE_DOCS = (
+    "## Word / PowerPoint (office_* tools)\n"
+    "When the user wants a Word/PPT/docx/pptx/方案/演讲稿/汇报文档, you MUST keep user ask ↔ "
+    "structure ↔ final file aligned. The JSON outline is the source of truth; Canvas preview "
+    "and the downloaded file share the same fields.\n"
+    "Document contract (文档合同) is written at create and enforced on every append:\n"
+    "- `throughline` / thesis: one-sentence 系统观 the whole document serves.\n"
+    "- `plan[]`: ordered sections/slides with status pending/done. Do not invent a section.\n"
+    "- `requirements[]`: each user ask mapped to a plan id.\n"
+    "- `glossary` / terms: names that must stay consistent.\n"
+    "- `voice`: tone / person / tense.\n"
+    "- `last_block`: last heading + last 1–2 sentences — use this for 衔接.\n"
+    "- `forbidden`: do not restate the intro, do not jump to the conclusion early, "
+    "do not add a section that is not on the plan.\n"
+    "1. Restate the requested structure as a short plan (section titles for Word, slide titles for PPT).\n"
+    "2. Map every user requirement to one plan id (requirements[].mapped_to).\n"
+    "3. Call `office_create` FIRST with kind + title + **throughline** + full plan[] + requirements[] "
+    "(+ glossary/voice when names or tone matter). "
+    "This only writes the contract + cover / TOC / agenda — never the full body.\n"
+    "4. Then `office_append` ONE section (Word: a heading plus its local blocks) or ONE slide at a time. "
+    "MUST set `plan_id`. Optional `bridge` sentence that continues from `last_block`. "
+    "Set `req` on each block/slide to that plan id. Do not dump a giant blob.\n"
+    "5. If the user asks for a new section that is not on plan[], call `office_revise_plan` "
+    "(add[{title, after}]) first, then append that new plan_id.\n"
+    "6. Types. Word: heading (level 1–3), paragraph, bullet_list, numbered_list, quote, "
+    "table, page_break, image, **equation**. PPT: title, section, bullets, two_column, quote, "
+    "image, **equation** + speaker `notes`.\n"
+    "7. Formulas: prefer `type=equation` with `latex` (and `display`: inline|block). "
+    "You may also write `$...$` / `$$...$$` / `\\begin{equation}` inside paragraph or list text. "
+    "Never write `(\\mu_x)` with plain parentheses.\n"
+    "8. Images: `generate_image` first (or a workspace path), then pass url/path on an image block/slide.\n"
+    "9. Revise with `office_replace` (by id). Finish with `office_save`. Mention the workspace path.\n"
+    "10. Never use `write_file` / `run_code` / Office COM/CLI to build .docx/.pptx. "
+    "Do not parallelize office_* calls. Canvas opens automatically — do not also `open_canvas`.\n"
+)
+
+# ---------------------------------------------------------------------------
 # External tools
 # ---------------------------------------------------------------------------
 
@@ -372,6 +412,7 @@ def build_system_prompt(
     parts.append(experience_tier_prompt_block(experience_tier))
     parts.append(reasoning_effort_hint(reasoning_effort))
     parts.append(DIAGRAMS_MATH)
+    parts.append(OFFICE_DOCS)
 
     append = str(meta.get("system_prompt_append") or "").strip()
     if append:

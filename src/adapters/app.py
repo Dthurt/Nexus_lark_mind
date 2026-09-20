@@ -742,6 +742,55 @@ def create_adapters_app() -> FastAPI:
             },
         )
 
+    @app.get("/api/sessions/{session_id}/canvas-state")
+    async def get_session_canvas_state(
+        session_id: str,
+        cwd: str = "",
+        workspace_kind: str = "local",
+    ):
+        from src.common.canvas_store import read_canvas_session_snapshot
+
+        data = read_canvas_session_snapshot(
+            cwd,
+            session_id=session_id,
+            workspace_kind=workspace_kind,
+        )
+        return RpcEnvelope(
+            ok=True,
+            data=data
+            or {
+                "session_id": session_id,
+                "open": False,
+                "activeId": None,
+                "docs": [],
+                "recent": [],
+            },
+        )
+
+    @app.put("/api/sessions/{session_id}/canvas-state")
+    async def put_session_canvas_state(session_id: str, request: Request):
+        from src.common.canvas_store import CanvasWriteError, write_canvas_session_snapshot
+
+        body = await request.json()
+        payload = dict(body) if isinstance(body, dict) else {}
+        cwd = str(payload.get("cwd") or "").strip()
+        workspace_kind = str(payload.get("workspace_kind") or "local").strip() or "local"
+        if not cwd:
+            return RpcEnvelope(ok=True, data={"ok": False, "error": "cwd required"})
+        try:
+            out = write_canvas_session_snapshot(
+                cwd,
+                session_id=session_id,
+                state=payload,
+                workspace_kind=workspace_kind,
+            )
+        except CanvasWriteError as exc:
+            return RpcEnvelope(ok=True, data={"ok": False, "error": str(exc)})
+        except Exception as exc:
+            logger.exception("canvas session snapshot failed")
+            return RpcEnvelope(ok=True, data={"ok": False, "error": str(exc)})
+        return RpcEnvelope(ok=True, data=out)
+
     @app.post("/api/sessions/{session_id}/diff-revert")
     async def post_diff_revert(session_id: str, request: Request):
         """Undo a write_file / edit_file that already landed on disk (DiffDock reject)."""
@@ -1545,6 +1594,82 @@ def create_adapters_app() -> FastAPI:
         path = root / safe
         if not path.exists():
             raise NotFoundError("image not found")
+        return FileResponse(path)
+
+    @app.get("/api/office/files/{doc_id}")
+    async def get_office_file(doc_id: str):
+        from fastapi.responses import FileResponse
+
+        from src.core_kernel.plugin_runtime.office_store import get_outline, read_binary, suggested_file_name
+
+        key = Path(str(doc_id or "")).name
+        if not key.startswith("off_"):
+            raise ValidationAppError("invalid office doc id")
+        outline = get_outline(key) or {}
+        path = read_binary(key, str(outline.get("kind") or ""))
+        if path is None:
+            raise NotFoundError("office file not found")
+        name = suggested_file_name(outline) if outline else path.name
+        media = (
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            if path.suffix.lower() == ".pptx"
+            else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        return FileResponse(path, media_type=media, filename=name)
+
+    @app.get("/api/office/outline/{doc_id}")
+    async def get_office_outline(doc_id: str):
+        from src.core_kernel.plugin_runtime.office_store import get_outline
+
+        key = Path(str(doc_id or "")).name
+        if not key.startswith("off_"):
+            raise ValidationAppError("invalid office doc id")
+        outline = get_outline(key)
+        if not isinstance(outline, dict):
+            raise NotFoundError("office outline not found")
+        return RpcEnvelope(ok=True, data={"outline": outline, "doc_id": key})
+
+    @app.get("/api/office/recent")
+    async def get_office_recent(cwd: str = "", limit: int = 8):
+        from src.core_kernel.plugin_runtime.office_store import (
+            download_url,
+            list_recent_outlines,
+            list_workspace_outlines,
+            suggested_file_name,
+        )
+
+        cap = max(1, min(int(limit or 8), 16))
+        items: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for outline in list_workspace_outlines(cwd, limit=cap) + list_recent_outlines(limit=cap):
+            doc_id = str(outline.get("doc_id") or "").strip()
+            if not doc_id or doc_id in seen:
+                continue
+            seen.add(doc_id)
+            items.append(
+                {
+                    "doc_id": doc_id,
+                    "title": outline.get("title") or "",
+                    "kind": outline.get("kind") or "docx",
+                    "download_url": outline.get("download_url") or download_url(doc_id),
+                    "path": outline.get("path") or "",
+                    "file_name": outline.get("file_name") or suggested_file_name(outline),
+                    "outline": outline,
+                }
+            )
+            if len(items) >= cap:
+                break
+        return RpcEnvelope(ok=True, data={"items": items})
+
+    @app.get("/api/office/assets/{name}")
+    async def get_office_asset(name: str):
+        from fastapi.responses import FileResponse
+
+        from src.core_kernel.plugin_runtime.office_store import resolve_asset_file
+
+        path = resolve_asset_file(name)
+        if path is None:
+            raise NotFoundError("office asset not found")
         return FileResponse(path)
 
     @app.get("/api/workspace/git-info")

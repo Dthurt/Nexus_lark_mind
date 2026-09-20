@@ -107,6 +107,27 @@ test.describe("knowledge base", () => {
   });
 });
 
+test.describe("composer plus menu", () => {
+  test("keeps Accept and hides permissions", async ({ page, request }) => {
+    await requireAdapters(request);
+    await openWorkbench(page);
+
+    await page.getByTestId("composer-attach-btn").click();
+    const menu = page.getByTestId("composer-plus-menu");
+    await expect(menu).toBeVisible();
+    await expect(page.getByTestId("composer-accept-toggle")).toBeVisible();
+    await expect(page.getByTestId("composer-accept-switch")).toBeVisible();
+    await expect(menu.getByText("权限", { exact: true })).toHaveCount(0);
+    await expect(menu.getByText("只读")).toHaveCount(0);
+    await expect(menu.getByText("全权限")).toHaveCount(0);
+
+    await page.getByTestId("composer-accept-toggle").click();
+    await expect(page.getByTestId("composer-accept-toggle")).toHaveAttribute("aria-checked", "true");
+    await page.getByTestId("composer-accept-toggle").click();
+    await expect(page.getByTestId("composer-accept-toggle")).toHaveAttribute("aria-checked", "false");
+  });
+});
+
 test.describe("session uploads", () => {
   test("composer upload shows a revocable chip", async ({ page, request }) => {
     await requireAdapters(request);

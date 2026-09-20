@@ -60,6 +60,7 @@ export type CommandPaletteProps = {
   onClearActiveTools?: () => void;
   onSetCenterView?: (view: CenterViewId) => void;
   onToggleCanvas?: () => void;
+  onReopenCanvas?: () => void;
   onNewCanvas?: () => void;
   onOpenDockTab?: (
     tab: "plugins" | "knowledge" | "activity" | "usage" | "inspector",
@@ -101,6 +102,7 @@ export function CommandPalette({
   onClearActiveTools,
   onSetCenterView,
   onToggleCanvas,
+  onReopenCanvas,
   onNewCanvas,
   onOpenDockTab,
   onToggleTools,
@@ -366,6 +368,10 @@ export function CommandPalette({
           <CommandItem onSelect={() => run(onToggleCanvas)}>
             <LayoutTemplate className="mr-2 size-4" />
             打开 / 关闭 Canvas
+          </CommandItem>
+          <CommandItem onSelect={() => run(onReopenCanvas)}>
+            <LayoutTemplate className="mr-2 size-4" />
+            恢复上次 Canvas 文档
           </CommandItem>
           <CommandItem onSelect={() => run(onNewCanvas)}>
             <Plus className="mr-2 size-4" />

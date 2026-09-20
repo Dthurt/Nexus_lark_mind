@@ -16,6 +16,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { InboxItem, LocalKnowledgeBase, WeknoraHealth, WeknoraKb } from "@/api/endpoints";
 import { deleteSessionUpload, listSessionUploads, uploadSessionDoc } from "@/api/endpoints";
 import { ContextMeter } from "@/components/chat/ContextMeter";
+import { TodoComposerDock } from "@/components/chat/TodoComposerDock";
 import { KnowledgeScopePicker } from "@/components/knowledge/KnowledgeScopePicker";
 import { MentionPopover } from "@/components/composer/MentionPopover";
 import { Button } from "@/components/ui/button";
@@ -566,6 +567,7 @@ export function Composer({
 
   return (
     <form className={cn("composer w-full min-w-0", className)} onSubmit={onPrimary}>
+      <TodoComposerDock items={items} />
       <div
         className={cn(
           "composer-shell flex w-full min-w-0 flex-col overflow-visible rounded-xl border border-border bg-muted/40 transition-shadow",
@@ -657,8 +659,8 @@ export function Composer({
                 "size-[26px] rounded-full text-muted-foreground",
                 menuOpen && "border-foreground/20 bg-muted text-foreground",
               )}
-              title="附件 · 模式 · 权限 · 模型"
-              aria-label="打开附件、模式与权限菜单"
+              title="附件 · 模式 · 模型"
+              aria-label="打开附件与模式菜单"
               aria-expanded={menuOpen}
               data-testid="composer-attach-btn"
               onClick={() => setMenuOpen((v) => !v)}
@@ -678,6 +680,7 @@ export function Composer({
               <div
                 className="absolute bottom-[calc(100%+8px)] left-0 z-40 flex max-h-[min(72vh,560px)] w-[min(360px,90vw)] flex-col gap-0.5 overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-lg"
                 role="menu"
+                data-testid="composer-plus-menu"
               >
                 <button
                   type="button"
@@ -845,6 +848,7 @@ export function Composer({
                       title={m.hint}
                       role="menuitemcheckbox"
                       aria-checked={m.checked}
+                      data-testid={m.id === "accept" ? "composer-accept-toggle" : undefined}
                       className={cn(
                         "rounded-md px-0.5 py-1.5 text-center text-[11px] font-medium transition-colors",
                         m.checked
@@ -889,6 +893,7 @@ export function Composer({
                         checked={m.checked}
                         onCheckedChange={m.onChange}
                         aria-label={m.label}
+                        data-testid={m.id === "accept" ? "composer-accept-switch" : undefined}
                       />
                     </div>
                   ))}
@@ -903,25 +908,6 @@ export function Composer({
                 ) : null}
 
                 <div className="my-1 h-px bg-border" />
-                <ComposerSegmentGroup
-                  label="权限"
-                  hint={
-                    permissionPreset === "read-only"
-                      ? "禁写/shell"
-                      : permissionPreset === "danger-full-access"
-                        ? "不问了"
-                        : "写需审批"
-                  }
-                  options={[
-                    { id: "read-only", label: "只读" },
-                    { id: "workspace-write", label: "可写" },
-                    { id: "danger-full-access", label: "全权限" },
-                  ]}
-                  value={permissionPreset}
-                  onChange={(v) =>
-                    onPermissionPresetChange?.(v as "read-only" | "workspace-write" | "danger-full-access")
-                  }
-                />
                 <ComposerSegmentGroup
                   label="体验档"
                   hint={

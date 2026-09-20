@@ -28,6 +28,11 @@ MUTATING_TOOLS: FrozenSet[str] = frozenset(
         "weknora_sync",
         "kb_add",
         "kb_delete",
+        "office_create",
+        "office_append",
+        "office_revise_plan",
+        "office_replace",
+        "office_save",
     }
 )
 
@@ -106,14 +111,8 @@ def effective_auto_accept(
     permission_preset: Optional[str],
     auto_accept: Optional[bool],
 ) -> bool:
-    """Session auto_accept wins when explicitly set; else preset default."""
+    """Explicit Accept / auto_accept is the session control; else preset default."""
     if auto_accept is not None:
-        # danger preset forces accept; read-only never accepts mutating
-        pid = normalize_preset(permission_preset)
-        if pid == "read-only":
-            return False
-        if pid == "danger-full-access":
-            return True
         return bool(auto_accept)
     return bool(preset_config(permission_preset)["auto_accept"])
 

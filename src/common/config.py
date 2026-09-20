@@ -71,7 +71,9 @@ class Settings(BaseSettings):
 
     # Agent tool-loop budgets (context compaction still enforces the window red line)
     agent_max_rounds: int = 48
-    agent_max_rounds_workspace: int = 64
+    agent_max_rounds_workspace: int = 128
+    # Long office_append sequences: create + N sections + save + summary slack
+    agent_max_rounds_office: int = 160
     subagent_max_rounds: int = 32
     # Max concurrent safe (non-approval) tool calls per round; risky tools stay exclusive.
     agent_max_parallel_tool_calls: int = 8

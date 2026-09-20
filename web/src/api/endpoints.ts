@@ -352,6 +352,64 @@ export function postSessionCanvas(
   return apiPost(`/api/sessions/${encodeURIComponent(sessionId)}/canvas`, body);
 }
 
+export type CanvasStateSnapshot = {
+  session_id?: string;
+  open?: boolean;
+  activeId?: string | null;
+  docs?: Array<Record<string, unknown>>;
+  recent?: Array<Record<string, unknown>>;
+};
+
+export function getCanvasState(
+  sessionId: string,
+  query?: { cwd?: string; workspace_kind?: string },
+): Promise<CanvasStateSnapshot> {
+  const params = new URLSearchParams();
+  if (query?.cwd) params.set("cwd", query.cwd);
+  if (query?.workspace_kind) params.set("workspace_kind", query.workspace_kind);
+  const q = params.toString();
+  return apiGet(`/api/sessions/${encodeURIComponent(sessionId)}/canvas-state${q ? `?${q}` : ""}`);
+}
+
+export function putCanvasState(
+  sessionId: string,
+  body: {
+    cwd?: string;
+    workspace_kind?: string;
+    open?: boolean;
+    activeId?: string | null;
+    docs?: unknown[];
+    recent?: unknown[];
+  },
+): Promise<{ ok?: boolean; path?: string; error?: string }> {
+  return apiPut(`/api/sessions/${encodeURIComponent(sessionId)}/canvas-state`, body);
+}
+
+export function getOfficeOutline(docId: string): Promise<{ outline?: Record<string, unknown>; doc_id?: string }> {
+  return apiGet(`/api/office/outline/${encodeURIComponent(docId)}`);
+}
+
+export function listOfficeRecent(query?: {
+  cwd?: string;
+  limit?: number;
+}): Promise<{
+  items?: Array<{
+    doc_id?: string;
+    title?: string;
+    kind?: string;
+    download_url?: string;
+    path?: string;
+    file_name?: string;
+    outline?: Record<string, unknown>;
+  }>;
+}> {
+  const params = new URLSearchParams();
+  if (query?.cwd) params.set("cwd", query.cwd);
+  if (query?.limit) params.set("limit", String(query.limit));
+  const q = params.toString();
+  return apiGet(`/api/office/recent${q ? `?${q}` : ""}`);
+}
+
 /** Undo an applied write_file / edit_file (DiffDock reject). */
 export function postDiffRevert(
   sessionId: string,

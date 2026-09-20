@@ -248,7 +248,7 @@ TOOLS: List[Dict[str, Any]] = [
                 "title": {"type": "string", "description": "Short tab title"},
                 "kind": {
                     "type": "string",
-                    "enum": ["markdown", "mermaid", "drawio", "echarts", "table", "delivery"],
+                    "enum": ["markdown", "mermaid", "drawio", "echarts", "table", "delivery", "office"],
                     "description": "Canvas document kind (default markdown)",
                 },
                 "body": {
@@ -661,7 +661,7 @@ class WorkspaceToolsPlugin(BasePlugin):
         if not body.strip():
             raise ValidationAppError("body is required")
         kind = str(arguments.get("kind") or "markdown").strip().lower() or "markdown"
-        allowed = {"markdown", "mermaid", "drawio", "echarts", "table", "delivery"}
+        allowed = {"markdown", "mermaid", "drawio", "echarts", "table", "delivery", "office"}
         if kind not in allowed:
             kind = "markdown"
         title = str(arguments.get("title") or "").strip() or kind.title()
@@ -671,7 +671,7 @@ class WorkspaceToolsPlugin(BasePlugin):
         file_name = str(arguments.get("file_name") or "").strip()
         if not file_name:
             safe = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", title).strip("._") or kind
-            ext = ".json" if kind in {"echarts", "table"} else ".md"
+            ext = ".json" if kind in {"echarts", "table", "office"} else ".md"
             if kind == "drawio":
                 ext = ".drawio.xml"
             elif kind == "mermaid":

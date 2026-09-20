@@ -29,7 +29,7 @@ export {
   parseEchartsOption,
 } from "./echarts";
 
-export { renderMathIn, protectMath, applyMathPlaceholders } from "./math";
+export { renderMathIn, renderLatex, protectMath, applyMathPlaceholders } from "./math";
 
 export {
   isDrawioLang,

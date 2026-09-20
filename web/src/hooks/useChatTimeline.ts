@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { errorFlagsFromMessage } from "@/lib/chatError";
 import { pretty } from "@/lib/pretty";
+import { todoRowsFromToolResult } from "@/lib/todos";
 
 let msgSeq = 0;
 function mid() {
@@ -864,6 +865,17 @@ export function useChatTimeline() {
     [afterToolOrSubagentInserted, commit, sealLiveAssistantBeforeTools],
   );
 
+  useEffect(() => {
+    const onTodos = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail;
+      const rows = Array.isArray(detail?.items) ? detail.items : [];
+      if (!rows.length) return;
+      renderTodos({ items: rows, call_id: detail?.call_id });
+    };
+    window.addEventListener("nlm-todos", onTodos as EventListener);
+    return () => window.removeEventListener("nlm-todos", onTodos as EventListener);
+  }, [renderTodos]);
+
   const renderPlanReview = useCallback(
     (payload: any, activityId: string | null = null) => {
       sealLiveAssistantBeforeTools();
@@ -1015,6 +1027,12 @@ export function useChatTimeline() {
             success: true,
             result: m.content,
           };
+          const short = String(tr.name || m.name || "").split(".").pop() || "";
+          if (short === "todo_write" || meta.kind === "todo" || tr.kind === "todo") {
+            const rows = todoRowsFromToolResult(tr.result ?? m.content);
+            if (rows.length) renderTodos({ items: rows, call_id: tr.id || m.tool_call_id });
+            continue;
+          }
           renderToolResult(tr);
           continue;
         }
@@ -1044,7 +1062,7 @@ export function useChatTimeline() {
       streamingIdRef.current = null;
       setStreamingId(null);
     },
-    [appendFileCard, appendMessage, clear, renderToolCall, renderToolResult],
+    [appendFileCard, appendMessage, clear, renderTodos, renderToolCall, renderToolResult],
   );
 
   const scrollToBottom = useCallback(async (el: HTMLElement | null) => {

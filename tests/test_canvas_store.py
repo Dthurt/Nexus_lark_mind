@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from src.common.canvas_store import CanvasWriteError, write_canvas_to_workspace
+from src.common.canvas_store import (
+    CanvasWriteError,
+    read_canvas_session_snapshot,
+    write_canvas_session_snapshot,
+    write_canvas_to_workspace,
+)
 
 
 def test_write_canvas_to_workspace(tmp_path: Path):
@@ -30,3 +35,18 @@ def test_write_canvas_rejects_ssh_kind(tmp_path: Path):
 def test_write_canvas_softens_name(tmp_path: Path):
     out = write_canvas_to_workspace(str(tmp_path), file_name="../evil name!.md", content="x")
     assert out["path"] == ".nlm/canvases/evil_name_.md"
+
+
+def test_canvas_session_snapshot_roundtrip(tmp_path: Path):
+    state = {
+        "open": False,
+        "activeId": "cv_1",
+        "docs": [{"id": "cv_1", "kind": "office", "title": "Paper", "body": "{}"}],
+        "recent": [],
+    }
+    write_canvas_session_snapshot(str(tmp_path), session_id="sess_a", state=state)
+    snap = read_canvas_session_snapshot(str(tmp_path), session_id="sess_a")
+    assert snap is not None
+    assert snap["open"] is False
+    assert snap["docs"][0]["title"] == "Paper"
+    assert read_canvas_session_snapshot(str(tmp_path), session_id="missing") is None

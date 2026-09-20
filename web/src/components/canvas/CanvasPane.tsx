@@ -6,6 +6,7 @@ import { MarkdownCanvasView } from "@/components/canvas/MarkdownCanvasView";
 import { Button } from "@/components/ui/button";
 import { postSessionCanvas } from "@/api/endpoints";
 import type { CanvasSessionApi } from "@/hooks/useCanvasSession";
+import { parseOfficeOutline } from "@/lib/officeOutline";
 import { cn } from "@/lib/utils";
 
 export type CanvasPaneProps = {
@@ -34,6 +35,20 @@ export function CanvasPane({
 
   const persistActive = async () => {
     if (!active || !sessionId) return;
+    if (active.kind === "office") {
+      const outline = parseOfficeOutline(active.body);
+      const url = outline?.download_url || (outline?.doc_id ? `/api/office/files/${outline.doc_id}` : "");
+      if (!url) {
+        toast.error("文档尚未生成可下载文件");
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = outline?.file_name || `${active.title || "document"}.docx`;
+      a.click();
+      toast.success(outline?.path ? `已打开 ${outline.path}` : "开始下载");
+      return;
+    }
     const name =
       (active.title || active.kind || "Canvas").replace(/[^\w\u4e00-\u9fff.-]+/g, "_") +
       (active.kind === "echarts" || active.kind === "table"
@@ -63,13 +78,14 @@ export function CanvasPane({
         "nlm-canvas-pane flex min-h-0 min-w-0 flex-col overflow-hidden border-l border-border bg-card/40",
         className,
       )}
+      data-testid="canvas-pane"
       aria-label="Canvas"
     >
       <div className="flex shrink-0 items-center gap-1 border-b border-border/70 px-2 py-1.5">
         <LayoutTemplate className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         <span className="text-[11px] font-medium text-foreground/90">Canvas</span>
         <span className="text-[10px] text-muted-foreground">· 旁侧产物</span>
-        {active && sessionId ? (
+        {active && sessionId && active.kind !== "office" ? (
           <Button
             type="button"
             variant="ghost"
@@ -85,8 +101,9 @@ export function CanvasPane({
           type="button"
           variant="ghost"
           size="icon"
-          className={cn("size-6", !(active && sessionId) && "ml-auto")}
-          title="关闭 Canvas"
+          className={cn("size-6", !(active && sessionId && active.kind !== "office") && "ml-auto")}
+          title="关闭 Canvas（保留最近文档）"
+          data-testid="canvas-close"
           onClick={closePane}
         >
           <X className="size-3.5" />
@@ -98,6 +115,7 @@ export function CanvasPane({
           {docs.map((d) => (
             <div
               key={d.id}
+              data-testid="canvas-tab"
               className={cn(
                 "group inline-flex max-w-[140px] items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[11px]",
                 d.id === activeId
@@ -130,9 +148,22 @@ export function CanvasPane({
         {!active || !View ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
             <p className="m-0 text-[13px] font-medium text-foreground/90">Canvas 为空</p>
-            <p className="m-0 max-w-[280px] text-[11px] leading-relaxed text-muted-foreground">
-              从消息工具栏打开，或让 Agent 调用 open_canvas。插件可通过 registerCanvasView 扩展视图。
+            <p className="m-0 max-w-[300px] text-[11px] leading-relaxed text-muted-foreground">
+              关闭窗格不会删除文档。点顶栏 Canvas 或下方按钮可恢复上次 Office / Markdown / Mermaid。
             </p>
+            {canvas.hasLast || canvas.recent?.length ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-1 h-7 px-2.5 text-[11px]"
+                data-testid="canvas-reopen-last"
+                onClick={() => canvas.reopenLast()}
+              >
+                恢复最近文档
+                {canvas.lastDoc?.title ? ` · ${canvas.lastDoc.title}` : ""}
+              </Button>
+            ) : null}
           </div>
         ) : (
           <View

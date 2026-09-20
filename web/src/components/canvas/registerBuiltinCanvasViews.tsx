@@ -8,6 +8,7 @@ import { DrawioCanvasEditor } from "@/components/canvas/DrawioCanvasEditor";
 import { EchartsCanvasEditor } from "@/components/canvas/EchartsCanvasEditor";
 import { MarkdownCanvasView } from "@/components/canvas/MarkdownCanvasView";
 import { MermaidCanvasEditor } from "@/components/canvas/MermaidCanvasEditor";
+import { OfficeCanvasView } from "@/components/canvas/OfficeCanvasView";
 import { TableCanvasView } from "@/components/canvas/TableCanvasView";
 
 function wrapEditor(
@@ -24,5 +25,6 @@ registerCanvasView("drawio", wrapEditor(DrawioCanvasEditor));
 registerCanvasView("table", TableCanvasView);
 registerCanvasView("markdown", MarkdownCanvasView);
 registerCanvasView("delivery", MarkdownCanvasView);
+registerCanvasView("office", OfficeCanvasView);
 
 export {};

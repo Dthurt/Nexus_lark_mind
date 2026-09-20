@@ -39,7 +39,7 @@ Chat may also pass `workspace_id` / `cwd` on `POST /api/chat` so the first messa
 - System prompt includes active workspace path when `task.metadata.cwd` is set
 - Tool invoke context carries cwd (`NLM_WORKSPACE_CWD` for CLI plugins too)
 - Paths cannot escape the workspace root
-- Tool loop allows up to **64** rounds when a workspace is bound (see `AGENT_MAX_ROUNDS_WORKSPACE`)
+- Tool loop allows up to **128** rounds when a workspace is bound (see `AGENT_MAX_ROUNDS_WORKSPACE`); office papers can extend to `AGENT_MAX_ROUNDS_OFFICE` (default **160**)
 - **Parallel tools (Wave E):** non-approval tools in a round run concurrently up to
   `AGENT_MAX_PARALLEL_TOOL_CALLS` (default **8**, barrier within each batch).
   Tools that need ApprovalDock / Feishu cards run **exclusive** (one gate at a time).

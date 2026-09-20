@@ -7,6 +7,7 @@ export function shortToolName(name?: string): string {
   return (
     raw
       .replace(/^builtin_workspace_/, "")
+      .replace(/^builtin_office_/, "")
       .replace(/^cli_/, "")
       .split(".")
       .pop() || raw

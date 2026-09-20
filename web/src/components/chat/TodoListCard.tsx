@@ -20,26 +20,33 @@ export type TodoListItem = {
 export type TodoListCardProps = {
   item: TodoListItem;
   className?: string;
+  variant?: "timeline" | "compact";
 };
 
-export function TodoListCard({ item, className }: TodoListCardProps) {
+export function TodoListCard({ item, className, variant = "timeline" }: TodoListCardProps) {
   const rows = item.items || [];
+  const compact = variant === "compact";
 
   return (
     <div
       className={cn(
-        "my-2 rounded-[10px] border border-border bg-card/50 px-3 py-2.5",
+        compact
+          ? "rounded-none border-0 bg-transparent px-2.5 pb-2 pt-0"
+          : "my-2 rounded-[10px] border border-border bg-card/50 px-3 py-2.5",
         className,
       )}
+      data-testid={compact ? "todo-list-compact" : "todo-list-card"}
       role="status"
       aria-label="Agent todos"
     >
-      <div className="mb-1.5 flex items-baseline gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Todos
-        </span>
-        <span className="text-[11px] text-muted-foreground">{rows.length}</span>
-      </div>
+      {compact ? null : (
+        <div className="mb-1.5 flex items-baseline gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Todos
+          </span>
+          <span className="text-[11px] text-muted-foreground">{rows.length}</span>
+        </div>
+      )}
       <ul className="m-0 grid list-none gap-1 p-0">
         {rows.map((row) => (
           <li

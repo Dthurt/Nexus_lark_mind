@@ -10,6 +10,7 @@ import {
 describe("toolChip helpers", () => {
   it("shortens workspace / cli tool names", () => {
     expect(shortToolName("builtin_workspace_run_shell")).toBe("run_shell");
+    expect(shortToolName("builtin_office_office_create")).toBe("office_create");
     expect(shortToolName("cli_web_search")).toBe("web_search");
     expect(shortToolName("pkg.tool")).toBe("tool");
   });

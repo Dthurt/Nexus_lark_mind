@@ -23,6 +23,7 @@ from src.core_kernel.plugin_runtime.workspace_tools import WorkspaceToolsPlugin,
 from src.core_kernel.plugin_runtime.subagent_tools import SubagentToolsPlugin, subagent_tools_manifest
 from src.core_kernel.plugin_runtime.knowledge_tools import KnowledgeToolsPlugin, knowledge_tools_manifest
 from src.core_kernel.plugin_runtime.image_gen import ImageGenPlugin, image_gen_manifest
+from src.core_kernel.plugin_runtime.office_tools import OfficeToolsPlugin, office_tools_manifest
 from src.core_kernel.plugin_runtime.plugin_config_store import (
     PLUGIN_CONFIG_SCHEMAS,
     get_plugin_config_store,
@@ -51,7 +52,13 @@ class PluginManager:
     @staticmethod
     def openai_tool_name(plugin_id: str, tool_name: str) -> str:
         # Coding-agent models match DSH-style short names; keep prefixed names for other plugins.
-        if plugin_id in {"builtin.workspace", "builtin.subagent", "builtin.knowledge", "builtin.image_gen"}:
+        if plugin_id in {
+            "builtin.workspace",
+            "builtin.subagent",
+            "builtin.knowledge",
+            "builtin.image_gen",
+            "builtin.office",
+        }:
             return tool_name
         # Well-known CLI search tools: short names reduce "cli.web_search" prose hallucinations.
         if plugin_id.startswith("cli.") and tool_name in {
@@ -131,6 +138,8 @@ class PluginManager:
             await self.load(self._apply_prefs(knowledge_tools_manifest()))
         if "builtin.image_gen" not in self.plugins:
             await self.load(self._apply_prefs(image_gen_manifest()))
+        if "builtin.office" not in self.plugins:
+            await self.load(self._apply_prefs(office_tools_manifest()))
 
     async def scan_cli_directory(self, cli_dir: Path) -> None:
         if not cli_dir.exists():
@@ -185,6 +194,8 @@ class PluginManager:
                 return KnowledgeToolsPlugin(manifest)
             if manifest.plugin_id == "builtin.image_gen":
                 return ImageGenPlugin(manifest)
+            if manifest.plugin_id == "builtin.office":
+                return OfficeToolsPlugin(manifest)
             return InProcessEchoPlugin(manifest)
         raise PluginError(f"unknown plugin kind: {manifest.kind}")
 
@@ -380,6 +391,8 @@ class PluginManager:
             return knowledge_tools_manifest()
         if plugin_id == "builtin.image_gen":
             return image_gen_manifest()
+        if plugin_id == "builtin.office":
+            return office_tools_manifest()
 
         root = Path(self.settings.plugins_dir)
         for manifest_path in (root / "mcp").glob("*.json"):
