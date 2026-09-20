@@ -50,7 +50,16 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
         return RpcEnvelope(ok=True, data={"docs": docs})
 
     @app.get("/rpc/knowledge/search")
-    async def kb_search(query: str = "", workspace_id: str = "", limit: int = 8, tag: str = "", session_id: str = "", kb_id: str = ""):
+    async def kb_search(
+        query: str = "",
+        workspace_id: str = "",
+        limit: int = 8,
+        tag: str = "",
+        session_id: str = "",
+        kb_id: str = "",
+        embedding_provider: str = "",
+        embedding_model: str = "",
+    ):
         from src.core_kernel.plugin_runtime.knowledge_store import citations_markdown
 
         store = _kb_store()
@@ -65,6 +74,8 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             tag=tag or "",
             session_id=session_id or "",
             kb_id=kb_id or "",
+            embedding_provider=embedding_provider or "",
+            embedding_model=embedding_model or "",
         )
         return RpcEnvelope(
             ok=True,
@@ -333,6 +344,9 @@ def register_knowledge_rpc(app: FastAPI, state: Dict[str, Any]) -> None:
             workspace_id=str(body.get("workspace_id") or ""),
             kb_id=str(body.get("kb_id") or ""),
             limit=int(body.get("limit") or 200),
+            embedding_provider=str(body.get("embedding_provider") or ""),
+            embedding_model=str(body.get("embedding_model") or ""),
+            force=bool(body.get("force")),
         )
         return RpcEnvelope(ok=True, data=data)
 

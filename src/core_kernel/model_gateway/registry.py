@@ -107,6 +107,8 @@ class ProviderRegistry:
         for p in self.store.providers.values():
             if not p.enabled:
                 continue
+            if (getattr(p, "kind", None) or "chat") != "chat":
+                continue
             models = p.model_ids()
             if p.api == "anthropic-messages":
                 provider = AnthropicProvider(
@@ -161,6 +163,7 @@ class ProviderRegistry:
             "builtin": builtin,
             "base_url": base_url,
             "api": api,
+            "kind": "chat",
             "api_key_set": api_key_set,
             "source": "env" if builtin else "custom",
         }
@@ -217,10 +220,26 @@ class ProviderRegistry:
                 }
             )
         customs = self.store.list_public()
+        embeddings = [
+            ProviderStore.to_public(p) for p in self.store.providers_of_kind("embedding")
+        ]
+        images = [ProviderStore.to_public(p) for p in self.store.providers_of_kind("image")]
+        env_embedding = None
+        try:
+            from src.core_kernel.plugin_runtime.knowledge_embeddings import env_embedding_public
+
+            env_embedding = env_embedding_public()
+        except Exception:
+            env_embedding = None
         return {
             "default_provider": self.store.default_provider or self.settings.default_model_provider,
+            "default_embedding_provider": self.store.default_embedding_provider or "",
+            "default_image_provider": self.store.default_image_provider or "",
             "builtins": builtins,
             "customs": customs,
+            "embeddings": embeddings,
+            "images": images,
+            "env_embedding": env_embedding,
         }
 
     def upsert_custom(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -238,10 +257,21 @@ class ProviderRegistry:
             raise NotFoundError(f"custom provider not found: {provider_id}")
         self.reload()
 
-    def set_default_provider(self, provider_id: str) -> Dict[str, Any]:
-        if provider_id not in self._providers and provider_id not in self.store.providers:
+    def set_default_provider(self, provider_id: str, kind: str = "chat") -> Dict[str, Any]:
+        k = (kind or "chat").strip().lower() or "chat"
+        pid = (provider_id or "").strip()
+        if k in {"embedding", "image"}:
+            if pid and pid not in self.store.providers:
+                raise NotFoundError(f"provider not found: {pid}")
+            if pid:
+                custom = self.store.providers.get(pid)
+                if custom and (custom.kind or "chat") != k:
+                    raise ValidationAppError(f"provider '{pid}' is kind={custom.kind}, not {k}")
+            self.store.set_default(pid or None, kind=k)
+            return self.settings_document()
+        if pid not in self._providers and pid not in self.store.providers:
             # allow setting to builtin even if not configured
-            if provider_id not in BUILTIN_IDS:
-                raise NotFoundError(f"provider not found: {provider_id}")
-        self.store.set_default(provider_id)
+            if pid not in BUILTIN_IDS:
+                raise NotFoundError(f"provider not found: {pid}")
+        self.store.set_default(pid, kind="chat")
         return self.catalog(configured_only=False)

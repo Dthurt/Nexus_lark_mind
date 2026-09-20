@@ -31,20 +31,23 @@ from sqlalchemy.orm import Mapped, mapped_column
 from src.core_kernel.plugin_runtime.knowledge_embeddings import (
     cosine_similarity,
     deserialize_embedding,
+    effective_embedding_stats,
     embed_one,
     embed_one_image,
     embed_texts,
     embeddings_configured,
-    embedding_stats,
-    multimodal_embeddings_enabled,
+    resolve_embedding_endpoint,
     serialize_embedding,
+    multimodal_embeddings_enabled,
 )
 from src.core_kernel.plugin_runtime.knowledge_scope import (
     DEFAULT_LOCAL_KB_ID,
     DEFAULT_LOCAL_KB_NAME,
+    is_all_local_kbs,
     local_kb_match_values,
     normalize_local_kb_id,
 )
+from src.core_kernel.plugin_runtime.knowledge_snapshot import build_text_snapshot
 from src.infrastructure.storage.database import Base
 
 logger = logging.getLogger(__name__)
@@ -103,6 +106,7 @@ class KnowledgeChunk(Base):
     char_start: Mapped[int] = mapped_column(Integer, default=0)
     char_end: Mapped[int] = mapped_column(Integer, default=0)
     embedding: Mapped[str] = mapped_column(Text, default="")  # JSON float array
+    embedding_model: Mapped[str] = mapped_column(String(128), default="")
     parent_chunk_id: Mapped[str] = mapped_column(String(80), default="", index=True)
     chunk_type: Mapped[str] = mapped_column(String(32), default="text")  # text|parent|image
     context_header: Mapped[str] = mapped_column(String(1024), default="")
@@ -809,6 +813,7 @@ class KnowledgeStore:
             "ALTER TABLE knowledge_chunks ADD COLUMN chunk_type VARCHAR(32) DEFAULT 'text'",
             "ALTER TABLE knowledge_chunks ADD COLUMN context_header VARCHAR(1024) DEFAULT ''",
             "ALTER TABLE knowledge_chunks ADD COLUMN kb_id VARCHAR(80) DEFAULT ''",
+            "ALTER TABLE knowledge_chunks ADD COLUMN embedding_model VARCHAR(128) DEFAULT ''",
             "ALTER TABLE knowledge_bases ADD COLUMN chunk_strategy VARCHAR(32) DEFAULT 'parent_child'",
         ):
             try:
@@ -846,6 +851,18 @@ class KnowledgeStore:
 
     def _kb_values(self, kb_id: str = "") -> List[str]:
         return local_kb_match_values(kb_id)
+
+    def _kb_filter_values(self, kb_id: str = "") -> Optional[List[str]]:
+        """None means every local library (local:all)."""
+        if is_all_local_kbs(kb_id):
+            return None
+        return local_kb_match_values(kb_id)
+
+    def _with_kb(self, stmt, column, kb_id: str = ""):
+        values = self._kb_filter_values(kb_id)
+        if values is None:
+            return stmt
+        return stmt.where(column.in_(values))
 
     async def ensure_default_kb(self, workspace_id: str = "") -> Dict[str, Any]:
         async with self.session_factory() as session:
@@ -1084,8 +1101,12 @@ class KnowledgeStore:
                 if str(p.get("chunk_type") or "text") != "parent"
             ]
             emb_by_index: Dict[int, List[float]] = {}
-            if embeddings_configured() and embeddable:
-                raw = await embed_texts([chunk_embedding_text(p) for _, p in embeddable])
+            embed_ep = resolve_embedding_endpoint()
+            if (embeddings_configured() or embed_ep) and embeddable:
+                raw = await embed_texts(
+                    [chunk_embedding_text(p) for _, p in embeddable],
+                    endpoint=embed_ep,
+                )
                 if raw:
                     for (idx, _), vec in zip(embeddable, raw):
                         if vec:
@@ -1136,6 +1157,7 @@ class KnowledgeStore:
                         char_start=int(piece.get("char_start") or 0),
                         char_end=int(piece.get("char_end") or 0),
                         embedding=emb_json,
+                        embedding_model=(embed_ep.model if emb_json and embed_ep else "")[:128],
                         parent_chunk_id=parent_id[:80],
                         chunk_type=ctype[:32],
                         workspace_id=row.workspace_id,
@@ -1555,12 +1577,16 @@ class KnowledgeStore:
                 row.heading = str(heading)[:512]
             if content is not None:
                 row.content = str(content)
-                if embeddings_configured() and (getattr(row, "chunk_type", "") or "text") != "parent":
+                embed_ep = resolve_embedding_endpoint()
+                if (embeddings_configured() or embed_ep) and (
+                    getattr(row, "chunk_type", "") or "text"
+                ) != "parent":
                     header = getattr(row, "context_header", "") or ""
                     text_in = f"{header}\n{row.content}".strip() if header else row.content
-                    vecs = await embed_texts([text_in])
+                    vecs = await embed_texts([text_in], endpoint=embed_ep)
                     if vecs and vecs[0]:
                         row.embedding = serialize_embedding(vecs[0])
+                        row.embedding_model = (embed_ep.model if embed_ep else "")[:128]
             row.updated_at = datetime.now(timezone.utc)
             if self._fts_mode and (getattr(row, "chunk_type", "") or "text") != "parent":
                 try:
@@ -1645,6 +1671,8 @@ class KnowledgeStore:
         tag: str = "",
         session_id: str = "",
         kb_id: str = "",
+        embedding_provider: str = "",
+        embedding_model: str = "",
     ) -> List[Dict[str, Any]]:
         from src.core_kernel.plugin_runtime.knowledge_query import (
             expand_queries,
@@ -1656,7 +1684,14 @@ class KnowledgeStore:
         q = (query or "").strip()
         pool = max(limit * 3, 16)
         hits = await self._search_once(
-            q, workspace_id=workspace_id, limit=pool, tag=tag, session_id=session_id, kb_id=kb_id
+            q,
+            workspace_id=workspace_id,
+            limit=pool,
+            tag=tag,
+            session_id=session_id,
+            kb_id=kb_id,
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
         )
         if should_expand(len(hits), limit):
             extras: List[Dict[str, Any]] = []
@@ -1671,6 +1706,8 @@ class KnowledgeStore:
                         tag=tag,
                         session_id=session_id,
                         kb_id=kb_id,
+                        embedding_provider=embedding_provider,
+                        embedding_model=embedding_model,
                     )
                 )
             hits = merge_hits_by_id(hits, extras, limit=pool)
@@ -1697,13 +1734,15 @@ class KnowledgeStore:
         tag: str = "",
         session_id: str = "",
         kb_id: str = "",
+        embedding_provider: str = "",
+        embedding_model: str = "",
     ) -> List[Dict[str, Any]]:
         tokens = _tokens(query)
         q = (query or "").strip()
-        use_vec = embeddings_configured() and bool(q) and not skip_vector
+        embed_ep = resolve_embedding_endpoint(embedding_provider, embedding_model)
+        use_vec = bool(q) and not skip_vector and (embeddings_configured() or embed_ep)
         if use_vec and query_vec is None:
-            query_vec = await embed_one(q)
-        kb_values = self._kb_values(kb_id)
+            query_vec = await embed_one(q, endpoint=embed_ep)
 
         async with self.session_factory() as session:
             ws_filter = None
@@ -1724,7 +1763,7 @@ class KnowledgeStore:
             if fts_ids:
                 stmt = select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(fts_ids))
                 stmt = stmt.where(not_parent)
-                stmt = stmt.where(KnowledgeChunk.kb_id.in_(kb_values))
+                stmt = self._with_kb(stmt, KnowledgeChunk.kb_id, kb_id)
                 if ws_filter is not None:
                     stmt = stmt.where(ws_filter)
                 kw_chunks = list((await session.execute(stmt)).scalars().all())
@@ -1738,7 +1777,7 @@ class KnowledgeStore:
                     likes.append(KnowledgeChunk.heading.ilike(f"%{t}%"))
                     likes.append(KnowledgeChunk.context_header.ilike(f"%{t}%"))
                 stmt = select(KnowledgeChunk).where(not_parent)
-                stmt = stmt.where(KnowledgeChunk.kb_id.in_(kb_values))
+                stmt = self._with_kb(stmt, KnowledgeChunk.kb_id, kb_id)
                 if ws_filter is not None:
                     stmt = stmt.where(ws_filter)
                 stmt = stmt.where(or_(*likes)).limit(160)
@@ -1751,11 +1790,21 @@ class KnowledgeStore:
                     select(KnowledgeChunk)
                     .where(KnowledgeChunk.embedding != "")
                     .where(not_parent)
-                    .where(KnowledgeChunk.kb_id.in_(kb_values))
                 )
+                vstmt = self._with_kb(vstmt, KnowledgeChunk.kb_id, kb_id)
+                want_model = (embed_ep.model if embed_ep else embedding_model) or ""
+                if want_model:
+                    vstmt = vstmt.where(
+                        or_(
+                            KnowledgeChunk.embedding_model == want_model,
+                            KnowledgeChunk.embedding_model == "",
+                            KnowledgeChunk.embedding_model.is_(None),
+                        )
+                    )
                 if ws_filter is not None:
                     vstmt = vstmt.where(ws_filter)
-                vstmt = vstmt.order_by(KnowledgeChunk.updated_at.desc()).limit(400)
+                vec_limit = 800 if is_all_local_kbs(kb_id) else 400
+                vstmt = vstmt.order_by(KnowledgeChunk.updated_at.desc()).limit(vec_limit)
                 vec_chunks = list((await session.execute(vstmt)).scalars().all())
 
             by_id: Dict[str, KnowledgeChunk] = {}
@@ -1849,6 +1898,7 @@ class KnowledgeStore:
             parent = parents_by_id.get(getattr(c, "parent_chunk_id", "") or "")
             if parent and parent.content and len(display) < SHORT_CHUNK_EXPAND:
                 display = parent.content
+            snap = build_text_snapshot(display, query=q, tokens=tokens or [query])
             item = {
                 "doc_id": doc.doc_id,
                 "chunk_id": c.chunk_id,
@@ -1864,7 +1914,12 @@ class KnowledgeStore:
                 "workspace_id": doc.workspace_id,
                 "kb_id": getattr(doc, "kb_id", "") or "",
                 "score": round(sc, 3),
-                "snippet": self._snippet(display, tokens or [query]),
+                "snippet": snap.get("snippet") or self._snippet(display, tokens or [query]),
+                "snapshot": snap,
+                "match_start": snap.get("match_start"),
+                "match_end": snap.get("match_end"),
+                "match_text": snap.get("match_text") or "",
+                "match_kind": snap.get("match_kind") or "",
                 "citation": cite,
                 "cite_href": knowledge_cite_href(
                     getattr(doc, "kb_id", "") or kb_id,
@@ -1900,7 +1955,7 @@ class KnowledgeStore:
             stmt = stmt.where(
                 or_(KnowledgeDoc.workspace_id == workspace_id, KnowledgeDoc.workspace_id == "")
             )
-        stmt = stmt.where(KnowledgeDoc.kb_id.in_(self._kb_values(kb_id)))
+        stmt = self._with_kb(stmt, KnowledgeDoc.kb_id, kb_id)
         likes = []
         q = (query or "").strip()
         if q:
@@ -1927,7 +1982,13 @@ class KnowledgeStore:
                 continue
             item = self._public(r, include_content=False)
             item["score"] = round(sc, 3)
-            item["snippet"] = self._snippet(r.content or "", tokens or [query])
+            snap = build_text_snapshot(r.content or "", query=q, tokens=tokens or [query])
+            item["snippet"] = snap.get("snippet") or self._snippet(r.content or "", tokens or [query])
+            item["snapshot"] = snap
+            item["match_start"] = snap.get("match_start")
+            item["match_end"] = snap.get("match_end")
+            item["match_text"] = snap.get("match_text") or ""
+            item["match_kind"] = snap.get("match_kind") or ""
             item["doc_id"] = r.doc_id
             item["citation"] = format_citation(
                 title=r.title or "",
@@ -1958,10 +2019,9 @@ class KnowledgeStore:
                 .select_from(KnowledgeChunk)
                 .where(KnowledgeChunk.embedding != "")
             )
-            kb_values = self._kb_values(kb_id)
-            doc_stmt = doc_stmt.where(KnowledgeDoc.kb_id.in_(kb_values))
-            chunk_stmt = chunk_stmt.where(KnowledgeChunk.kb_id.in_(kb_values))
-            emb_stmt = emb_stmt.where(KnowledgeChunk.kb_id.in_(kb_values))
+            doc_stmt = self._with_kb(doc_stmt, KnowledgeDoc.kb_id, kb_id)
+            chunk_stmt = self._with_kb(chunk_stmt, KnowledgeChunk.kb_id, kb_id)
+            emb_stmt = self._with_kb(emb_stmt, KnowledgeChunk.kb_id, kb_id)
             if workspace_id:
                 ws_docs = or_(
                     KnowledgeDoc.workspace_id == workspace_id,
@@ -1978,11 +2038,42 @@ class KnowledgeStore:
             docs = int((await session.execute(doc_stmt)).scalar() or 0)
             chunks = int((await session.execute(chunk_stmt)).scalar() or 0)
             embedded = int((await session.execute(emb_stmt)).scalar() or 0)
-            wiki_stmt = select(func.count()).select_from(KnowledgeWikiPage).where(
-                KnowledgeWikiPage.kb_id.in_(kb_values)
-            )
+            wiki_stmt = select(func.count()).select_from(KnowledgeWikiPage)
+            wiki_stmt = self._with_kb(wiki_stmt, KnowledgeWikiPage.kb_id, kb_id)
             wiki_pages = int((await session.execute(wiki_stmt)).scalar() or 0)
-        info = embedding_stats()
+        info = effective_embedding_stats()
+        choices: List[Dict[str, Any]] = []
+        default_emb = ""
+        try:
+            from src.core_kernel.plugin_runtime.knowledge_embeddings import env_embedding_public
+            from src.core_kernel.model_gateway.provider_store import ProviderStore
+
+            env_row = env_embedding_public()
+            if env_row.get("configured"):
+                choices.append(
+                    {
+                        "id": "env",
+                        "label": env_row.get("label") or "环境变量",
+                        "model": env_row.get("default_model") or "",
+                        "source": "env",
+                    }
+                )
+            store = ProviderStore()
+            default_emb = store.default_embedding_provider or default_emb
+            for p in store.providers_of_kind("embedding"):
+                if not p.enabled:
+                    continue
+                pub = ProviderStore.to_public(p)
+                choices.append(
+                    {
+                        "id": p.id,
+                        "label": pub.get("label") or p.id,
+                        "model": p.default_model or (p.models[0] if p.models else ""),
+                        "source": "settings",
+                    }
+                )
+        except Exception:
+            default_emb = ""
         return {
             "docs": docs,
             "wiki_pages": wiki_pages,
@@ -1991,8 +2082,12 @@ class KnowledgeStore:
             "embeddings_configured": bool(info.get("configured")),
             "embedding_backend": info.get("backend") or "",
             "embedding_model": info.get("model") or "",
+            "embedding_provider": info.get("provider_id") or "",
+            "embedding_source": info.get("source") or "",
             "embedding_dim": info.get("dim") or 0,
             "embedding_multimodal": bool(info.get("multimodal")),
+            "embedding_choices": choices,
+            "default_embedding_provider": default_emb,
             "hybrid_ready": bool(info.get("configured")) and embedded > 0,
             "parent_child": parent_child_enabled(),
             "fts5": bool(self._fts_mode),
@@ -2640,24 +2735,49 @@ class KnowledgeStore:
         }
 
     async def reindex_embeddings(
-        self, *, workspace_id: str = "", kb_id: str = "", limit: int = 200
+        self,
+        *,
+        workspace_id: str = "",
+        kb_id: str = "",
+        limit: int = 200,
+        embedding_provider: str = "",
+        embedding_model: str = "",
+        force: bool = False,
     ) -> Dict[str, Any]:
-        """Embed chunks missing vectors when KB_EMBEDDING_* is configured."""
-        if not embeddings_configured():
+        """Embed chunks missing vectors when a settings or env embedding endpoint exists."""
+        embed_ep = resolve_embedding_endpoint(embedding_provider, embedding_model)
+        if not embeddings_configured() and not embed_ep:
             return {
                 "ok": False,
-                "error": "embeddings not configured (set KB_EMBEDDING_BASE_URL)",
+                "error": "embeddings not configured（请在设置 → 模型 → 向量模型中配置，或设置 KB_EMBEDDING_*）",
                 "updated": 0,
             }
+        want_model = (embed_ep.model if embed_ep else embedding_model) or ""
         async with self.session_factory() as session:
-            stmt = (
-                select(KnowledgeChunk)
-                .where(
-                    or_(KnowledgeChunk.embedding == "", KnowledgeChunk.embedding.is_(None))
+            stmt = select(KnowledgeChunk).where(
+                or_(
+                    KnowledgeChunk.chunk_type != "parent",
+                    KnowledgeChunk.chunk_type == "",
+                    KnowledgeChunk.chunk_type.is_(None),
                 )
-                .order_by(KnowledgeChunk.updated_at.desc())
-                .limit(max(1, min(limit, 500)))
             )
+            if not force:
+                missing = or_(
+                    KnowledgeChunk.embedding == "",
+                    KnowledgeChunk.embedding.is_(None),
+                )
+                if want_model:
+                    stmt = stmt.where(
+                        or_(
+                            missing,
+                            KnowledgeChunk.embedding_model == "",
+                            KnowledgeChunk.embedding_model.is_(None),
+                            KnowledgeChunk.embedding_model != want_model,
+                        )
+                    )
+                else:
+                    stmt = stmt.where(missing)
+            stmt = stmt.order_by(KnowledgeChunk.updated_at.desc()).limit(max(1, min(limit, 500)))
             if workspace_id:
                 stmt = stmt.where(
                     or_(
@@ -2665,11 +2785,16 @@ class KnowledgeStore:
                         KnowledgeChunk.workspace_id == "",
                     )
                 )
-            if kb_id:
-                stmt = stmt.where(KnowledgeChunk.kb_id.in_(self._kb_values(kb_id)))
+            stmt = self._with_kb(stmt, KnowledgeChunk.kb_id, kb_id)
             rows = list((await session.execute(stmt)).scalars().all())
             if not rows:
-                return {"ok": True, "updated": 0, "scanned": 0}
+                return {
+                    "ok": True,
+                    "updated": 0,
+                    "scanned": 0,
+                    "embedding_model": want_model,
+                    "embedding_provider": embed_ep.provider_id if embed_ep else "",
+                }
 
             texts = [
                 chunk_embedding_text(
@@ -2687,7 +2812,7 @@ class KnowledgeStore:
             for i in range(0, len(texts), 32):
                 batch_rows = rows[i : i + 32]
                 batch_texts = texts[i : i + 32]
-                vectors = await embed_texts(batch_texts)
+                vectors = await embed_texts(batch_texts, endpoint=embed_ep)
                 if not vectors:
                     errors.append(f"embed batch@{i} failed")
                     continue
@@ -2695,6 +2820,8 @@ class KnowledgeStore:
                     if not vec:
                         continue
                     row.embedding = serialize_embedding(vec)
+                    if want_model:
+                        row.embedding_model = want_model[:128]
                     row.updated_at = datetime.now(timezone.utc)
                     updated += 1
             await session.commit()
@@ -2703,6 +2830,8 @@ class KnowledgeStore:
             "scanned": len(rows),
             "updated": updated,
             "errors": errors[:10],
+            "embedding_model": want_model,
+            "embedding_provider": embed_ep.provider_id if embed_ep else "",
         }
 
     async def rechunk_doc(self, doc_id: str) -> Optional[Dict[str, Any]]:
@@ -2929,6 +3058,7 @@ class KnowledgeStore:
             "char_start": row.char_start,
             "char_end": row.char_end,
             "has_embedding": bool(row.embedding),
+            "embedding_model": getattr(row, "embedding_model", "") or "",
             "kb_id": getattr(row, "kb_id", "") or "",
         }
 

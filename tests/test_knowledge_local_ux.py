@@ -15,6 +15,7 @@ from src.core_kernel.plugin_runtime import knowledge_embeddings as ke
 from src.core_kernel.plugin_runtime.knowledge_ingest import html_to_text, read_bytes_as_text
 from src.core_kernel.plugin_runtime.knowledge_jobs import enqueue_file_job, process_ingest_job
 from src.core_kernel.plugin_runtime.knowledge_scope import (
+    ALL_LOCAL_KB_ID,
     DEFAULT_LOCAL_KB_ID,
     is_local_kb_id,
     is_remote_kb_id,
@@ -113,6 +114,35 @@ async def test_multi_kb_search_isolation(store):
     assert "d-legal" not in default_ids
     assert "d-legal" in legal_ids
     assert "d-default" not in legal_ids
+
+
+@pytest.mark.asyncio
+async def test_search_all_local_kbs_unions_libraries(store):
+    other = await store.create_local_kb(name="Legal", workspace_id="ws1")
+    await store.upsert(
+        doc_id="d-default-all",
+        title="Default",
+        content="shared marker in default library",
+        workspace_id="ws1",
+        kb_id=DEFAULT_LOCAL_KB_ID,
+        content_hash_value=content_hash("shared marker in default library"),
+    )
+    await store.upsert(
+        doc_id="d-legal-all",
+        title="Legal",
+        content="shared marker in legal library",
+        workspace_id="ws1",
+        kb_id=other["kb_id"],
+        content_hash_value=content_hash("shared marker in legal library"),
+    )
+    hits = await store.search("shared marker", workspace_id="ws1", kb_id=ALL_LOCAL_KB_ID)
+    ids = {h["doc_id"] for h in hits}
+    assert "d-default-all" in ids
+    assert "d-legal-all" in ids
+    default_hit = next(h for h in hits if h["doc_id"] == "d-default-all")
+    assert default_hit.get("snapshot")
+    assert default_hit.get("match_kind") in {"keyword", "semantic"}
+    assert "#c" in str(default_hit.get("cite_href") or "")
 
 
 @pytest.mark.asyncio

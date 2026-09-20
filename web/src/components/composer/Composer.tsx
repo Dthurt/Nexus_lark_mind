@@ -63,6 +63,13 @@ export type ComposerProps = {
   modelOptions?: ComposerOption[];
   providersDisabled?: boolean;
   modelsDisabled?: boolean;
+  imageProviderId?: string;
+  imageModelName?: string;
+  imageProviderOptions?: ComposerOption[];
+  imageModelOptions?: ComposerOption[];
+  imageConfigured?: boolean;
+  onImageProviderChange?: (v: string) => void;
+  onImageModelChange?: (v: string) => void;
   toolsEnabled?: boolean;
   onToolsEnabledChange?: (v: boolean) => void;
   agentMode?: string;
@@ -131,6 +138,13 @@ export function Composer({
   modelOptions = [],
   providersDisabled = false,
   modelsDisabled = false,
+  imageProviderId = "",
+  imageModelName = "",
+  imageProviderOptions = [],
+  imageModelOptions = [],
+  imageConfigured = false,
+  onImageProviderChange,
+  onImageModelChange,
   toolsEnabled = true,
   onToolsEnabledChange,
   agentMode = "agent",
@@ -740,6 +754,52 @@ export function Composer({
                     </Select>
                   </div>
                 </div>
+
+                {imageConfigured ? (
+                  <>
+                    <div className="px-2 pb-0.5 pt-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                      生图模型
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 px-2 pb-2 pt-1">
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <label className="text-[11px] text-muted-foreground">Provider</label>
+                        <Select
+                          value={imageProviderId ? imageProviderId : "__empty"}
+                          onValueChange={(v) => onImageProviderChange?.(v === "__empty" ? "" : v)}
+                        >
+                          <SelectTrigger className="h-8 w-full text-xs" aria-label="Image provider">
+                            <SelectValue placeholder="生图 Provider" />
+                          </SelectTrigger>
+                          <SelectContent className="z-[200]" position="popper" sideOffset={6}>
+                            {imageProviderOptions.map((opt) => (
+                              <SelectItem key={opt.value || "empty"} value={opt.value || "__empty"}>
+                                {opt.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <label className="text-[11px] text-muted-foreground">Model</label>
+                        <Select
+                          value={imageModelName ? imageModelName : "__empty"}
+                          onValueChange={(v) => onImageModelChange?.(v === "__empty" ? "" : v)}
+                        >
+                          <SelectTrigger className="h-8 w-full text-xs" aria-label="Image model">
+                            <SelectValue placeholder="生图模型" />
+                          </SelectTrigger>
+                          <SelectContent className="z-[200]" position="popper" sideOffset={6}>
+                            {imageModelOptions.map((opt) => (
+                              <SelectItem key={opt.value || "empty"} value={opt.value || "__empty"}>
+                                {opt.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
 
                 <div className="my-1 h-px bg-border" />
                 <div className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">

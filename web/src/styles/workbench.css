@@ -1165,3 +1165,24 @@ html[data-theme="day"] {
   background: hsl(var(--teal) / 0.1);
   box-shadow: 0 0 0 1px hsl(var(--teal) / 0.22);
 }
+
+.nlm-kb-snapshot {
+  border-left: 2px solid hsl(var(--teal) / 0.45);
+  padding-left: 7px;
+}
+
+.nlm-kb-snapshot-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--teal));
+}
+
+.nlm-kb-snapshot-hit,
+.nlm-kb-chunk mark.nlm-kb-snapshot-hit {
+  background: hsl(var(--teal) / 0.28);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}

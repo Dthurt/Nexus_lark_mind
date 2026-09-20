@@ -294,10 +294,10 @@ async def test_hybrid_search_uses_vectors_without_keyword(store: KnowledgeStore,
     cat_vec = [1.0, 0.0, 0.0]
     query_vec = [0.95, 0.05, 0.0]
 
-    async def fake_embed_texts(texts):
+    async def fake_embed_texts(texts, **_kwargs):
         return [list(cat_vec) for _ in texts]
 
-    async def fake_embed_one(text):
+    async def fake_embed_one(text, **_kwargs):
         return list(query_vec)
 
     with (
@@ -348,7 +348,7 @@ async def test_reindex_embeddings(store: KnowledgeStore, monkeypatch):
         )
         await session.commit()
 
-    async def fake_embed_texts(texts):
+    async def fake_embed_texts(texts, **_kwargs):
         return [[0.1, 0.2, 0.3] for _ in texts]
 
     with (
@@ -367,6 +367,67 @@ async def test_reindex_embeddings(store: KnowledgeStore, monkeypatch):
 
     full = await store.get("kb_re", include_chunks=True)
     assert full and full["chunks"][0]["has_embedding"] is True
+
+
+@pytest.mark.asyncio
+async def test_reindex_embeddings_uses_selected_model(store: KnowledgeStore, monkeypatch):
+    from src.core_kernel.plugin_runtime.knowledge_embeddings import EmbeddingEndpoint
+
+    monkeypatch.delenv("KB_EMBEDDING_ENABLED", raising=False)
+    seen = []
+
+    async def fake_embed_texts(texts, **kwargs):
+        seen.append(kwargs.get("endpoint"))
+        return [[0.2, 0.1, 0.0] for _ in texts]
+
+    ep = EmbeddingEndpoint(
+        base_url="http://pick.test/v1",
+        api_key="sk-pick",
+        model="picked-embed",
+        provider_id="pick-emb",
+        source="settings",
+    )
+    await store.upsert(
+        doc_id="kb_pick",
+        title="Pick",
+        content="needs a chosen embedding model",
+        workspace_id="ws",
+    )
+    async with store.session_factory() as session:
+        from sqlalchemy import update
+        from src.core_kernel.plugin_runtime.knowledge_store import KnowledgeChunk
+
+        await session.execute(
+            update(KnowledgeChunk)
+            .where(KnowledgeChunk.doc_id == "kb_pick")
+            .values(embedding="", embedding_model="")
+        )
+        await session.commit()
+
+    with (
+        patch(
+            "src.core_kernel.plugin_runtime.knowledge_store.resolve_embedding_endpoint",
+            return_value=ep,
+        ),
+        patch(
+            "src.core_kernel.plugin_runtime.knowledge_store.embeddings_configured",
+            return_value=False,
+        ),
+        patch(
+            "src.core_kernel.plugin_runtime.knowledge_store.embed_texts",
+            new=AsyncMock(side_effect=fake_embed_texts),
+        ),
+    ):
+        result = await store.reindex_embeddings(
+            workspace_id="ws",
+            embedding_provider="pick-emb",
+            limit=50,
+        )
+        assert result["ok"] is True
+        assert result["updated"] >= 1
+        assert result["embedding_model"] == "picked-embed"
+        assert seen and seen[0] is not None
+        assert seen[0].model == "picked-embed"
 
 
 @pytest.mark.asyncio

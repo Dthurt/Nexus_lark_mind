@@ -1,5 +1,6 @@
 export const LOCAL_KB_ID = "";
 export const DEFAULT_LOCAL_KB_ID = "local:default";
+export const ALL_LOCAL_KB_ID = "local:all";
 
 export type KnowledgeScopeOption = {
   id: string;

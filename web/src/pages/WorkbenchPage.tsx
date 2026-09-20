@@ -20,6 +20,7 @@ import { useChatTimeline } from "@/hooks/useChatTimeline";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { useKnowledgeCatalog } from "@/hooks/useKnowledgeCatalog";
 import { usePlugins } from "@/hooks/usePlugins";
+import { useImageModels } from "@/hooks/useImageModels";
 import { useProviders } from "@/hooks/useProviders";
 import { useRightDock } from "@/hooks/useRightDock";
 import { useDeliveryArtifact } from "@/hooks/useDeliveryArtifact";
@@ -158,6 +159,17 @@ export function WorkbenchPage({
     onProviderChange,
     onModelChange,
   } = useProviders();
+
+  const {
+    imageProviderId,
+    imageModelName,
+    imageProviderOptions,
+    imageModelOptions,
+    imageConfigured,
+    loadImageModels,
+    onImageProviderChange,
+    onImageModelChange,
+  } = useImageModels();
 
   const {
     plugins,
@@ -658,6 +670,7 @@ export function WorkbenchPage({
       stream.ensureSSE();
       await Promise.all([
         loadProviders(),
+        loadImageModels(),
         loadPlugins(),
         syncServerList(),
         loadWorkspaces(),
@@ -680,8 +693,11 @@ export function WorkbenchPage({
 
   // catalogTick from settings
   useEffect(() => {
-    if (catalogTick > 0) void loadProviders();
-  }, [catalogTick, loadProviders]);
+    if (catalogTick > 0) {
+      void loadProviders();
+      void loadImageModels();
+    }
+  }, [catalogTick, loadImageModels, loadProviders]);
 
   // git refresh when cwd/kind changes + poll local workspaces
   useEffect(() => {
@@ -782,6 +798,13 @@ export function WorkbenchPage({
                   modelOptions={modelOptions}
                   providersDisabled={providersDisabled}
                   modelsDisabled={modelsDisabled}
+                  imageProviderId={imageProviderId}
+                  imageModelName={imageModelName}
+                  imageProviderOptions={imageProviderOptions}
+                  imageModelOptions={imageModelOptions}
+                  imageConfigured={imageConfigured}
+                  onImageProviderChange={(id) => void onImageProviderChange(id)}
+                  onImageModelChange={onImageModelChange}
                   toolsEnabled={toolsEnabled}
                   onToolsEnabledChange={setToolsEnabled}
                   agentMode={actions.agentMode}

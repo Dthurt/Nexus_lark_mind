@@ -156,7 +156,8 @@ def create_kernel_app() -> FastAPI:
     async def set_default_provider(body: Dict[str, Any]):
         gateway: ModelGateway = state["gateway"]
         provider_id = str(body.get("provider_id") or "").strip()
-        data = gateway.registry.set_default_provider(provider_id)
+        kind = str(body.get("kind") or "chat").strip().lower() or "chat"
+        data = gateway.registry.set_default_provider(provider_id, kind=kind)
         return RpcEnvelope(ok=True, data=data)
 
     @app.post("/rpc/settings/models/reload")

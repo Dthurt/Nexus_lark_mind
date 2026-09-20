@@ -59,9 +59,20 @@ class ImageGenPlugin(BasePlugin):
         cfg = get_plugin_config_store().get("builtin.image_gen")
         settings = get_settings()
         store = ProviderStore()
+        plugin_provider = (cfg.get("IMAGE_PROVIDER") or "").strip()
         provider_id = (
-            cfg.get("IMAGE_PROVIDER") or store.default_provider or settings.default_model_provider or ""
+            plugin_provider
+            or (store.default_image_provider or "")
+            or ""
         ).strip()
+        if not provider_id:
+            images = [p for p in store.providers_of_kind("image") if p.enabled]
+            if images:
+                provider_id = images[0].id
+        if not provider_id:
+            provider_id = (
+                store.default_provider or settings.default_model_provider or ""
+            ).strip()
         model = (cfg.get("IMAGE_MODEL") or "").strip()
         size = (cfg.get("IMAGE_SIZE") or "1024x1024").strip()
 
@@ -85,8 +96,8 @@ class ImageGenPlugin(BasePlugin):
                     model = default_model
         if not base_url or not api_key:
             raise PluginError(
-                "Image generation not configured. Open the Image Gen plugin settings and set "
-                "IMAGE_PROVIDER / API key on that provider, or configure a custom OpenAI-compat provider."
+                "Image generation not configured. Add a 生图模型 in Settings → 模型, "
+                "or set IMAGE_PROVIDER / API key on a custom OpenAI-compat provider."
             )
         if not model:
             model = "dall-e-3"

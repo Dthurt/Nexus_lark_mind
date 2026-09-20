@@ -27,10 +27,13 @@ import logging
 import math
 import mimetypes
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import httpx
+
+from src.core_kernel.model_gateway.provider_store import ProviderStore
 
 logger = logging.getLogger(__name__)
 
@@ -195,15 +198,17 @@ def _embeddings_urls(base: str) -> List[str]:
     return out
 
 
-def _auth_headers() -> Dict[str, str]:
+def _auth_headers(endpoint: Optional[EmbeddingEndpoint] = None) -> Dict[str, str]:
     headers = {"Content-Type": "application/json"}
-    api_key = embedding_api_key()
+    api_key = endpoint.api_key if endpoint is not None else embedding_api_key()
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
 
 
-def _parse_embedding_rows(body: Any, n: int) -> Optional[List[List[float]]]:
+def _parse_embedding_rows(
+    body: Any, n: int, dim: Optional[int] = None
+) -> Optional[List[List[float]]]:
     if not isinstance(body, dict):
         return None
     rows = body.get("data") or body.get("embeddings") or []
@@ -211,7 +216,7 @@ def _parse_embedding_rows(body: Any, n: int) -> Optional[List[List[float]]]:
         # Bare [[float, ...], ...]
         if len(rows) < n:
             return None
-        return [apply_embedding_dim(r) for r in rows[:n]]
+        return [apply_embedding_dim(r, dim) for r in rows[:n]]
     by_idx: Dict[int, Any] = {}
     for i, row in enumerate(rows if isinstance(rows, list) else []):
         if isinstance(row, dict):
@@ -223,15 +228,21 @@ def _parse_embedding_rows(body: Any, n: int) -> Optional[List[List[float]]]:
         emb = by_idx.get(i)
         if not isinstance(emb, list) or not emb:
             return None
-        out.append(apply_embedding_dim(emb))
+        out.append(apply_embedding_dim(emb, dim))
     return out
 
 
-async def _post_embeddings(payload: Dict[str, Any], *, n: int) -> Optional[List[List[float]]]:
-    base = embedding_base_url()
+async def _post_embeddings(
+    payload: Dict[str, Any],
+    *,
+    n: int,
+    endpoint: Optional[EmbeddingEndpoint] = None,
+) -> Optional[List[List[float]]]:
+    base = (endpoint.base_url if endpoint is not None else embedding_base_url()).rstrip("/")
     if not base:
         return None
-    headers = _auth_headers()
+    headers = _auth_headers(endpoint)
+    dim = endpoint.dim if endpoint is not None else None
     last_exc: Optional[Exception] = None
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -244,7 +255,7 @@ async def _post_embeddings(payload: Dict[str, Any], *, n: int) -> Optional[List[
                         )
                         continue
                     resp.raise_for_status()
-                    parsed = _parse_embedding_rows(resp.json(), n)
+                    parsed = _parse_embedding_rows(resp.json(), n, dim)
                     if parsed is not None:
                         return parsed
                     last_exc = ValueError("embedding response missing data")
@@ -263,16 +274,37 @@ async def _post_embeddings(payload: Dict[str, Any], *, n: int) -> Optional[List[
     return None
 
 
-async def embed_texts(texts: List[str]) -> Optional[List[List[float]]]:
+async def embed_texts(
+    texts: List[str],
+    *,
+    endpoint: Optional[EmbeddingEndpoint] = None,
+    provider_id: str = "",
+    model: str = "",
+    store: Optional[ProviderStore] = None,
+) -> Optional[List[List[float]]]:
     """Return embeddings for each text, or None if disabled / request failed."""
-    if not embeddings_configured() or not texts:
+    if not texts:
         return None
-    payload: Dict[str, Any] = {"model": embedding_model(), "input": texts}
-    return await _post_embeddings(payload, n=len(texts))
+    ep = endpoint or resolve_embedding_endpoint(provider_id, model, store)
+    if ep is None and embeddings_configured():
+        ep = env_embedding_endpoint()
+    if ep is None:
+        return None
+    payload: Dict[str, Any] = {"model": ep.model or embedding_model(), "input": texts}
+    return await _post_embeddings(payload, n=len(texts), endpoint=ep)
 
 
-async def embed_one(text: str) -> Optional[List[float]]:
-    result = await embed_texts([text])
+async def embed_one(
+    text: str,
+    *,
+    endpoint: Optional[EmbeddingEndpoint] = None,
+    provider_id: str = "",
+    model: str = "",
+    store: Optional[ProviderStore] = None,
+) -> Optional[List[float]]:
+    result = await embed_texts(
+        [text], endpoint=endpoint, provider_id=provider_id, model=model, store=store
+    )
     if not result:
         return None
     return result[0]
@@ -319,9 +351,11 @@ async def embed_images(paths: List[Union[str, Path]]) -> Optional[List[Optional[
         keep.append(i)
     if not inputs:
         return [None] * len(paths)
+    ep = resolve_embedding_endpoint()
     vectors = await _post_embeddings(
-        {"model": embedding_model(), "input": inputs},
+        {"model": (ep.model if ep else embedding_model()), "input": inputs},
         n=len(inputs),
+        endpoint=ep,
     )
     if not vectors:
         return None
@@ -338,6 +372,126 @@ async def embed_one_image(path: Union[str, Path]) -> Optional[List[float]]:
     return rows[0]
 
 
+@dataclass(frozen=True)
+class EmbeddingEndpoint:
+    base_url: str
+    api_key: str = ""
+    model: str = ""
+    dim: int = 0
+    backend: str = ""
+    provider_id: str = ""
+    source: str = "env"
+
+
+def env_embedding_endpoint() -> Optional[EmbeddingEndpoint]:
+    """Env-only resolution (KB_EMBEDDING_* / WEMM / GLM / OpenAI)."""
+    if _env_flag_off("KB_EMBEDDING_ENABLED"):
+        return None
+    base = embedding_base_url()
+    if not base:
+        return None
+    return EmbeddingEndpoint(
+        base_url=base,
+        api_key=embedding_api_key(),
+        model=embedding_model(),
+        dim=embedding_dim(),
+        backend=embedding_backend(),
+        source="env",
+    )
+
+
+def env_embedding_public() -> Dict[str, Any]:
+    ep = env_embedding_endpoint()
+    configured = bool(ep)
+    return {
+        "id": "env",
+        "label": "环境变量（KB_EMBEDDING_* / WEMM / GLM / OpenAI）",
+        "kind": "embedding",
+        "configured": configured,
+        "base_url": ep.base_url if ep else "",
+        "default_model": ep.model if ep else "",
+        "models": [ep.model] if ep and ep.model else [],
+        "backend": ep.backend if ep else "",
+        "source": "env",
+        "editable": False,
+        "hint": "未选自定义向量模型时作为回退；改 .env 后需重启",
+    }
+
+
+def settings_embedding_endpoint(
+    provider_id: str = "",
+    model: str = "",
+    store: Optional[ProviderStore] = None,
+) -> Optional[EmbeddingEndpoint]:
+    if _env_flag_off("KB_EMBEDDING_ENABLED"):
+        return None
+    try:
+        st = store if store is not None else ProviderStore()
+    except Exception:
+        return None
+    pid = (provider_id or "").strip()
+    if not pid:
+        pid = (st.default_embedding_provider or "").strip()
+    chosen = st.providers.get(pid) if pid else None
+    if chosen is None or not chosen.enabled:
+        return None
+    mid = (model or chosen.default_model or (chosen.models[0] if chosen.models else "")).strip()
+    if not chosen.base_url or not mid:
+        return None
+    blob = f"{chosen.base_url} {mid}".lower()
+    backend = "wemm" if "wemm" in blob else "openai"
+    return EmbeddingEndpoint(
+        base_url=chosen.base_url.rstrip("/"),
+        api_key=chosen.api_key or "",
+        model=mid,
+        dim=embedding_dim(),
+        backend=backend,
+        provider_id=chosen.id,
+        source="settings",
+    )
+
+
+def resolve_embedding_endpoint(
+    provider_id: str = "",
+    model: str = "",
+    store: Optional[ProviderStore] = None,
+) -> Optional[EmbeddingEndpoint]:
+    """Settings provider on top; env KB_EMBEDDING_* / WEMM / GLM / OpenAI as fallback."""
+    if _env_flag_off("KB_EMBEDDING_ENABLED"):
+        return None
+    try:
+        st = store if store is not None else ProviderStore()
+    except Exception:
+        st = None
+    if (provider_id or "").strip():
+        chosen = settings_embedding_endpoint(provider_id, model, st)
+        if chosen:
+            return chosen
+    default_id = (getattr(st, "default_embedding_provider", None) or "").strip() if st else ""
+    if default_id:
+        chosen = settings_embedding_endpoint(default_id, model, st)
+        if chosen:
+            return chosen
+    env = env_embedding_endpoint()
+    if env:
+        if (model or "").strip() and (model or "").strip() != env.model:
+            return EmbeddingEndpoint(
+                base_url=env.base_url,
+                api_key=env.api_key,
+                model=(model or "").strip(),
+                dim=env.dim,
+                backend=env.backend,
+                provider_id=env.provider_id,
+                source=env.source,
+            )
+        return env
+    if st is not None:
+        enabled = [p for p in st.providers_of_kind("embedding") if p.enabled]
+        if len(enabled) == 1:
+            return settings_embedding_endpoint(enabled[0].id, model, st)
+    return None
+
+
 def embedding_stats() -> Dict[str, Any]:
     return {
         "configured": embeddings_configured(),
@@ -345,4 +499,22 @@ def embedding_stats() -> Dict[str, Any]:
         "model": embedding_model() if embeddings_configured() else "",
         "dim": embedding_dim(),
         "multimodal": multimodal_embeddings_enabled(),
+    }
+
+
+def effective_embedding_stats(
+    provider_id: str = "",
+    model: str = "",
+    store: Optional[ProviderStore] = None,
+) -> Dict[str, Any]:
+    info = embedding_stats()
+    ep = resolve_embedding_endpoint(provider_id, model, store)
+    configured = bool(info.get("configured") or ep)
+    return {
+        **info,
+        "configured": configured,
+        "backend": (ep.backend if ep else "") or (info.get("backend") or ""),
+        "model": (ep.model if ep else "") or (info.get("model") or ""),
+        "provider_id": ep.provider_id if ep else "",
+        "source": ep.source if ep else ("env" if info.get("configured") else ""),
     }

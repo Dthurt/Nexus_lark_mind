@@ -586,8 +586,11 @@ export function removeProvider(id: string): Promise<unknown> {
   return apiDelete(`/api/settings/models/providers/${encodeURIComponent(id)}`);
 }
 
-export function setDefaultProvider(providerId: string): Promise<ProviderCatalog> {
-  return apiPut("/api/settings/models/default", { provider_id: providerId });
+export function setDefaultProvider(
+  providerId: string,
+  kind: "chat" | "embedding" | "image" = "chat",
+): Promise<ProviderCatalog> {
+  return apiPut("/api/settings/models/default", { provider_id: providerId, kind });
 }
 
 export function discoverModels(body: {
@@ -777,6 +780,18 @@ export type KnowledgeChunk = {
   char_start?: number;
   char_end?: number;
   has_embedding?: boolean;
+  embedding_model?: string;
+};
+
+export type KnowledgeSnapshot = {
+  snippet?: string;
+  prefix?: string;
+  highlight?: string;
+  suffix?: string;
+  match_start?: number;
+  match_end?: number;
+  match_text?: string;
+  match_kind?: "keyword" | "semantic" | "none" | string;
 };
 
 export type KnowledgeHit = KnowledgeDoc & {
@@ -786,6 +801,20 @@ export type KnowledgeHit = KnowledgeDoc & {
   snippet?: string;
   score?: number;
   citation?: string;
+  cite_href?: string;
+  kb_id?: string;
+  snapshot?: KnowledgeSnapshot;
+  match_start?: number;
+  match_end?: number;
+  match_text?: string;
+  match_kind?: string;
+};
+
+export type KnowledgeEmbeddingChoice = {
+  id: string;
+  label?: string;
+  model?: string;
+  source?: string;
 };
 
 export type KnowledgeStats = {
@@ -795,6 +824,10 @@ export type KnowledgeStats = {
   embeddings_configured: boolean;
   embedding_model?: string;
   embedding_backend?: string;
+  embedding_provider?: string;
+  embedding_source?: string;
+  embedding_choices?: KnowledgeEmbeddingChoice[];
+  default_embedding_provider?: string;
   hybrid_ready: boolean;
   fts5?: boolean;
   fts5_tokenizer?: string;
@@ -935,6 +968,8 @@ export function searchKnowledge(params: {
   limit?: number;
   kb_id?: string;
   tag?: string;
+  embedding_provider?: string;
+  embedding_model?: string;
 }): Promise<{ query: string; results: KnowledgeHit[]; citations_md?: string }> {
   const q = new URLSearchParams();
   q.set("query", params.query);
@@ -942,6 +977,8 @@ export function searchKnowledge(params: {
   if (params.limit != null) q.set("limit", String(params.limit));
   if (params.kb_id) q.set("kb_id", params.kb_id);
   if (params.tag) q.set("tag", params.tag);
+  if (params.embedding_provider) q.set("embedding_provider", params.embedding_provider);
+  if (params.embedding_model) q.set("embedding_model", params.embedding_model);
   return apiGet(`/api/knowledge/search?${q.toString()}`);
 }
 
@@ -1114,12 +1151,17 @@ export function reindexKnowledge(body?: {
   workspace_id?: string;
   kb_id?: string;
   limit?: number;
+  embedding_provider?: string;
+  embedding_model?: string;
+  force?: boolean;
 }): Promise<{
   ok?: boolean;
   updated?: number;
   scanned?: number;
   error?: string;
   errors?: string[];
+  embedding_model?: string;
+  embedding_provider?: string;
 }> {
   return apiPost("/api/knowledge/reindex", body || {});
 }

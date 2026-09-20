@@ -11,6 +11,13 @@ from typing import List, Optional
 LOCAL_KB_PREFIX = "local:"
 DEFAULT_LOCAL_KB_ID = "local:default"
 DEFAULT_LOCAL_KB_NAME = "默认知识库"
+ALL_LOCAL_KB_ID = "local:all"
+_ALL_LOCAL_KB_ALIASES = frozenset({"all", "local:all", "*", "local:*"})
+
+
+def is_all_local_kbs(kb_id: str) -> bool:
+    """True when search/reindex should union every local SQLite library."""
+    return (kb_id or "").strip().lower() in _ALL_LOCAL_KB_ALIASES
 
 
 def is_local_kb_id(kb_id: str) -> bool:

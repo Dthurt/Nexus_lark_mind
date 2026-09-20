@@ -66,12 +66,17 @@ import { GraphLayer } from "@/components/knowledge/GraphLayer";
 import { KnowledgeSegment } from "@/components/knowledge/KnowledgeSegment";
 import { WikiLayer } from "@/components/knowledge/WikiLayer";
 import {
+  ALL_LOCAL_KB_ID,
   DEFAULT_LOCAL_KB_ID,
   isLocalKbId,
   kbScopeLabel,
   LOCAL_KB_ID,
   type KnowledgeSection,
 } from "@/lib/knowledgeScope";
+import {
+  highlightPlainText,
+  normalizeSnapshot,
+} from "@/lib/knowledgeSnapshot";
 import { usePrefersReducedMotion } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -256,6 +261,10 @@ export function KnowledgeView({
   const [chunkPreviewCount, setChunkPreviewCount] = useState(0);
   const [chunkBusy, setChunkBusy] = useState(false);
   const [reindexing, setReindexing] = useState(false);
+  const [searchScope, setSearchScope] = useState<"current" | "all">("current");
+  const [embeddingProvider, setEmbeddingProvider] = useState("");
+  const [forceReindex, setForceReindex] = useState(false);
+  const [lastSearchQuery, setLastSearchQuery] = useState("");
   const [retryingJob, setRetryingJob] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editTags, setEditTags] = useState("");
@@ -265,9 +274,11 @@ export function KnowledgeView({
 
   const label = kbScopeLabel(boundKbId, boundKbName);
   const fileKindMeta = FILE_KINDS.find((k) => k.id === fileKind) || FILE_KINDS[0];
+  const embeddingChoices = stats?.embedding_choices || [];
+  const canEmbed = Boolean(stats?.embeddings_configured || embeddingChoices.length);
   const hybridLabel = stats?.embeddings_configured
     ? stats.hybrid_ready
-      ? "hybrid 已就绪"
+      ? `hybrid 已就绪${stats.embedding_model ? ` · ${stats.embedding_model}` : ""}`
       : "hybrid 待命"
     : "关键词检索";
   const defaultLocal = localKbs.find((kb) => kb.id === DEFAULT_LOCAL_KB_ID);
@@ -501,12 +512,15 @@ export function KnowledgeView({
           );
         }
       } else {
+        setLastSearchQuery(q);
         const data = await searchKnowledge({
           query: q,
           workspace_id: workspaceId || undefined,
-          kb_id: localKbId,
+          kb_id: searchScope === "all" ? ALL_LOCAL_KB_ID : localKbId,
           tag: tagFilter || undefined,
-          limit: 12,
+          limit: searchScope === "all" ? 20 : 12,
+          embedding_provider:
+            embeddingProvider && embeddingProvider !== "env" ? embeddingProvider : undefined,
         });
         setRows(data.results || []);
       }
@@ -763,11 +777,17 @@ export function KnowledgeView({
     try {
       const data = await reindexKnowledge({
         workspace_id: workspaceId || undefined,
-        kb_id: localKbId,
+        kb_id: searchScope === "all" ? ALL_LOCAL_KB_ID : localKbId,
         limit: 200,
+        embedding_provider:
+          embeddingProvider && embeddingProvider !== "env" ? embeddingProvider : undefined,
+        force: forceReindex,
       });
       if (data.error) toast.error(data.error);
-      else toast.success(`向量回填 · 更新 ${data.updated ?? 0} / 扫描 ${data.scanned ?? 0}`);
+      else {
+        const model = data.embedding_model ? ` · ${data.embedding_model}` : "";
+        toast.success(`向量回填 · 更新 ${data.updated ?? 0} / 扫描 ${data.scanned ?? 0}${model}`);
+      }
       await loadList();
     } catch (err: any) {
       toast.error(String(err?.message || err));
@@ -1026,19 +1046,45 @@ export function KnowledgeView({
               <Plus className="mr-1 size-3" />
               新建本地库
             </Button>
-            {!remote && stats?.embeddings_configured ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 w-full px-2 text-[11px]"
-                data-testid="knowledge-reindex"
-                disabled={reindexing}
-                onClick={() => void onReindex()}
-              >
-                <RefreshCw className={cn("mr-1 size-3", reindexing && "animate-spin")} />
-                {reindexing ? "回填中…" : "回填向量"}
-              </Button>
+            {!remote && canEmbed ? (
+              <>
+                {embeddingChoices.length ? (
+                  <select
+                    className="h-7 w-full rounded-md border border-border bg-background px-1.5 text-[11px]"
+                    data-testid="knowledge-embedding-model"
+                    value={embeddingProvider || stats?.default_embedding_provider || "env"}
+                    onChange={(e) => setEmbeddingProvider(e.target.value)}
+                  >
+                    {embeddingChoices.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label || c.id}
+                        {c.model ? ` · ${c.model}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                <label className="flex items-center gap-1 px-0.5 text-[10px] text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={forceReindex}
+                    onChange={(e) => setForceReindex(e.target.checked)}
+                    data-testid="knowledge-reindex-force"
+                  />
+                  覆盖已有向量
+                </label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 w-full px-2 text-[11px]"
+                  data-testid="knowledge-reindex"
+                  disabled={reindexing}
+                  onClick={() => void onReindex()}
+                >
+                  <RefreshCw className={cn("mr-1 size-3", reindexing && "animate-spin")} />
+                  {reindexing ? "回填中…" : "回填向量"}
+                </Button>
+              </>
             ) : null}
           </div>
 
@@ -1127,6 +1173,29 @@ export function KnowledgeView({
                 <Search className="size-3.5" />
               </Button>
             </div>
+            {!remote ? (
+              <div className="flex flex-wrap items-center gap-1" data-testid="knowledge-search-scope">
+                <button
+                  type="button"
+                  className={cn("nlm-knowledge-tag", searchScope === "current" && "is-on")}
+                  data-testid="knowledge-search-scope-current"
+                  onClick={() => setSearchScope("current")}
+                >
+                  当前库
+                </button>
+                <button
+                  type="button"
+                  className={cn("nlm-knowledge-tag", searchScope === "all" && "is-on")}
+                  data-testid="knowledge-search-scope-all"
+                  onClick={() => setSearchScope("all")}
+                >
+                  全部本地库
+                </button>
+                <span className="text-[10px] text-muted-foreground">
+                  {searchScope === "all" ? "向量/关键词检索所有本机库（不做对话增强）" : "仅检索当前库"}
+                </span>
+              </div>
+            ) : null}
             {!remote && (visibleTags.length || tagFilter) ? (
               <div className="flex flex-wrap gap-1">
                 {tagFilter ? (
@@ -1195,7 +1264,19 @@ export function KnowledgeView({
                   className={cn("nlm-knowledge-card", (selected?.doc_id === id || slug === id) && "is-active")}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => void openDoc(row)}>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => {
+                        if (row.cite_href) {
+                          window.dispatchEvent(
+                            new CustomEvent("nlm-knowledge-open", { detail: { href: row.cite_href } }),
+                          );
+                          return;
+                        }
+                        void openDoc(row);
+                      }}
+                    >
                       <div className="flex items-center gap-1.5">
                         <span className={cn("nlm-knowledge-kind", `is-${kind.id}`)}>{kind.label}</span>
                         <span className="truncate text-[12px] font-medium">{row.title || id}</span>
@@ -1203,6 +1284,11 @@ export function KnowledgeView({
                       <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
                         {row.citation || row.source_uri || row.source || id}
                       </div>
+                      {searchScope === "all" && row.kb_id ? (
+                        <div className="mt-0.5 text-[10px] text-muted-foreground">
+                          库 · {kbScopeLabel(row.kb_id, localKbs.find((k) => k.id === row.kb_id)?.name)}
+                        </div>
+                      ) : null}
                       {rowTags.length ? (
                         <div className="mt-1 flex flex-wrap gap-1">
                           {rowTags.map((tag) => (
@@ -1212,7 +1298,29 @@ export function KnowledgeView({
                           ))}
                         </div>
                       ) : null}
-                      {row.snippet ? (
+                      {searched && (row.snapshot || row.snippet) ? (
+                        <div
+                          className="nlm-kb-snapshot mt-1"
+                          data-testid="knowledge-search-snapshot"
+                        >
+                          <div className="nlm-kb-snapshot-label">原文在这里</div>
+                          {(() => {
+                            const snap = normalizeSnapshot(row.snapshot, row.snippet || "");
+                            return (
+                              <p className="m-0 line-clamp-3 text-[11px] text-muted-foreground">
+                                {snap.prefix}
+                                {snap.highlight ? (
+                                  <mark className="nlm-kb-snapshot-hit">{snap.highlight}</mark>
+                                ) : null}
+                                {snap.suffix}
+                                {snap.match_kind === "semantic" && !snap.highlight ? (
+                                  <span className="ml-1 text-[10px] text-teal">语义匹配</span>
+                                ) : null}
+                              </p>
+                            );
+                          })()}
+                        </div>
+                      ) : row.snippet ? (
                         <p className="m-0 mt-1 line-clamp-2 text-[11px] text-muted-foreground">{row.snippet}</p>
                       ) : null}
                     </button>
@@ -1371,7 +1479,7 @@ export function KnowledgeView({
                             #{chunk.chunk_index}
                             {chunk.heading ? ` · ${chunk.heading}` : ""}
                             {chunk.has_embedding ? " · vec" : ""}
-                            {citeHit ? " · 匹配出处" : ""}
+                            {citeHit ? " · 原文在这里" : ""}
                           </span>
                           {!editing ? (
                             <button
@@ -1416,8 +1524,20 @@ export function KnowledgeView({
                             </div>
                           </>
                         ) : (
-                          <p className="m-0 line-clamp-4 whitespace-pre-wrap text-[11px] text-foreground/80">
-                            {chunk.content}
+                          <p className="m-0 line-clamp-6 whitespace-pre-wrap text-[11px] text-foreground/80">
+                            {citeHit && lastSearchQuery
+                              ? (() => {
+                                  const parts = highlightPlainText(chunk.content || "", lastSearchQuery);
+                                  if (!parts.highlight) return chunk.content;
+                                  return (
+                                    <>
+                                      {parts.prefix}
+                                      <mark className="nlm-kb-snapshot-hit">{parts.highlight}</mark>
+                                      {parts.suffix}
+                                    </>
+                                  );
+                                })()
+                              : chunk.content}
                           </p>
                         )}
                       </div>

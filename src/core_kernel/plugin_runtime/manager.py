@@ -264,8 +264,19 @@ class PluginManager:
             if not brave:
                 hints.append("可选：配置 Brave Search Key 作为备用。")
         if plugin.plugin_id == "builtin.image_gen":
-            if not (cfg.get("IMAGE_MODEL") or cfg.get("IMAGE_PROVIDER")):
-                hints.append("启用后请在插件配置中填写生图 Provider / 模型。")
+            has_image = bool(cfg.get("IMAGE_MODEL") or cfg.get("IMAGE_PROVIDER"))
+            if not has_image:
+                try:
+                    from src.core_kernel.model_gateway.provider_store import ProviderStore
+
+                    store = ProviderStore()
+                    has_image = bool(store.default_image_provider) or any(
+                        p.enabled for p in store.providers_of_kind("image")
+                    )
+                except Exception:
+                    has_image = False
+            if not has_image:
+                hints.append("启用后请在「设置 → 模型 → 生图模型」配置，或填写插件 IMAGE_PROVIDER / 模型。")
         if plugin.plugin_id == "cli.literature_search":
             hints.append("默认使用 OpenAlex 免费检索；可选填 Semantic Scholar Key。")
         if plugin.plugin_id == "cli.image_search":

@@ -67,19 +67,30 @@ export function useModelSettings() {
     [load],
   );
 
-  const setDefault = useCallback(async (providerId: string) => {
+  const setDefault = useCallback(async (providerId: string, kind: "chat" | "embedding" | "image" = "chat") => {
     setSaving(true);
     try {
-      const catalog = await setDefaultProvider(providerId);
-      setDoc((prev) => ({ ...prev, default_provider: providerId }));
-      // Keep Composer / workbench in sync with Settings default (clears stale glm etc.).
-      try {
-        localStorage.setItem("nlm_provider", providerId);
-        const entry = catalog?.providers?.find((p) => p.id === providerId);
-        const model = entry?.default_model || catalog?.default_model;
-        if (model) localStorage.setItem("nlm_model", model);
-      } catch {
-        /* ignore storage errors */
+      const catalog = await setDefaultProvider(providerId, kind);
+      if (kind === "embedding") {
+        setDoc((prev) => ({ ...prev, default_embedding_provider: providerId }));
+      } else if (kind === "image") {
+        setDoc((prev) => ({ ...prev, default_image_provider: providerId }));
+        try {
+          if (providerId) localStorage.setItem("nlm_image_provider", providerId);
+        } catch {
+          /* ignore */
+        }
+      } else {
+        setDoc((prev) => ({ ...prev, default_provider: providerId }));
+        // Keep Composer / workbench in sync with Settings default (clears stale glm etc.).
+        try {
+          localStorage.setItem("nlm_provider", providerId);
+          const entry = catalog?.providers?.find((p) => p.id === providerId);
+          const model = entry?.default_model || catalog?.default_model;
+          if (model) localStorage.setItem("nlm_model", model);
+        } catch {
+          /* ignore storage errors */
+        }
       }
     } catch (err: any) {
       setError(String(err?.message || err));

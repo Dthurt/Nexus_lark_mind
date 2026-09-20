@@ -608,6 +608,12 @@ export function KnowledgePanel({
                   type="button"
                   className="min-w-0 flex-1 text-left"
                   onClick={() => {
+                    if (row.cite_href) {
+                      window.dispatchEvent(
+                        new CustomEvent("nlm-knowledge-open", { detail: { href: row.cite_href } }),
+                      );
+                      return;
+                    }
                     if (isRemote) {
                       setSelected({
                         doc_id: String(id),
@@ -641,9 +647,13 @@ export function KnowledgePanel({
                     {row.source_uri || row.source || id}
                     {row.score != null ? ` · score ${row.score}` : ""}
                   </div>
-                  {row.snippet ? (
+                  {row.snapshot?.highlight || row.snippet ? (
                     <p className="m-0 mt-1 line-clamp-3 text-[11px] text-muted-foreground">
-                      {row.snippet}
+                      {row.snapshot?.prefix}
+                      {row.snapshot?.highlight ? (
+                        <mark className="nlm-kb-snapshot-hit">{row.snapshot.highlight}</mark>
+                      ) : null}
+                      {row.snapshot?.suffix || (!row.snapshot?.highlight ? row.snippet : "")}
                     </p>
                   ) : null}
                 </button>

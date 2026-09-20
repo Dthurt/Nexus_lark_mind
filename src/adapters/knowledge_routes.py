@@ -34,7 +34,16 @@ def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
         return RpcEnvelope(ok=True, data=data)
 
     @app.get("/api/knowledge/search")
-    async def knowledge_search(query: str = "", workspace_id: str = "", limit: int = 8, tag: str = "", session_id: str = "", kb_id: str = ""):
+    async def knowledge_search(
+        query: str = "",
+        workspace_id: str = "",
+        limit: int = 8,
+        tag: str = "",
+        session_id: str = "",
+        kb_id: str = "",
+        embedding_provider: str = "",
+        embedding_model: str = "",
+    ):
         kernel: RpcClient = state["kernel"]
         data = await kernel.call(
             "GET",
@@ -46,6 +55,8 @@ def register_knowledge_routes(app: FastAPI, state: Dict[str, Any]) -> None:
                 "tag": tag or "",
                 "session_id": session_id or "",
                 "kb_id": kb_id or "",
+                "embedding_provider": embedding_provider or "",
+                "embedding_model": embedding_model or "",
             },
         )
         return RpcEnvelope(ok=True, data=data)

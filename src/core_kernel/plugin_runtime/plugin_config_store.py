@@ -96,7 +96,7 @@ PLUGIN_CONFIG_SCHEMAS: Dict[str, List[Dict[str, Any]]] = {
             "key": "IMAGE_PROVIDER",
             "label": "生图 Provider ID",
             "type": "text",
-            "hint": "留空则用当前默认对话 Provider（需支持 /images/generations）",
+            "hint": "优先用设置 → 模型 → 生图模型；留空也可回退到默认对话 Provider",
         },
         {
             "key": "IMAGE_MODEL",

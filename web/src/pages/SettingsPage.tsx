@@ -33,7 +33,7 @@ import { ChannelLogo, NlmLogo } from "@/components/brand/Logos";
 import { useChannelSettings } from "@/hooks/useChannelSettings";
 import { useModelSettings } from "@/hooks/useModelSettings";
 import { cn } from "@/lib/utils";
-import type { ProviderEntry } from "@/types/api";
+import type { ProviderEntry, ProviderKind } from "@/types/api";
 
 export type SettingsPageProps = {
   onBack: () => void;
@@ -44,6 +44,7 @@ type ProviderForm = {
   id: string;
   label: string;
   api: string;
+  kind: ProviderKind;
   base_url: string;
   api_key: string;
   default_model: string;
@@ -85,12 +86,18 @@ const EMPTY_PROVIDER: ProviderForm = {
   id: "",
   label: "",
   api: "openai-completions",
+  kind: "chat",
   base_url: "",
   api_key: "",
   default_model: "",
   models: "",
   enabled: true,
 };
+
+function providerKindOf(p: ProviderEntry): ProviderKind {
+  const k = String(p.kind || "chat");
+  return k === "embedding" || k === "image" ? k : "chat";
+}
 
 const EMPTY_FEISHU: FeishuForm = {
   enabled: true,
@@ -179,6 +186,7 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
   } = useChannelSettings();
 
   const [tab, setTab] = useState<"models" | "channels">("models");
+  const [modelKind, setModelKind] = useState<ProviderKind>("chat");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ProviderForm>(EMPTY_PROVIDER);
   const [feishuForm, setFeishuForm] = useState<FeishuForm>(EMPTY_FEISHU);
@@ -238,13 +246,42 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
     void load();
   }, [load]);
 
+  const chatCustoms = useMemo(
+    () => (doc.customs || []).filter((p) => providerKindOf(p) === "chat"),
+    [doc.customs],
+  );
+  const embeddingCustoms = useMemo(
+    () => doc.embeddings || (doc.customs || []).filter((p) => providerKindOf(p) === "embedding"),
+    [doc.customs, doc.embeddings],
+  );
+  const imageCustoms = useMemo(
+    () => doc.images || (doc.customs || []).filter((p) => providerKindOf(p) === "image"),
+    [doc.customs, doc.images],
+  );
+
   const providerOptions = useMemo(
     () => [
       ...doc.builtins.map((p) => ({ value: p.id, label: `${p.label} (env)` })),
-      ...doc.customs.map((p) => ({ value: p.id, label: p.label || p.id })),
+      ...chatCustoms.map((p) => ({ value: p.id, label: p.label || p.id })),
     ],
-    [doc.builtins, doc.customs],
+    [chatCustoms, doc.builtins],
   );
+
+  const embeddingOptions = useMemo(() => {
+    const rows = embeddingCustoms.map((p) => ({ value: p.id, label: p.label || p.id }));
+    if (doc.env_embedding?.configured) {
+      return [{ value: "env", label: "环境变量（回退）" }, ...rows];
+    }
+    return rows;
+  }, [doc.env_embedding, embeddingCustoms]);
+
+  const imageOptions = useMemo(
+    () => imageCustoms.map((p) => ({ value: p.id, label: p.label || p.id })),
+    [imageCustoms],
+  );
+
+  const visibleCustoms =
+    modelKind === "embedding" ? embeddingCustoms : modelKind === "image" ? imageCustoms : chatCustoms;
 
   const discoveredModelList = useMemo(
     () =>
@@ -263,8 +300,9 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
     setForm(EMPTY_PROVIDER);
   }
 
-  function startCreate() {
+  function startCreate(kind: ProviderKind = modelKind) {
     resetForm();
+    setForm({ ...EMPTY_PROVIDER, kind });
     setEditingId("__new__");
   }
 
@@ -277,6 +315,7 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
       id: p.id,
       label: p.label || "",
       api: p.api || "openai-completions",
+      kind: providerKindOf(p),
       base_url: p.base_url || "",
       api_key: "",
       default_model: p.default_model || "",
@@ -396,6 +435,7 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
         id,
         label: form.label.trim() || id,
         api: form.api,
+        kind: form.kind || modelKind,
         base_url,
         api_key: form.api_key,
         default_model,
@@ -416,8 +456,8 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
     onCatalogChanged?.();
   }
 
-  async function onDefault(id: string) {
-    await setDefault(id);
+  async function onDefault(id: string, kind: ProviderKind = "chat") {
+    await setDefault(kind === "embedding" && id === "env" ? "" : id, kind);
     onCatalogChanged?.();
   }
 
@@ -537,6 +577,34 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
           ) : null}
           {loading ? <p className="text-xs text-muted-foreground">加载中…</p> : null}
 
+          <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="模型类型">
+            {(
+              [
+                ["chat", "对话模型"],
+                ["embedding", "向量模型"],
+                ["image", "生图模型"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={modelKind === id}
+                data-testid={`settings-model-kind-${id}`}
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-[12px]",
+                  modelKind === id
+                    ? "bg-primary/15 text-foreground"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+                onClick={() => setModelKind(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {modelKind === "chat" ? (
           <section>
             <h2 className="mb-1.5 text-[15px] font-semibold">默认 Provider</h2>
             <p className="mb-2.5 text-xs text-muted-foreground">
@@ -545,7 +613,7 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
             <div className="max-w-xs">
               <Select
                 value={doc.default_provider || undefined}
-                onValueChange={(v) => void onDefault(v)}
+                onValueChange={(v) => void onDefault(v, "chat")}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="选择默认 Provider" />
@@ -560,7 +628,57 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
               </Select>
             </div>
           </section>
+          ) : modelKind === "embedding" ? (
+          <section>
+            <h2 className="mb-1.5 text-[15px] font-semibold">默认向量模型</h2>
+            <p className="mb-2.5 text-xs text-muted-foreground">
+              知识库回填向量与向量检索优先用它；未选时回退 <code>KB_EMBEDDING_*</code> / WEMM / GLM / OpenAI。
+            </p>
+            <div className="max-w-xs">
+              <Select
+                value={doc.default_embedding_provider || (doc.env_embedding?.configured ? "env" : undefined)}
+                onValueChange={(v) => void onDefault(v, "embedding")}
+              >
+                <SelectTrigger data-testid="settings-default-embedding">
+                  <SelectValue placeholder="选择默认向量模型" />
+                </SelectTrigger>
+                <SelectContent>
+                  {embeddingOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </section>
+          ) : (
+          <section>
+            <h2 className="mb-1.5 text-[15px] font-semibold">默认生图模型</h2>
+            <p className="mb-2.5 text-xs text-muted-foreground">
+              Composer 与 <code>generate_image</code> 会选用这里配置的 OpenAI 兼容生图端点。
+            </p>
+            <div className="max-w-xs">
+              <Select
+                value={doc.default_image_provider || undefined}
+                onValueChange={(v) => void onDefault(v, "image")}
+              >
+                <SelectTrigger data-testid="settings-default-image">
+                  <SelectValue placeholder="选择默认生图模型" />
+                </SelectTrigger>
+                <SelectContent>
+                  {imageOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </section>
+          )}
 
+          {modelKind === "chat" ? (
           <section>
             <h2 className="mb-1.5 text-[15px] font-semibold">内置 Provider（.env）</h2>
             <p className="mb-2.5 text-xs text-muted-foreground">
@@ -607,22 +725,61 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
               ))}
             </div>
           </section>
+          ) : null}
+
+          {modelKind === "embedding" && doc.env_embedding ? (
+            <section>
+              <h2 className="mb-1.5 text-[15px] font-semibold">环境变量回退</h2>
+              <p className="mb-2.5 text-xs text-muted-foreground">
+                {doc.env_embedding.hint || "KB_EMBEDDING_* / WEMM / GLM / OpenAI，只读。"}
+              </p>
+              <Card className="max-w-md border-border/80 bg-card/40 shadow-none">
+                <CardHeader className="space-y-1 p-3 pb-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <CardTitle className="text-sm">{doc.env_embedding.label}</CardTitle>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "px-1.5 py-0 text-[10px] font-normal",
+                        doc.env_embedding.configured && "border-teal/40 text-teal",
+                      )}
+                    >
+                      {doc.env_embedding.configured ? "已配置" : "未配置"}
+                    </Badge>
+                  </div>
+                  <p className="break-all font-mono text-[11px] text-muted-foreground">
+                    {doc.env_embedding.base_url || "（未设置）"}
+                  </p>
+                </CardHeader>
+                <CardContent className="p-3 pt-0">
+                  {modelChips(doc.env_embedding.models, doc.env_embedding.default_model)}
+                </CardContent>
+              </Card>
+            </section>
+          ) : null}
 
           <section>
             <div className="mb-2.5 flex items-start justify-between gap-3">
               <div>
-                <h2 className="mb-1.5 text-[15px] font-semibold">自定义 Provider</h2>
+                <h2 className="mb-1.5 text-[15px] font-semibold">
+                  {modelKind === "embedding"
+                    ? "自定义向量模型"
+                    : modelKind === "image"
+                      ? "自定义生图模型"
+                      : "自定义 Provider"}
+                </h2>
                 <p className="text-xs text-muted-foreground">
-                  填 Base URL + API Key 后可自动拉取 `/models`；保存前可测连通性。
+                  填 Base URL + API Key + 模型 ID；与 OpenAI 兼容的 <code>/embeddings</code> 或{" "}
+                  <code>/images/generations</code> 均可。
                 </p>
               </div>
-              <Button type="button" size="sm" onClick={startCreate}>
+              <Button type="button" size="sm" onClick={() => startCreate(modelKind)}>
                 ＋ 新增
               </Button>
             </div>
 
             <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-2.5">
-              {doc.customs.map((p) => (
+              {visibleCustoms.map((p) => (
                 <Card
                   key={p.id}
                   className="border-primary/25 bg-card/40 shadow-none"
@@ -641,7 +798,7 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
                       </Badge>
                     </div>
                     <CardDescription className="text-[11px]">
-                      {p.id} · {p.api}
+                      {p.id} · {providerKindOf(p)} · {p.api}
                     </CardDescription>
                     <p className="break-all font-mono text-[11px] text-muted-foreground">
                       {p.base_url}
@@ -678,15 +835,21 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => void onDefault(p.id)}
+                      onClick={() => void onDefault(p.id, modelKind)}
                     >
                       设为默认
                     </Button>
                   </CardFooter>
                 </Card>
               ))}
-              {!doc.customs.length ? (
-                <p className="text-xs text-muted-foreground">还没有自定义 Provider。</p>
+              {!visibleCustoms.length ? (
+                <p className="text-xs text-muted-foreground">
+                  {modelKind === "embedding"
+                    ? "还没有自定义向量模型。"
+                    : modelKind === "image"
+                      ? "还没有自定义生图模型。"
+                      : "还没有自定义 Provider。"}
+                </p>
               ) : null}
             </div>
             {modelTestHint && !editingId ? (
@@ -698,7 +861,13 @@ export default function SettingsPage({ onBack, onCatalogChanged }: SettingsPageP
             <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto sm:max-w-[560px]">
               <DialogHeader>
                 <DialogTitle>
-                  {editingId === "__new__" ? "新增 Provider" : `编辑 ${editingId}`}
+                  {editingId === "__new__"
+                    ? form.kind === "embedding"
+                      ? "新增向量模型"
+                      : form.kind === "image"
+                        ? "新增生图模型"
+                        : "新增 Provider"
+                    : `编辑 ${editingId}`}
                 </DialogTitle>
                 <DialogDescription className="sr-only">
                   配置自定义模型 Provider

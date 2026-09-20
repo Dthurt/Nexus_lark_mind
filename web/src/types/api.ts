@@ -185,10 +185,13 @@ export type Tool = {
   openai_name?: string;
 };
 
+export type ProviderKind = "chat" | "embedding" | "image";
+
 export type ProviderEntry = {
   id: string;
   label?: string;
   api?: string;
+  kind?: ProviderKind | string;
   base_url?: string;
   default_model?: string;
   models?: string[];
@@ -200,6 +203,7 @@ export type ProviderEntry = {
   source?: string;
   editable?: boolean;
   hint?: string;
+  backend?: string;
   /** Write-only when saving a custom provider. */
   api_key?: string;
 };
@@ -212,8 +216,13 @@ export type ProviderCatalog = {
 
 export type ProviderDoc = {
   default_provider?: string;
+  default_embedding_provider?: string;
+  default_image_provider?: string;
   builtins: ProviderEntry[];
   customs: ProviderEntry[];
+  embeddings?: ProviderEntry[];
+  images?: ProviderEntry[];
+  env_embedding?: ProviderEntry | null;
 };
 
 export type ChannelEntry = {

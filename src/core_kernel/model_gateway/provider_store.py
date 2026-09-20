@@ -19,15 +19,27 @@ ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 BUILTIN_IDS = frozenset({"openai", "deepseek", "glm", "anthropic"})
 
 
+PROVIDER_KINDS = frozenset({"chat", "embedding", "image"})
+
+
 class CustomProvider(BaseModel):
     id: str
     label: str = ""
     api: str = "openai-completions"  # openai-completions | anthropic-messages (future)
+    kind: str = "chat"  # chat | embedding | image
     base_url: str
     api_key: str = ""
     default_model: str = ""
     models: List[str] = Field(default_factory=list)
     enabled: bool = True
+
+    @field_validator("kind")
+    @classmethod
+    def _kind_ok(cls, v: str) -> str:
+        kind = (v or "chat").strip().lower() or "chat"
+        if kind not in PROVIDER_KINDS:
+            raise ValueError("kind must be chat, embedding, or image")
+        return kind
 
     @field_validator("id")
     @classmethod
@@ -64,12 +76,16 @@ class ProviderStore:
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = path or STORE_PATH
         self.default_provider: Optional[str] = None
+        self.default_embedding_provider: Optional[str] = None
+        self.default_image_provider: Optional[str] = None
         self.providers: Dict[str, CustomProvider] = {}
         self.load()
 
     def load(self) -> None:
         self.providers = {}
         self.default_provider = None
+        self.default_embedding_provider = None
+        self.default_image_provider = None
         if not self.path.exists():
             return
         try:
@@ -78,6 +94,8 @@ class ProviderStore:
             logger.exception("Failed reading %s", self.path)
             return
         self.default_provider = raw.get("default_provider") or None
+        self.default_embedding_provider = raw.get("default_embedding_provider") or None
+        self.default_image_provider = raw.get("default_image_provider") or None
         for item in raw.get("providers") or []:
             try:
                 p = CustomProvider.model_validate(item)
@@ -89,6 +107,8 @@ class ProviderStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "default_provider": self.default_provider,
+            "default_embedding_provider": self.default_embedding_provider,
+            "default_image_provider": self.default_image_provider,
             "providers": [p.model_dump() for p in self.providers.values()],
         }
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -109,6 +129,7 @@ class ProviderStore:
             "id": p.id,
             "label": p.label or p.id,
             "api": p.api,
+            "kind": p.kind or "chat",
             "base_url": p.base_url,
             "default_model": p.default_model,
             "models": p.model_ids(),
@@ -132,7 +153,9 @@ class ProviderStore:
         if not p.default_model and p.models:
             p.default_model = p.models[0]
         if p.enabled and not p.model_ids():
-            raise ValueError("请至少填写一个模型（默认模型或模型列表），否则 Composer 无法选用")
+            if p.kind == "chat":
+                raise ValueError("请至少填写一个模型（默认模型或模型列表），否则 Composer 无法选用")
+            raise ValueError("请至少填写一个模型 ID")
         if p.enabled and not (p.api_key or "").strip() and not (existing and existing.api_key):
             raise ValueError("请填写 API Key")
         self.providers[p.id] = p
@@ -146,9 +169,24 @@ class ProviderStore:
         del self.providers[pid]
         if self.default_provider == pid:
             self.default_provider = None
+        if self.default_embedding_provider == pid:
+            self.default_embedding_provider = None
+        if self.default_image_provider == pid:
+            self.default_image_provider = None
         self.save()
         return True
 
-    def set_default(self, provider_id: Optional[str]) -> None:
-        self.default_provider = provider_id
+    def providers_of_kind(self, kind: str) -> List[CustomProvider]:
+        want = (kind or "chat").strip().lower() or "chat"
+        return [p for p in self.providers.values() if (p.kind or "chat") == want]
+
+    def set_default(self, provider_id: Optional[str], kind: str = "chat") -> None:
+        pid = (provider_id or "").strip() or None
+        k = (kind or "chat").strip().lower() or "chat"
+        if k == "embedding":
+            self.default_embedding_provider = pid
+        elif k == "image":
+            self.default_image_provider = pid
+        else:
+            self.default_provider = pid
         self.save()
