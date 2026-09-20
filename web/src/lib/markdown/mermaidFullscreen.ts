@@ -46,8 +46,12 @@ async function renderSvgFromSource(source: string): Promise<SVGSVGElement | null
     wrap.innerHTML = svgHtml;
     return wrap.querySelector("svg");
   } finally {
-    document.getElementById(id)?.remove();
-    document.querySelectorAll(`svg[id^="${id}"], [id^="d${id}"]`).forEach((n) => n.remove());
+    document.querySelectorAll(`svg[id^="${id}"], [id^="${id}"], [id^="d${id}"]`).forEach((n) => {
+      if ((n as HTMLElement).closest?.(".mermaid-stage, .mermaid-block, .mermaid-fs-overlay")) {
+        return;
+      }
+      n.remove();
+    });
   }
 }
 

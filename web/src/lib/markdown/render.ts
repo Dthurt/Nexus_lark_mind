@@ -339,26 +339,43 @@ let mermaidReady: Promise<any> | null = null;
 let mermaidRenderSeq = 0;
 let mermaidThemeApplied: string | null = null;
 
-function cleanupMermaidArtifacts(id: string) {
+const LIVE_MERMAID_HOST =
+  ".mermaid-stage, .mermaid-block, .mermaid-fs-overlay, .mermaid-fs-stage, .nlm-canvas-mermaid";
+
+export function isLiveMermaidNode(el: Element | null) {
+  return !!(el as HTMLElement | null)?.closest?.(LIVE_MERMAID_HOST);
+}
+
+/** Drop mermaid.render temp nodes only — never the live inline/fullscreen SVG. */
+export function cleanupMermaidArtifacts(id: string) {
+  if (!id) return;
   const candidates = [id, `d${id}`, `${id}-svg`, `d${id}-svg`];
   for (const cid of candidates) {
     try {
-      document.getElementById(cid)?.remove();
+      const el = document.getElementById(cid);
+      if (!el || isLiveMermaidNode(el)) continue;
+      el.remove();
     } catch {
       /* ignore */
     }
   }
-  // Mermaid sometimes leaves error SVGs / temp nodes on body
   document.querySelectorAll(`[id^="d${id}"], [id^="${id}"]`).forEach((el) => {
-    if ((el as HTMLElement).closest?.(".mermaid-stage, .mermaid-block, .mermaid-fs-overlay")) {
-      return;
-    }
+    if (isLiveMermaidNode(el)) return;
     try {
       el.remove();
     } catch {
       /* ignore */
     }
   });
+}
+
+function parseSvgLen(raw: string | null): { value: number; percent: boolean } {
+  const s = String(raw || "").trim();
+  const value = parseFloat(s);
+  return {
+    value: Number.isFinite(value) ? value : 0,
+    percent: /%$/.test(s),
+  };
 }
 
 function isMermaidErrorSvg(svg: string) {
@@ -1012,13 +1029,13 @@ function setMermaidStatus(block: HTMLElement, text: string, isError = false, ful
 export function normalizeMermaidSvgSize(svg: SVGSVGElement) {
   try {
     const vb = svg.viewBox?.baseVal;
-    let w = parseFloat(svg.getAttribute("width") || "") || 0;
-    let h = parseFloat(svg.getAttribute("height") || "") || 0;
-    const pctW = /%/.test(String(svg.getAttribute("width") || ""));
-    const pctH = /%/.test(String(svg.getAttribute("height") || ""));
-    if ((!w || !h || pctW || pctH) && vb && vb.width > 0 && vb.height > 0) {
-      w = vb.width;
-      h = vb.height;
+    const widthAttr = parseSvgLen(svg.getAttribute("width"));
+    const heightAttr = parseSvgLen(svg.getAttribute("height"));
+    let w = widthAttr.percent ? 0 : widthAttr.value;
+    let h = heightAttr.percent ? 0 : heightAttr.value;
+    if ((!w || !h) && vb && vb.width > 0 && vb.height > 0) {
+      w = w || vb.width;
+      h = h || vb.height;
     }
     if ((!w || !h) && typeof svg.getBBox === "function") {
       const b = svg.getBBox();
@@ -1034,10 +1051,15 @@ export function normalizeMermaidSvgSize(svg: SVGSVGElement) {
     if (h > 0) svg.setAttribute("height", String(Math.round(h)));
     // Keep intrinsic pixel size; CSS max-width:100% scales down without collapsing height.
     svg.style.width = "";
-    svg.style.height = "";
     svg.style.maxWidth = "100%";
     svg.style.display = "block";
     svg.style.marginInline = "auto";
+    if (w > 0 && h > 0) {
+      svg.style.aspectRatio = `${w} / ${h}`;
+      svg.style.height = "auto";
+    } else {
+      svg.style.height = "";
+    }
   } catch {
     /* ignore measurement errors off-DOM */
   }
@@ -1055,10 +1077,19 @@ async function renderOneMermaid(mermaid: any, block: HTMLElement, source: string
     if (isMermaidErrorSvg(svg)) {
       throw new Error("Syntax error in text (mermaid error diagram)");
     }
+    cleanupMermaidArtifacts(id);
     stage.innerHTML = svg;
     if (typeof result?.bindFunctions === "function") result.bindFunctions(stage);
     const svgEl = stage.querySelector("svg") as SVGSVGElement | null;
-    if (svgEl) normalizeMermaidSvgSize(svgEl);
+    if (svgEl) {
+      // mermaid.render uses this id on the returned SVG; keep it off the live node
+      // so a later temp-node sweep cannot delete the inline diagram.
+      if (svgEl.id === id || svgEl.id.startsWith(id)) {
+        svgEl.dataset.mermaidRenderId = svgEl.id;
+        svgEl.removeAttribute("id");
+      }
+      normalizeMermaidSvgSize(svgEl);
+    }
     delete block.dataset.mermaidError;
     setMermaidStatus(block, "");
     block.setAttribute("data-processed", "ok");

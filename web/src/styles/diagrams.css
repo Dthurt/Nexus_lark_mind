@@ -299,7 +299,8 @@ html.code-fs-open {
 }
 
 .nlm-md .mermaid-stage,
-.msg .body.md .mermaid-stage {
+.msg .body.md .mermaid-stage,
+.nlm-canvas-mermaid .mermaid-stage {
   /* Block (not flex): Mermaid emits width=100% with no height; flex + height:auto
      collapses SVG clientHeight to ~0 while fullscreen remounts with pixel sizes. */
   display: block;
@@ -312,11 +313,13 @@ html.code-fs-open {
 }
 
 .nlm-md .mermaid-stage svg,
-.msg .body.md .mermaid-stage svg {
+.msg .body.md .mermaid-stage svg,
+.nlm-canvas-mermaid .mermaid-stage svg,
+.mermaid-stage svg {
   display: block;
   margin-inline: auto;
   max-width: 100%;
-  width: auto;
+  width: 100%;
   height: auto;
 }
 

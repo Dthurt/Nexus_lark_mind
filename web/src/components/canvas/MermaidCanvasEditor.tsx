@@ -85,7 +85,7 @@ export function MermaidCanvasEditor({ source, onCommit }: MermaidCanvasEditorPro
         </>
       }
     >
-      <div ref={ref} className="nlm-canvas-mermaid min-h-[160px] p-2" />
+      <div ref={ref} className="nlm-md nlm-canvas-mermaid min-h-[160px] p-2" />
     </CanvasEditorShell>
   );
 }
