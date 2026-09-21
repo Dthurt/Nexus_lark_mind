@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { DEFAULT_LOCAL_KB_ID, kbScopeLabel, LOCAL_KB_ID } from "@/lib/knowledgeScope";
+import { DEFAULT_LOCAL_KB_ID, kbScopeLabel } from "@/lib/knowledgeScope";
 import { cn } from "@/lib/utils";
 
 export type KnowledgeScopePickerProps = {
@@ -73,7 +73,7 @@ export function KnowledgeScopePicker({
           <DropdownMenuItem
             className="gap-2"
             data-testid="knowledge-scope-local"
-            onSelect={() => onChange?.(LOCAL_KB_ID, defaultLocal?.name || "本地知识库")}
+            onSelect={() => onChange?.(DEFAULT_LOCAL_KB_ID, defaultLocal?.name || "本地知识库")}
           >
             <Check className={cn("size-3.5", localActive ? "opacity-100" : "opacity-0")} />
             <span className="min-w-0 flex-1">{defaultLocal?.name || "本地知识库"}</span>

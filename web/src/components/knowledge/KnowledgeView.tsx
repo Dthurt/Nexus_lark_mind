@@ -65,12 +65,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { GraphLayer } from "@/components/knowledge/GraphLayer";
 import { KnowledgeSegment } from "@/components/knowledge/KnowledgeSegment";
 import { WikiLayer } from "@/components/knowledge/WikiLayer";
+import { runWikiDistill } from "@/lib/wikiDistill";
 import {
   ALL_LOCAL_KB_ID,
   DEFAULT_LOCAL_KB_ID,
   isLocalKbId,
   kbScopeLabel,
-  LOCAL_KB_ID,
   type KnowledgeSection,
 } from "@/lib/knowledgeScope";
 import {
@@ -266,6 +266,8 @@ export function KnowledgeView({
   const [forceReindex, setForceReindex] = useState(false);
   const [lastSearchQuery, setLastSearchQuery] = useState("");
   const [retryingJob, setRetryingJob] = useState("");
+  const [wikiTick, setWikiTick] = useState(0);
+  const [distillingWiki, setDistillingWiki] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editTags, setEditTags] = useState("");
   const [savingMeta, setSavingMeta] = useState(false);
@@ -289,18 +291,23 @@ export function KnowledgeView({
   const reduced = usePrefersReducedMotion();
 
   useEffect(() => {
+    if (!remote) return;
+    if (section === "wiki" || section === "graph") onNavigateSection?.("docs");
+  }, [onNavigateSection, remote, section]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
       if (el && /INPUT|TEXTAREA|SELECT/.test(el.tagName)) return;
       if (el?.isContentEditable) return;
       if (e.key === "1") onNavigateSection?.("docs");
-      if (e.key === "2") onNavigateSection?.("wiki");
-      if (e.key === "3") onNavigateSection?.("graph");
+      if (!remote && e.key === "2") onNavigateSection?.("wiki");
+      if (!remote && e.key === "3") onNavigateSection?.("graph");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onNavigateSection]);
+  }, [onNavigateSection, remote]);
 
   const groupedRows = useMemo(() => {
     const groups: { prefix: string; items: BrowseRow[] }[] = [];
@@ -448,6 +455,34 @@ export function KnowledgeView({
     prevActiveJobs.current = activeJobs.length;
   }, [activeJobs.length, onCatalogRefresh]);
 
+  const onDistillWiki = useCallback(async () => {
+    if (remote || distillingWiki) return;
+    setDistillingWiki(true);
+    try {
+      toast.success("正在生成本库 Wiki");
+      const job = await runWikiDistill({
+        kbId: localKbId || DEFAULT_LOCAL_KB_ID,
+        workspaceId: workspaceId || undefined,
+        onTick: () => {
+          void loadList();
+          void loadJobs();
+        },
+      });
+      if (job?.status === "failed") {
+        toast.error(job.error || "蒸馏失败");
+      } else {
+        toast.success(job?.message || "本库 Wiki 已更新");
+      }
+      setWikiTick((n) => n + 1);
+      await loadList();
+      await loadJobs();
+    } catch (err: any) {
+      toast.error(String(err?.message || err || "蒸馏失败"));
+    } finally {
+      setDistillingWiki(false);
+    }
+  }, [distillingWiki, loadJobs, loadList, localKbId, remote, workspaceId]);
+
   const enqueueFiles = async (fileList: FileList | File[] | null | undefined) => {
     const incoming = Array.from(fileList || []).filter(Boolean);
     if (!incoming.length) return;
@@ -559,11 +594,10 @@ export function KnowledgeView({
           setEditTitle(doc.title || "");
           setEditTags(doc.tags || "");
           setChunks(
-            (doc.chunks || []).filter(
-              (c) =>
-                (c.chunk_type || "text") !== "parent" ||
-                (citeChunk != null && c.chunk_index === citeChunk),
-            ),
+            (doc.chunks || []).filter((c) => {
+              if (citeChunk != null && c.chunk_index === citeChunk) return true;
+              return (c.chunk_type || "text") !== "parent";
+            }),
           );
           setEditingChunk("");
           setSideTab("preview");
@@ -764,7 +798,7 @@ export function KnowledgeView({
       await deleteLocalKnowledgeBase(kb.id);
       toast.success("已删除本地库");
       if (boundKbId === kb.id) {
-        onBindKb?.(LOCAL_KB_ID, defaultLocal?.name || "本地知识库");
+        onBindKb?.(DEFAULT_LOCAL_KB_ID, defaultLocal?.name || "本地知识库");
       }
       onCatalogRefresh?.();
     } catch (err: any) {
@@ -963,11 +997,15 @@ export function KnowledgeView({
             <KnowledgeSegment
               value={section}
               onChange={(next) => onNavigateSection?.(next)}
-              items={[
-                { id: "docs", label: "文档", testId: "knowledge-section-docs", Icon: FileText },
-                { id: "wiki", label: "Wiki", testId: "knowledge-section-wiki", Icon: BookOpen },
-                { id: "graph", label: "图谱", testId: "knowledge-section-graph", Icon: Network },
-              ]}
+              items={
+                remote
+                  ? [{ id: "docs", label: "文档", testId: "knowledge-section-docs", Icon: FileText }]
+                  : [
+                      { id: "docs", label: "文档", testId: "knowledge-section-docs", Icon: FileText },
+                      { id: "wiki", label: "Wiki", testId: "knowledge-section-wiki", Icon: BookOpen },
+                      { id: "graph", label: "图谱", testId: "knowledge-section-graph", Icon: Network },
+                    ]
+              }
             />
             {onAskAbout ? (
               <Button
@@ -993,7 +1031,7 @@ export function KnowledgeView({
             type="button"
             className={cn("nlm-knowledge-rail-item", localActive && "is-active")}
             data-testid="knowledge-scope-local"
-            onClick={() => onBindKb?.(LOCAL_KB_ID, defaultLocal?.name || "本地知识库")}
+            onClick={() => onBindKb?.(DEFAULT_LOCAL_KB_ID, defaultLocal?.name || "本地知识库")}
           >
             <span className="min-w-0 flex-1 truncate">{defaultLocal?.name || "默认知识库"}</span>
             <span className="text-[10px] text-muted-foreground">{defaultLocal?.doc_count ?? 0}</span>
@@ -1133,6 +1171,9 @@ export function KnowledgeView({
             slug={slug}
             workspaceId={workspaceId}
             remote={remote}
+            refreshKey={wikiTick}
+            distilling={distillingWiki}
+            onDistill={() => void onDistillWiki()}
             onOpenSlug={(next) => onNavigateSection?.("wiki", next)}
             onAskAbout={onAskAbout}
           />
@@ -1141,9 +1182,10 @@ export function KnowledgeView({
           <GraphLayer
             kbId={localKbId || DEFAULT_LOCAL_KB_ID}
             remote={remote}
+            refreshKey={wikiTick}
             onOpenWiki={(next) => onNavigateSection?.("wiki", next)}
             onOpenDoc={(docId) => onNavigateSection?.("docs", docId)}
-            onGenerateWiki={() => onNavigateSection?.("wiki")}
+            onGenerateWiki={() => void onDistillWiki()}
           />
         ) : null}
         {section === "docs" ? (

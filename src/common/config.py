@@ -116,6 +116,8 @@ class Settings(BaseSettings):
 
     web_static_dir: str = "web-static"
     cors_origins: str = "*"
+    # Local-mode chat history (MemoryBroker). gitignored via data/.
+    session_persist_dir: str = "data/web_sessions"
 
     @property
     def cors_origin_list(self) -> List[str]:

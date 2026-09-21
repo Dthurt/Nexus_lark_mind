@@ -1230,12 +1230,69 @@ def install_crawl(*, ask: bool = True) -> bool:
     return install_deps(force=True, with_crawl=True)
 
 
-def check_web_static(*, offer_build: bool = True) -> None:
+def web_src_mtime(root: Optional[Path] = None) -> float:
+    """Newest mtime under web/src plus a few config files (not node_modules)."""
+    base = Path(root or ROOT)
+    newest = 0.0
+    src = base / "web" / "src"
+    extras = (
+        base / "web" / "index.html",
+        base / "web" / "package.json",
+        base / "web" / "vite.config.ts",
+        base / "web" / "tsconfig.json",
+        base / "web" / "tsconfig.app.json",
+    )
+    paths: List[Path] = []
+    if src.is_dir():
+        paths.extend(p for p in src.rglob("*") if p.is_file())
+    paths.extend(p for p in extras if p.is_file())
+    for path in paths:
+        if "node_modules" in path.parts:
+            continue
+        try:
+            newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            continue
+    return newest
+
+
+def web_static_is_stale(root: Optional[Path] = None, *, slop_seconds: float = 2.0) -> bool:
+    base = Path(root or ROOT)
+    index = base / "web-static" / "index.html"
+    if not index.is_file():
+        return True
+    src = web_src_mtime(base)
+    if src <= 0:
+        return False
+    try:
+        built = index.stat().st_mtime
+    except OSError:
+        return True
+    return src > built + slop_seconds
+
+
+def _npm_build_web() -> bool:
+    npm = shutil.which("npm")
+    if not npm:
+        return False
+    web = ROOT / "web"
+    if not (web / "node_modules").is_dir():
+        run_cmd([npm, "install"], cwd=web)
+    run_cmd([npm, "run", "build"], cwd=web)
+    return True
+
+
+def check_web_static(*, offer_build: bool = True, rebuild_stale: bool = True) -> None:
     index = ROOT / "web-static" / "index.html"
-    if index.is_file():
+    missing = not index.is_file()
+    stale = (not missing) and web_static_is_stale()
+    if not missing and not stale:
         ok("web-static ready")
         return
-    warn("web-static/index.html missing — UI on :8000 will be empty until you build")
+    if missing:
+        warn("web-static/index.html missing — UI on :8000 will be empty until you build")
+    else:
+        warn("web-static 比 web/src 旧 — nlm start 的 :8000 会开到过期界面")
     major = node_major_version()
     npm = shutil.which("npm")
     if major is None or not npm:
@@ -1247,21 +1304,29 @@ def check_web_static(*, offer_build: bool = True) -> None:
         return
     if not (ROOT / "web" / "package.json").is_file():
         return
-    if not offer_build:
+    if not offer_build and not rebuild_stale:
         return
-    if confirm(f"检测到 Node v{major}，现在构建前端？", default=False):
-        with progress_ctx() as progress:
-            progress.add_task("npm install && npm run build", total=None)
-            try:
-                run_cmd([npm, "install"], cwd=ROOT / "web")
-                run_cmd([npm, "run", "build"], cwd=ROOT / "web")
-            except subprocess.CalledProcessError as exc:
-                err(f"Frontend build failed: {exc}")
-                return
-        if index.is_file():
-            ok("Frontend built → web-static/")
-        else:
-            err("Build finished but index.html still missing")
+    should_build = False
+    if auto_yes() or not sys.stdin.isatty():
+        should_build = True
+    elif confirm("现在重建前端到 web-static？", default=True):
+        should_build = True
+    if not should_build:
+        warn("继续使用旧 UI。稍后: cd web && npm run build")
+        return
+    with progress_ctx() as progress:
+        progress.add_task("npm install && npm run build", total=None)
+        try:
+            _npm_build_web()
+        except subprocess.CalledProcessError as exc:
+            err(f"Frontend build failed: {exc}")
+            return
+    if index.is_file() and not web_static_is_stale():
+        ok("Frontend built → web-static/")
+    elif index.is_file():
+        warn("Build finished but web-static still looks older than web/src")
+    else:
+        err("Build finished but index.html still missing")
 
 
 def diagnose() -> Any:
@@ -1272,10 +1337,13 @@ def diagnose() -> Any:
     table.add_row("Python", f"[ok]{py_msg}[/ok]" if good else f"[err]{py_msg}[/err]")
     table.add_row("venv", "[ok]yes[/ok]" if venv_python().is_file() else "[err]missing[/err]")
     table.add_row(".env", "[ok]yes[/ok]" if ENV_PATH.exists() else "[warn]missing[/warn]")
-    table.add_row(
-        "web-static",
-        "[ok]yes[/ok]" if (ROOT / "web-static" / "index.html").is_file() else "[warn]missing[/warn]",
-    )
+    index = ROOT / "web-static" / "index.html"
+    if not index.is_file():
+        table.add_row("web-static", "[warn]missing[/warn]")
+    elif web_static_is_stale():
+        table.add_row("web-static", "[warn]stale vs web/src[/warn]")
+    else:
+        table.add_row("web-static", "[ok]yes[/ok]")
     major = node_major_version()
     if major is None:
         table.add_row("Node.js", "[muted]optional · not installed[/muted]")
@@ -1325,6 +1393,8 @@ def doctor() -> int:
         warn("Missing .env — run: nlm config")
     if not (ROOT / "web-static" / "index.html").is_file():
         warn("Missing web-static — UI empty until build")
+    elif web_static_is_stale():
+        warn("Stale web-static — :8000 may serve an old UI (nlm start rebuilds when Node is available)")
     if issues == 0:
         ok("Doctor: no critical issues")
     else:
@@ -1343,7 +1413,7 @@ def repair() -> None:
     ensure_env_file()
     fix_docker_urls_in_env()
     free_ports()
-    check_web_static(offer_build=False)
+    check_web_static(offer_build=True, rebuild_stale=True)
     ok("Repair pass complete")
     console.print(diagnose())
 
@@ -1402,7 +1472,7 @@ def setup_flow(
     ):
         install_crawl(ask=False)
 
-    check_web_static(offer_build=first_time and sys.stdin.isatty() and not auto_yes())
+    check_web_static(offer_build=True, rebuild_stale=True)
     ok("Setup finished")
     return True
 
@@ -1538,6 +1608,7 @@ def start_flow(*, open_browser: bool = True, skip_setup: bool = False) -> int:
         fix_docker_urls_in_env()
 
     step("Pre-flight")
+    check_web_static(offer_build=True, rebuild_stale=True)
     free_ports()
     console.print(diagnose())
 

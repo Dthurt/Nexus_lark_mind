@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
+import os
+import re
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Union
 
 import orjson
 
@@ -16,11 +20,20 @@ logger = logging.getLogger(__name__)
 
 EventHandler = Callable[[BusEvent], Awaitable[None]]
 
+_SAFE_SESSION_ID = re.compile(r"^[A-Za-z0-9._-]{1,180}$")
+_INDEX_NAME = "index.json"
+
 
 class MemoryBroker:
     """Duck-compatible with RedisClient for queue / pubsub / session cache."""
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(
+        self,
+        settings: Optional[Settings] = None,
+        *,
+        persist: bool = False,
+        persist_dir: Optional[Union[str, Path]] = None,
+    ) -> None:
         self.settings = settings or get_settings()
         self._queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._subscribers: Set[asyncio.Queue[bytes]] = set()
@@ -30,12 +43,18 @@ class MemoryBroker:
         self._event_logs: Dict[str, List[dict]] = {}
         self._lock = asyncio.Lock()
         self._connected = False
+        raw_dir = persist_dir if persist_dir is not None else self.settings.session_persist_dir
+        self._persist_dir = Path(str(raw_dir)) if persist and str(raw_dir or "").strip() else None
 
     async def connect(self) -> None:
         already = self._connected
         self._connected = True
         if not already:
-            logger.info("Memory broker ready (local mode, no Redis)")
+            restored = self._hydrate_from_disk()
+            extra = ""
+            if self._persist_dir is not None:
+                extra = f", persist={self._persist_dir} restored={restored}"
+            logger.info("Memory broker ready (local mode, no Redis)%s", extra)
 
     async def close(self) -> None:
         self._connected = False
@@ -93,56 +112,165 @@ class MemoryBroker:
     def _session_key(self, session_id: str) -> str:
         return f"{self.settings.redis_session_prefix}{session_id}"
 
-    async def set_session(self, session_id: str, payload: dict, ttl: int = 86400) -> None:
+    def _session_file(self, session_id: str) -> Path:
+        assert self._persist_dir is not None
+        name = session_id if _SAFE_SESSION_ID.match(session_id) else hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        return self._persist_dir / f"{name}.json"
+
+    def _hydrate_from_disk(self) -> int:
+        if self._persist_dir is None:
+            return 0
+        root = self._persist_dir
+        if not root.is_dir():
+            return 0
+        order: List[str] = []
+        index_path = root / _INDEX_NAME
+        if index_path.is_file():
+            try:
+                raw = orjson.loads(index_path.read_bytes())
+                ids = raw.get("ids") if isinstance(raw, dict) else raw
+                if isinstance(ids, list):
+                    order = [str(x) for x in ids if str(x).strip()]
+            except Exception:
+                logger.exception("Failed to read session index %s", index_path)
+        loaded: Dict[str, dict] = {}
+        for path in root.glob("*.json"):
+            if path.name == _INDEX_NAME:
+                continue
+            try:
+                payload = orjson.loads(path.read_bytes())
+            except Exception:
+                logger.exception("Failed to read session file %s", path)
+                continue
+            if not isinstance(payload, dict):
+                continue
+            sid = str(payload.get("session_id") or path.stem).strip()
+            if not sid:
+                continue
+            loaded[sid] = payload
+        if not order:
+            def _stamp(sid: str) -> str:
+                sess = loaded.get(sid) or {}
+                return str(sess.get("updated_at") or sess.get("created_at") or "")
+
+            order = sorted(loaded.keys(), key=_stamp)
+        else:
+            extras = [sid for sid in loaded.keys() if sid not in order]
+            extras.sort(key=lambda sid: str((loaded.get(sid) or {}).get("updated_at") or ""))
+            order.extend(extras)
+        count = 0
+        for sid in order:
+            payload = loaded.get(sid)
+            if not payload:
+                continue
+            self._sessions[self._session_key(sid)] = payload
+            if sid not in self._session_order:
+                self._session_order.append(sid)
+            count += 1
+        return count
+
+    def _write_index(self) -> None:
+        if self._persist_dir is None:
+            return
+        self._persist_dir.mkdir(parents=True, exist_ok=True)
+        path = self._persist_dir / _INDEX_NAME
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_bytes(orjson.dumps({"ids": list(self._session_order)}))
+        os.replace(tmp, path)
+
+    def _persist_session(self, session_id: str, payload: dict) -> None:
+        if self._persist_dir is None:
+            return
+        try:
+            self._persist_dir.mkdir(parents=True, exist_ok=True)
+            path = self._session_file(session_id)
+            tmp = path.with_name(path.name + ".tmp")
+            blob = dict(payload)
+            blob.setdefault("session_id", session_id)
+            tmp.write_bytes(orjson.dumps(blob))
+            os.replace(tmp, path)
+            self._write_index()
+        except Exception:
+            logger.exception("Failed to persist session %s", session_id)
+
+    def _forget_persisted(self, session_id: str) -> None:
+        if self._persist_dir is None:
+            return
+        try:
+            path = self._session_file(session_id)
+            if path.is_file():
+                path.unlink()
+            self._write_index()
+        except Exception:
+            logger.exception("Failed to delete persisted session %s", session_id)
+
+    def _put_session(self, session_id: str, payload: dict) -> None:
         key = self._session_key(session_id)
         self._sessions[key] = payload
         if session_id not in self._session_order:
             self._session_order.append(session_id)
+        self._persist_session(session_id, payload)
+
+    async def set_session(self, session_id: str, payload: dict, ttl: int = 86400) -> None:
+        _ = ttl  # local mode has no TTL; disk files survive nlm restart
+        async with self._lock:
+            self._put_session(session_id, payload)
 
     async def get_session(self, session_id: str) -> Optional[dict]:
         return self._sessions.get(self._session_key(session_id))
 
     async def delete_session(self, session_id: str) -> None:
-        self._sessions.pop(self._session_key(session_id), None)
-        self._session_order = [s for s in self._session_order if s != session_id]
+        async with self._lock:
+            self._sessions.pop(self._session_key(session_id), None)
+            self._session_order = [s for s in self._session_order if s != session_id]
+            self._forget_persisted(session_id)
+
+    def _session_list_row(self, session_id: str, sess: dict) -> dict:
+        msgs = sess.get("messages") or []
+        preview = ""
+        for m in reversed(msgs):
+            if m.get("role") == "user" and m.get("content"):
+                preview = str(m["content"])[:80]
+                break
+        return {
+            "session_id": session_id,
+            "title": sess.get("title") or "新对话",
+            "updated_at": sess.get("updated_at"),
+            "created_at": sess.get("created_at"),
+            "message_count": len(msgs),
+            "preview": preview,
+            "channel": sess.get("channel"),
+            "cwd": sess.get("cwd") or "",
+            "workspace_id": sess.get("workspace_id") or "",
+            "workspace_title": sess.get("workspace_title") or "",
+            "workspace_kind": sess.get("workspace_kind") or "local",
+            "ssh_host_id": sess.get("ssh_host_id") or "",
+            "parent_id": sess.get("parent_id") or sess.get("forked_from") or "",
+            "forked_from": sess.get("forked_from") or "",
+            "fork_point_index": sess.get("fork_point_index"),
+            "bookmarks": sess.get("bookmarks") or [],
+            "preset_name": sess.get("preset_name") or "",
+            "active_tools": sess.get("active_tools"),
+        }
 
     async def list_sessions(self) -> List[dict]:
         out: List[dict] = []
         for sid in reversed(self._session_order):
-            sess = await self.get_session(sid)
+            sess = self._sessions.get(self._session_key(sid))
             if not sess:
                 continue
-            msgs = sess.get("messages") or []
-            preview = ""
-            for m in reversed(msgs):
-                if m.get("role") == "user" and m.get("content"):
-                    preview = str(m["content"])[:80]
-                    break
-            out.append(
-                {
-                    "session_id": sid,
-                    "title": sess.get("title") or "新对话",
-                    "updated_at": sess.get("updated_at"),
-                    "created_at": sess.get("created_at"),
-                    "message_count": len(msgs),
-                    "preview": preview,
-                    "channel": sess.get("channel"),
-                    "cwd": sess.get("cwd") or "",
-                    "workspace_id": sess.get("workspace_id") or "",
-                    "workspace_title": sess.get("workspace_title") or "",
-                    "workspace_kind": sess.get("workspace_kind") or "local",
-                    "ssh_host_id": sess.get("ssh_host_id") or "",
-                }
-            )
+            out.append(self._session_list_row(sid, sess))
         return out
 
     async def append_session_message(self, session_id: str, message: dict, ttl: int = 86400) -> dict:
-        session = await self.get_session(session_id)
-        if session is None:
-            raise KeyError(f"session missing for append: {session_id}")
-        session.setdefault("messages", []).append(message)
-        await self.set_session(session_id, session, ttl=ttl)
-        return session
+        _ = ttl
+        async with self._lock:
+            session = self._sessions.get(self._session_key(session_id))
+            if session is None:
+                raise KeyError(f"session missing for append: {session_id}")
+            session.setdefault("messages", []).append(message)
+            self._put_session(session_id, session)
+            return session
 
     async def patch_session(
         self,
@@ -173,15 +301,17 @@ class MemoryBroker:
         ttl: int = 86400,
         preserve_messages: bool = True,
     ) -> dict:
-        session = await self.get_session(session_id)
-        if session is None:
-            raise KeyError(f"session missing for update: {session_id}")
-        prior_messages = list(session.get("messages") or [])
-        mutator(session)
-        if preserve_messages:
-            session["messages"] = prior_messages
-        await self.set_session(session_id, session, ttl=ttl)
-        return session
+        _ = ttl
+        async with self._lock:
+            session = self._sessions.get(self._session_key(session_id))
+            if session is None:
+                raise KeyError(f"session missing for update: {session_id}")
+            prior_messages = list(session.get("messages") or [])
+            mutator(session)
+            if preserve_messages:
+                session["messages"] = prior_messages
+            self._put_session(session_id, session)
+            return session
 
     # ----- Generic KV + SSE event ring (Wave C) -----
 
@@ -234,5 +364,5 @@ _SHARED: Optional[MemoryBroker] = None
 def get_shared_memory_broker(settings: Optional[Settings] = None) -> MemoryBroker:
     global _SHARED
     if _SHARED is None:
-        _SHARED = MemoryBroker(settings or get_settings())
+        _SHARED = MemoryBroker(settings or get_settings(), persist=True)
     return _SHARED

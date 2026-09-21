@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { composerKbPlaceholder, kbScopeLabel, LOCAL_KB_ID, knowledgePath, parseKnowledgeLocation, parseKnowledgePath, sameKnowledgeId } from "@/lib/knowledgeScope";
+import { composerKbPlaceholder, kbScopeLabel, LOCAL_KB_ID, canonicalKbId, knowledgePath, parseKnowledgeLocation, parseKnowledgePath, sameKnowledgeId } from "@/lib/knowledgeScope";
 
 describe("knowledgeScope", () => {
   it("labels empty id as local KB", () => {
@@ -45,5 +45,7 @@ describe("knowledgeScope", () => {
     expect(sameKnowledgeId("", "local:default")).toBe(true);
     expect(sameKnowledgeId("local:legal", "local:legal")).toBe(true);
     expect(sameKnowledgeId("local:legal", "")).toBe(false);
+    expect(canonicalKbId("")).toBe("local:default");
+    expect(canonicalKbId("local:default")).toBe("local:default");
   });
 });

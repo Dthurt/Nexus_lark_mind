@@ -33,6 +33,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { canonicalKbId } from "@/lib/knowledgeScope";
 
 export type KnowledgePanelProps = {
   cwd?: string;
@@ -117,22 +118,21 @@ export function KnowledgePanel({
 
   const onSelectWeknoraKb = async (kbId: string) => {
     const id = String(kbId || "").trim();
-    setWkKbId(id);
-    const kbName = id
-      ? wkKbs.find((kb) => kb.id === id)?.name || id
-      : "本地知识库";
-    onBoundKbChange?.(id, kbName);
+    const canon = canonicalKbId(id);
+    setWkKbId(canon);
+    const kbName =
+      canon === "local:default" && !id
+        ? "本地知识库"
+        : wkKbs.find((kb) => kb.id === canon)?.name || canon;
+    onBoundKbChange?.(canon, kbName);
     if (!sessionId) return;
     try {
-      if (!id) {
-        await patchInteraction(sessionId, { clear_weknora_kb_id: true });
+      await patchInteraction(sessionId, { weknora_kb_id: canon });
+      toast.success(canon === "local:default" && !id ? "已切换到本地知识库" : "已绑定会话知识库");
+      if (canon === "local:default") {
         setBrowseMode("local");
         setRemoteHits(null);
-        toast.success("已切换到本地知识库");
-        return;
       }
-      await patchInteraction(sessionId, { weknora_kb_id: id });
-      toast.success("已绑定会话知识库");
     } catch (err: any) {
       toast.error(String(err?.message || err || "绑定 KB 失败"));
     }

@@ -42,6 +42,13 @@ WORD_BLOCK_TYPES = {
     "equation",
 }
 PPT_SLIDE_TYPES = {"title", "section", "bullets", "two_column", "quote", "image", "equation"}
+PPT_MAX_BULLETS = 6
+PPT_MAX_COLUMN_ITEMS = 5
+PPT_MAX_ITEM_CHARS = 80
+PPT_MAX_TITLE_CHARS = 48
+PPT_MAX_SUBTITLE_CHARS = 90
+PPT_MAX_QUOTE_CHARS = 160
+PPT_MAX_BODY_CHARS = 220
 MAX_APPEND_BLOCKS = 8
 MAX_APPEND_SLIDES = 3
 DEFAULT_FORBIDDEN = [
@@ -225,6 +232,81 @@ def normalize_last_block(raw: Any) -> Dict[str, str]:
         "excerpt": _clean_text(raw.get("excerpt") or raw.get("text") or raw.get("sentences")),
         "plan_id": _clean_text(raw.get("plan_id") or raw.get("req")),
     }
+
+
+def _clip_chars(value: Any, limit: int) -> str:
+    text = _clean_text(value)
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)].rstrip() + "…"
+
+
+def _clip_items(items: Sequence[str], *, max_n: int, max_chars: int) -> List[str]:
+    out: List[str] = []
+    for raw in items:
+        text = _clip_chars(raw, max_chars)
+        if text:
+            out.append(text)
+        if len(out) >= max_n:
+            break
+    return out
+
+
+def expand_slide_layout(slide: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Fit one slide to a readable layout; overflow bullets become continuation slides."""
+    if not isinstance(slide, dict):
+        return []
+    stype = str(slide.get("type") or "")
+    if stype == "title":
+        next_slide = dict(slide)
+        next_slide["title"] = _clip_chars(slide.get("title"), PPT_MAX_TITLE_CHARS)
+        if slide.get("subtitle"):
+            next_slide["subtitle"] = _clip_chars(slide.get("subtitle"), PPT_MAX_SUBTITLE_CHARS)
+        return [next_slide]
+    if stype == "section":
+        next_slide = dict(slide)
+        next_slide["title"] = _clip_chars(slide.get("title"), PPT_MAX_TITLE_CHARS)
+        if slide.get("kicker"):
+            next_slide["kicker"] = _clip_chars(slide.get("kicker"), PPT_MAX_SUBTITLE_CHARS)
+        return [next_slide]
+    if stype == "quote":
+        next_slide = dict(slide)
+        next_slide["text"] = _clip_chars(slide.get("text"), PPT_MAX_QUOTE_CHARS)
+        if slide.get("attribution"):
+            next_slide["attribution"] = _clip_chars(slide.get("attribution"), 40)
+        return [next_slide]
+    if stype == "two_column":
+        next_slide = dict(slide)
+        left = dict(slide.get("left") or {})
+        right = dict(slide.get("right") or {})
+        left["heading"] = _clip_chars(left.get("heading"), PPT_MAX_TITLE_CHARS)
+        right["heading"] = _clip_chars(right.get("heading"), PPT_MAX_TITLE_CHARS)
+        left["body"] = _clip_chars(left.get("body"), PPT_MAX_BODY_CHARS)
+        right["body"] = _clip_chars(right.get("body"), PPT_MAX_BODY_CHARS)
+        left["items"] = _clip_items(left.get("items") or [], max_n=PPT_MAX_COLUMN_ITEMS, max_chars=PPT_MAX_ITEM_CHARS)
+        right["items"] = _clip_items(right.get("items") or [], max_n=PPT_MAX_COLUMN_ITEMS, max_chars=PPT_MAX_ITEM_CHARS)
+        next_slide["left"] = left
+        next_slide["right"] = right
+        next_slide["title"] = _clip_chars(slide.get("title"), PPT_MAX_TITLE_CHARS)
+        return [next_slide]
+    if stype != "bullets":
+        return [dict(slide)]
+    items = [_clip_chars(x, PPT_MAX_ITEM_CHARS) for x in (slide.get("items") or []) if _clean_text(x)]
+    if not items:
+        next_slide = dict(slide)
+        next_slide["items"] = []
+        return [next_slide]
+    title = _clip_chars(slide.get("title"), PPT_MAX_TITLE_CHARS)
+    pages: List[Dict[str, Any]] = []
+    for i in range(0, len(items), PPT_MAX_BULLETS):
+        chunk = items[i : i + PPT_MAX_BULLETS]
+        nxt = dict(slide)
+        nxt["title"] = title if i == 0 else (f"{title}（续）" if title else "（续）")
+        if i:
+            nxt["id"] = f"{slide.get('id') or 's'}_p{i // PPT_MAX_BULLETS + 1}"
+        nxt["items"] = chunk
+        pages.append(nxt)
+    return pages
 
 
 def _string_items(raw: Any) -> List[str]:
@@ -655,7 +737,9 @@ def parse_outline(raw: Any) -> Dict[str, Any]:
     sid = normalize_style_id(raw.get("style_id"))
     theme = normalize_theme(style_id=sid)
     blocks = [normalize_block(b) for b in _as_list(raw.get("blocks"))]
-    slides = [normalize_slide(s) for s in _as_list(raw.get("slides"))]
+    slides: List[Dict[str, Any]] = []
+    for s in _as_list(raw.get("slides")):
+        slides.extend(expand_slide_layout(normalize_slide(s)))
     return {
         "schema": SCHEMA,
         "doc_id": _clean_text(raw.get("doc_id")) or new_doc_id(),
@@ -953,10 +1037,15 @@ def apply_append(outline: Dict[str, Any], payload: Dict[str, Any]) -> Tuple[Dict
             slide = normalize_slide(raw, default_id=sid)
             if plan_id and not slide.get("req"):
                 slide["req"] = plan_id
-            used.add(slide["id"])
-            dest.append(slide)
-            appended.append(slide["id"])
-            written.append(slide)
+            for extra in expand_slide_layout(slide):
+                eid = str(extra.get("id") or sid)
+                while eid in used:
+                    eid = new_item_id("s")
+                    extra["id"] = eid
+                used.add(eid)
+                dest.append(extra)
+                appended.append(eid)
+                written.append(extra)
         outline["slides"] = dest
 
     if plan_id and plan_id != "cover":
@@ -1050,7 +1139,14 @@ def apply_replace(outline: Dict[str, Any], payload: Dict[str, Any]) -> Tuple[Dic
         if str(item.get("id")) == target_id:
             nxt = normalize_block(raw, default_id=target_id) if kind == "docx" else normalize_slide(raw, default_id=target_id)
             nxt["id"] = target_id
-            items[i] = nxt
+            if kind == "pptx":
+                fitted = expand_slide_layout(nxt)
+                items[i] = fitted[0]
+                for extra in fitted[1:]:
+                    i += 1
+                    items.insert(i, extra)
+            else:
+                items[i] = nxt
             found = True
             break
     if not found:

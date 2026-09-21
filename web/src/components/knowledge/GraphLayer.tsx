@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 export type GraphLayerProps = {
   kbId: string;
   remote?: boolean;
+  refreshKey?: number;
   onOpenWiki: (slug: string) => void;
   onOpenDoc: (docId: string) => void;
   onGenerateWiki?: () => void;
@@ -26,6 +27,7 @@ type KindFilter = "entity" | "page" | "doc";
 export function GraphLayer({
   kbId,
   remote = false,
+  refreshKey = 0,
   onOpenWiki,
   onOpenDoc,
   onGenerateWiki,
@@ -63,7 +65,7 @@ export function GraphLayer({
 
   useEffect(() => {
     void load("");
-  }, [kbId, remote]);
+  }, [kbId, remote, refreshKey]);
 
   const visible = useMemo(() => {
     const allow = new Set(
@@ -231,7 +233,7 @@ export function GraphLayer({
           {onGenerateWiki && !loading ? (
             <Button type="button" size="sm" onClick={onGenerateWiki}>
               <Sparkles className="mr-1 size-3" />
-              去生成 Wiki
+              生成本库 Wiki
             </Button>
           ) : null}
         </div>

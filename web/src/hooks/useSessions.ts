@@ -9,6 +9,7 @@ import {
   reforkSession,
 } from "@/api/endpoints";
 import { newId } from "@/lib/id";
+import { canonicalKbId, isLocalKbId } from "@/lib/knowledgeScope";
 import type { SessionDetail, Usage } from "@/types/api";
 
 const LOCAL_KEY = "nlm_conversations_v2";
@@ -35,7 +36,7 @@ function loadLocalConvs(): LocalConversation[] {
 }
 
 function saveLocalConvs(list: LocalConversation[]) {
-  localStorage.setItem(LOCAL_KEY, JSON.stringify(list.slice(0, 80)));
+  localStorage.setItem(LOCAL_KEY, JSON.stringify(list.slice(0, 400)));
 }
 
 export function useSessions() {
@@ -92,9 +93,10 @@ export function useSessions() {
       } = {},
     ) => {
       if ("weknora_kb_id" in data) {
-        const next = String(data.weknora_kb_id || "").trim();
+        const raw = String(data.weknora_kb_id || "").trim();
+        const next = isLocalKbId(raw) ? canonicalKbId(raw) : raw;
         setWeknoraKbId(next);
-        if (!next) setWeknoraKbName("");
+        if (isLocalKbId(next) && !data.weknora_kb_name) setWeknoraKbName("");
       }
       if ("weknora_kb_name" in data) {
         setWeknoraKbName(String(data.weknora_kb_name || "").trim());
@@ -133,8 +135,7 @@ export function useSessions() {
   const syncServerList = useCallback(async () => {
     try {
       const remote = await listSessions();
-      const local = loadLocalConvs();
-      const map = new Map(local.map((c) => [c.id, c]));
+      const map = new Map<string, LocalConversation>();
       for (const r of remote || []) {
         map.set(r.session_id, {
           id: r.session_id,
@@ -149,16 +150,17 @@ export function useSessions() {
         });
       }
       if (!map.has(sessionId)) {
+        const localHit = loadLocalConvs().find((c) => c.id === sessionId);
         map.set(sessionId, {
           id: sessionId,
-          title: "新对话",
-          preview: "",
-          updatedAt: new Date().toISOString(),
-          workspaceId,
-          workspaceTitle,
-          cwd,
-          workspaceKind,
-          sshHostId,
+          title: localHit?.title || chatTitle || "新对话",
+          preview: localHit?.preview || "",
+          updatedAt: localHit?.updatedAt || new Date().toISOString(),
+          workspaceId: localHit?.workspaceId || workspaceId,
+          workspaceTitle: localHit?.workspaceTitle || workspaceTitle,
+          cwd: localHit?.cwd || cwd,
+          workspaceKind: localHit?.workspaceKind || workspaceKind,
+          sshHostId: localHit?.sshHostId || sshHostId,
         });
       }
       const merged = [...map.values()].sort((a, b) =>
@@ -187,18 +189,14 @@ export function useSessions() {
   ]);
 
   const fetchSession = useCallback(async (): Promise<SessionDetail | null> => {
-    try {
-      const data = await getSession(sessionId);
-      if (data) {
-        applyWorkspaceMeta(data);
-        applySessionChrome(data);
-        setChatTitle(data.title || chatTitle);
-        setSessionUsage(data.usage || {});
-      }
-      return data;
-    } catch {
-      return null;
+    const data = await getSession(sessionId);
+    if (data) {
+      applyWorkspaceMeta(data);
+      applySessionChrome(data);
+      setChatTitle(data.title || chatTitle);
+      setSessionUsage(data.usage || {});
     }
+    return data;
   }, [applySessionChrome, applyWorkspaceMeta, chatTitle, sessionId]);
 
   const ensureSessionOnServer = useCallback(
@@ -298,7 +296,7 @@ export function useSessions() {
         ssh_host_id: ssh_host_id || "",
       };
       applyWorkspaceMeta(meta);
-      applySessionChrome({ weknora_kb_id: "", weknora_kb_name: "", active_tools: null });
+      applySessionChrome({ weknora_kb_id: canonicalKbId(""), weknora_kb_name: "", active_tools: null });
       upsertLocalConv({
         id,
         title: "新对话",
@@ -329,10 +327,9 @@ export function useSessions() {
         });
         setChatTitle(local.title || "新对话");
       }
-      applySessionChrome({ weknora_kb_id: "", weknora_kb_name: "", active_tools: null });
       return true;
     },
-    [applySessionChrome, applyWorkspaceMeta, conversations, persistActive, sessionId],
+    [applyWorkspaceMeta, conversations, persistActive, sessionId],
   );
 
   const deleteConversation = useCallback(

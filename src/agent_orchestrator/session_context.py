@@ -16,6 +16,11 @@ from src.common.session_inbox import (
     push_inbox,
     remove_inbox,
 )
+from src.core_kernel.plugin_runtime.knowledge_scope import (
+    DEFAULT_LOCAL_KB_ID,
+    is_remote_kb_id,
+    normalize_local_kb_id,
+)
 from src.infrastructure.redis_client import RedisClient
 
 
@@ -435,9 +440,13 @@ class SessionContext:
         if system_prompt_append is not None:
             working["system_prompt_append"] = str(system_prompt_append)
         if clear_weknora_kb_id:
-            working["weknora_kb_id"] = ""
+            working["weknora_kb_id"] = DEFAULT_LOCAL_KB_ID
         elif weknora_kb_id is not None:
-            working["weknora_kb_id"] = str(weknora_kb_id).strip()
+            raw_kb = str(weknora_kb_id).strip()
+            if is_remote_kb_id(raw_kb):
+                working["weknora_kb_id"] = raw_kb
+            else:
+                working["weknora_kb_id"] = normalize_local_kb_id(raw_kb)
         if not working.get("permission_preset"):
             working["permission_preset"] = normalize_preset(None)
         if not working.get("plan_enforcement"):

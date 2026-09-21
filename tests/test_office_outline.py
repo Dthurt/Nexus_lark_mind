@@ -245,3 +245,41 @@ def test_default_style_id_is_commercial_and_unknown_falls_back():
     compact = compact_outline(academic)
     assert "style_id" not in compact
     assert "theme" not in compact
+
+
+def test_pptx_overflow_bullets_split_into_continuation_slides():
+    out = parse_outline(
+        {
+            "kind": "pptx",
+            "title": "密页",
+            "slides": [
+                {
+                    "id": "s_dense",
+                    "type": "bullets",
+                    "title": "要点",
+                    "items": [f"条目{i}" for i in range(1, 10)],
+                }
+            ],
+        }
+    )
+    slides = out["slides"]
+    assert len(slides) == 2
+    assert slides[0]["id"] == "s_dense"
+    assert slides[0]["items"] == ["条目1", "条目2", "条目3", "条目4", "条目5", "条目6"]
+    assert slides[1]["title"] == "要点（续）"
+    assert slides[1]["items"] == ["条目7", "条目8", "条目9"]
+    long_item = parse_outline(
+        {
+            "kind": "pptx",
+            "title": "长句",
+            "slides": [
+                {
+                    "type": "bullets",
+                    "title": "T",
+                    "items": ["字" * 120],
+                }
+            ],
+        }
+    )
+    assert long_item["slides"][0]["items"][0].endswith("…")
+    assert len(long_item["slides"][0]["items"][0]) <= 80

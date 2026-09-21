@@ -4,6 +4,7 @@ from lxml import etree
 
 from src.core_kernel.plugin_runtime.office_math import (
     iter_text_math_parts,
+    latex_export_warnings,
     latex_to_omml_xml,
     latex_to_unicode,
     text_has_math,
@@ -159,3 +160,9 @@ def test_pptx_math_deck_parses_without_a14_alternate():
         assert "μ" in xml
         assert "∇" in xml or "ρ" in xml
         assert "Cambria Math" in xml
+
+
+def test_latex_export_warnings_flag_ppt_and_complex_envs():
+    assert "ppt-unicode" in latex_export_warnings(r"\mu_x", target="pptx")
+    assert "complex" in latex_export_warnings(r"\begin{align} a \\ b \end{align}", target="docx")
+    assert latex_export_warnings("", target="docx") == []

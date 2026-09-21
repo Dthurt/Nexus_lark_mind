@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { parseCiteChunkHash, parseKnowledgeCiteHref } from "@/lib/kbCite";
 import {
   DEFAULT_LOCAL_KB_ID,
+  canonicalKbId,
   kbScopeLabel,
   knowledgePath,
   parseKnowledgeLocation,
@@ -292,22 +293,24 @@ export function WorkbenchPage({
       opts?: { silent?: boolean; updateUrl?: boolean },
     ) => {
       const id = String(kbId || "").trim();
-      setWeknoraKbId(id);
-      setWeknoraKbName(id ? kbName || kbScopeLabel(id, kbName) : "");
+      const canon = canonicalKbId(id);
+      setWeknoraKbId(canon);
+      setWeknoraKbName(kbName || kbScopeLabel(canon, kbName));
       try {
         await ensureSessionOnServer();
-        if (!id) {
-          await patchInteraction(sessionId, { clear_weknora_kb_id: true });
-          if (!opts?.silent) toast.success("已切换到本地知识库");
-        } else {
-          await patchInteraction(sessionId, { weknora_kb_id: id });
-          if (!opts?.silent) toast.success(`已绑定「${kbScopeLabel(id, kbName)}」`);
+        await patchInteraction(sessionId, { weknora_kb_id: canon });
+        if (!opts?.silent) {
+          toast.success(
+            canon === DEFAULT_LOCAL_KB_ID
+              ? "已切换到本地知识库"
+              : `已绑定「${kbScopeLabel(canon, kbName)}」`,
+          );
         }
       } catch (err: any) {
         toast.error(String(err?.message || err || "绑定知识库失败"));
       }
       if (opts?.updateUrl !== false && knowledgeRoute !== null) {
-        const next = knowledgePath(id, knowledgeLoc?.section || "docs");
+        const next = knowledgePath(canon, knowledgeLoc?.section || "docs");
         if (location.pathname !== next) navigate(next, { replace: true });
       }
     },
@@ -338,8 +341,7 @@ export function WorkbenchPage({
     const hit =
       knowledgeCatalog.kbs.find((kb) => kb.id === knowledgeRoute) ||
       knowledgeCatalog.localKbs.find((kb) => kb.id === knowledgeRoute);
-    const bindId = knowledgeRoute === DEFAULT_LOCAL_KB_ID ? "" : knowledgeRoute;
-    void bindKnowledgeBase(bindId, hit?.name || knowledgeRoute, {
+    void bindKnowledgeBase(knowledgeRoute, hit?.name || knowledgeRoute, {
       silent: true,
       updateUrl: false,
     });
@@ -424,26 +426,39 @@ export function WorkbenchPage({
   }, [sessionId, timeline]);
 
   const refreshFromServer = useCallback(async () => {
-    const data = await fetchSession();
-    if (data && Array.isArray(data.messages) && data.messages.length) {
-      timeline.loadFromHistory(data.messages);
-      trajectory.loadFromHistory(data.messages);
-      setChatTitle(data.title || "对话");
-      setSessionUsage(data.usage || {});
-      upsertLocalConv({
-        id: sessionId,
-        title: data.title || "对话",
-        preview: data.messages.find((m) => m.role === "user")?.content || "",
-        updatedAt: data.updated_at || new Date().toISOString(),
-        workspaceId: data.workspace_id || "",
-        workspaceTitle: data.workspace_title || "",
-        cwd: data.cwd || "",
-      });
-    } else {
-      timeline.clear();
-      trajectory.clear();
-      setChatTitle("新对话");
-      setSessionUsage(data?.usage || {});
+    try {
+      const data = await fetchSession();
+      if (data && Array.isArray(data.messages) && data.messages.length) {
+        timeline.loadFromHistory(data.messages);
+        trajectory.loadFromHistory(data.messages);
+        setChatTitle(data.title || "对话");
+        setSessionUsage(data.usage || {});
+        upsertLocalConv({
+          id: sessionId,
+          title: data.title || "对话",
+          preview: data.messages.find((m) => m.role === "user")?.content || "",
+          updatedAt: data.updated_at || new Date().toISOString(),
+          workspaceId: data.workspace_id || "",
+          workspaceTitle: data.workspace_title || "",
+          cwd: data.cwd || "",
+        });
+      } else if (data) {
+        timeline.clear();
+        trajectory.clear();
+        setChatTitle(data.title || "新对话");
+        setSessionUsage(data.usage || {});
+      } else if (timeline.items.length) {
+        toast.error("服务器没有这条对话记录，已保留当前窗口内容");
+      } else {
+        timeline.clear();
+        trajectory.clear();
+        setChatTitle("新对话");
+        setSessionUsage({});
+      }
+    } catch (err: any) {
+      const msg = String(err?.message || err || "对话加载失败");
+      toast.error(`对话加载失败：${msg}`);
+      setStatus(msg);
     }
     stream.turnOpenRef.current = false;
     await loadActivityFromServer();

@@ -4,9 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
 
 import {
-  distillWiki,
   getWikiPage,
-  listKnowledgeJobs,
   listWikiPages,
   putWikiPage,
   rollbackWikiPage,
@@ -30,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { usePrefersReducedMotion } from "@/lib/motion";
 import { parseKnowledgeCiteHref } from "@/lib/kbCite";
 import { rewriteWikiLinks } from "@/lib/wikiLinks";
+import { runWikiDistill } from "@/lib/wikiDistill";
 import { cn } from "@/lib/utils";
 
 export type WikiLayerProps = {
@@ -37,6 +36,9 @@ export type WikiLayerProps = {
   slug?: string;
   workspaceId?: string;
   remote?: boolean;
+  refreshKey?: number;
+  distilling?: boolean;
+  onDistill?: () => void;
   onOpenSlug: (slug?: string) => void;
   onAskAbout?: (text: string) => void;
 };
@@ -60,6 +62,9 @@ export function WikiLayer({
   slug = "",
   workspaceId = "",
   remote = false,
+  refreshKey = 0,
+  distilling = false,
+  onDistill,
   onOpenSlug,
   onAskAbout,
 }: WikiLayerProps) {
@@ -72,7 +77,8 @@ export function WikiLayer({
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
-  const [distilling, setDistilling] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const distillingNow = distilling || busy;
   const [pendingRev, setPendingRev] = useState<WikiRevision | null>(null);
 
   const dirty = Boolean(page && (title !== (page.title || "") || content !== (page.content || "")));
@@ -115,7 +121,7 @@ export function WikiLayer({
 
   useEffect(() => {
     void loadList();
-  }, [kbId, remote]);
+  }, [kbId, remote, refreshKey]);
 
   useEffect(() => {
     if (slug) void loadPage(slug);
@@ -181,30 +187,25 @@ export function WikiLayer({
     }
   };
 
-  const onDistill = async () => {
-    setDistilling(true);
+  const onDistillClick = async () => {
+    if (onDistill) {
+      onDistill();
+      return;
+    }
+    setBusy(true);
     try {
-      const data = await distillWiki({
-        kb_id: kbId,
-        workspace_id: workspaceId || undefined,
+      toast.success("正在生成本库 Wiki");
+      const job = await runWikiDistill({
+        kbId,
+        workspaceId: workspaceId || undefined,
+        onTick: () => void loadList(),
       });
-      toast.success(data.job?.message || "正在生成本库 Wiki");
-      const jobId = data.job?.job_id;
-      for (let i = 0; i < 16; i += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 700));
-        void loadList();
-        if (!jobId) break;
-        const jobs = await listKnowledgeJobs({ kb_id: kbId, limit: 12 });
-        const hit = (jobs.jobs || []).find((job) => job.job_id === jobId);
-        if (!hit || hit.status === "completed" || hit.status === "failed") {
-          if (hit?.status === "failed") toast.error(hit.error || "蒸馏失败");
-          break;
-        }
-      }
+      if (job?.status === "failed") toast.error(job.error || "蒸馏失败");
+      else toast.success(job?.message || "本库 Wiki 已更新");
     } catch (err: any) {
       toast.error(String(err?.message || err || "蒸馏失败"));
     } finally {
-      setDistilling(false);
+      setBusy(false);
       void loadList();
     }
   };
@@ -406,11 +407,11 @@ export function WikiLayer({
           size="sm"
           className="h-7 px-2"
           data-testid="knowledge-wiki-distill"
-          disabled={distilling}
-          onClick={() => void onDistill()}
+          disabled={distillingNow}
+          onClick={() => void onDistillClick()}
         >
-          <Sparkles className={cn("mr-1 size-3", distilling && "animate-pulse")} />
-          {distilling ? "生成中…" : "生成本库 Wiki"}
+          <Sparkles className={cn("mr-1 size-3", distillingNow && "animate-pulse")} />
+          {distillingNow ? "生成中…" : "生成本库 Wiki"}
         </Button>
       </div>
       {loading && !pages.length ? (
@@ -467,7 +468,7 @@ export function WikiLayer({
               : "原文不动。蒸馏会写出可编辑、带 [[链接]] 的互联笔记。没有模型时走规则提纲。"}
           </p>
           {!filter ? (
-            <Button type="button" size="sm" disabled={distilling} onClick={() => void onDistill()}>
+            <Button type="button" size="sm" disabled={distillingNow} onClick={() => void onDistillClick()}>
               <Sparkles className="mr-1 size-3" />
               生成本库 Wiki
             </Button>

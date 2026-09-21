@@ -10,6 +10,7 @@ import {
   NLM_OFFICE_WRITING_EVENT,
   officeAlignment,
   officeImageSrc,
+  officeMathExportHints,
   splitOfficeMath,
   unwrapOfficeLatex,
   parseOfficeOutline,
@@ -27,6 +28,7 @@ import {
 import { applyOfficePreview, emptyOfficePreview } from "@/lib/officePreview";
 import { renderLatex } from "@/lib/markdown/math";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 function OfficeRichText({
   text,
@@ -338,6 +340,7 @@ export function OfficeCanvasView({ doc, onCommit }: CanvasViewProps) {
   }, [preview.enteringIds]);
 
   const kindLabel = outline?.kind === "pptx" ? "PowerPoint" : "Word";
+  const mathHints = useMemo(() => (outline ? officeMathExportHints(outline) : []), [outline]);
   const downloadUrl = outline?.download_url || (outline?.doc_id ? `/api/office/files/${outline.doc_id}` : "");
   const fileName = outline?.file_name || (outline?.kind === "pptx" ? `${outline?.title || "deck"}.pptx` : `${outline?.title || "document"}.docx`);
   const styleId = normalizeOfficeStyleId(outline?.style_id);
@@ -358,8 +361,11 @@ export function OfficeCanvasView({ doc, onCommit }: CanvasViewProps) {
     void postOfficeStyle({ doc_id: outline.doc_id, style_id: next })
       .then((data) => {
         if (data?.outline) onCommit(JSON.stringify(data.outline));
+        else toast.error("换风格没有返回新大纲");
       })
-      .catch(() => undefined)
+      .catch((err: unknown) => {
+        toast.error(String((err as Error)?.message || err || "换风格失败"));
+      })
       .finally(() => setStyleBusy(false));
   };
 
@@ -431,6 +437,11 @@ export function OfficeCanvasView({ doc, onCommit }: CanvasViewProps) {
           </Button>
         </div>
       </div>
+      {mathHints.length ? (
+        <div className="nlm-office-export-hint" data-testid="office-math-export-hint">
+          {mathHints.join(" ")}
+        </div>
+      ) : null}
 
       <div className="nlm-office-body">
         <aside className="nlm-office-rail" aria-label="文档结构" data-testid="office-structure">

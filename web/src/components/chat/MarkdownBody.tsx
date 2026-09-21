@@ -17,6 +17,7 @@ import {
 import {
   loadKnowledgeCitePreview,
   parseKnowledgeCiteHref,
+  CITE_SNIPPET_MISSING,
   type KnowledgeCite,
   type KnowledgeCitePreview,
 } from "@/lib/kbCite";
@@ -227,7 +228,9 @@ export function MarkdownBody({
             ) : peek.error ? (
               <p className="nlm-kb-cite-peek-body is-muted">{peek.error}</p>
             ) : (
-              <p className="nlm-kb-cite-peek-body">{peek.preview?.snippet || "没有可预览的原文。"}</p>
+              <p className={cn("nlm-kb-cite-peek-body", peek.preview && !peek.preview.matched && "is-muted")}>
+                {peek.preview?.snippet || CITE_SNIPPET_MISSING}
+              </p>
             )}
             {peek.preview?.source ? (
               <div className="nlm-kb-cite-peek-source">{peek.preview.source}</div>

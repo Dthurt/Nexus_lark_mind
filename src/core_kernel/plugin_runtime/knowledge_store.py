@@ -2297,13 +2297,28 @@ class KnowledgeStore:
                     )
                 )
             ).scalars().all()
-            return self._wiki_public(
+            chunks: List[Dict[str, Any]] = []
+            if include_content:
+                wiki_doc_id = wiki_index_doc_id(row.page_id)
+                chunk_rows = (
+                    await session.execute(
+                        select(KnowledgeChunk)
+                        .where(KnowledgeChunk.doc_id == wiki_doc_id)
+                        .order_by(KnowledgeChunk.chunk_index.asc())
+                    )
+                ).scalars().all()
+                chunks = [self._chunk_public(c) for c in chunk_rows]
+            pub = self._wiki_public(
                 row,
                 include_content=include_content,
                 revisions=revisions,
                 links_out=[self._link_public(x) for x in links_out],
                 links_in=[self._link_public(x) for x in links_in],
             )
+            if chunks:
+                pub["chunks"] = chunks
+                pub["doc_id"] = wiki_index_doc_id(row.page_id)
+            return pub
 
     async def get_wiki_page_by_id(self, page_id: str) -> Optional[Dict[str, Any]]:
         async with self.session_factory() as session:

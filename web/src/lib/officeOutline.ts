@@ -226,6 +226,58 @@ export function splitOfficeMath(text: string): OfficeMathPart[] {
   return parts;
 }
 
+const HARD_LATEX = /\\(begin|end|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|cases|split|substack)\b/;
+
+function outlineMathTexts(outline: OfficeOutline): string[] {
+  const out: string[] = [];
+  const push = (value?: string) => {
+    const text = String(value || "").trim();
+    if (text) out.push(text);
+  };
+  for (const block of outline.blocks || []) {
+    if ("text" in block) push(block.text);
+    if ("latex" in block) push(block.latex);
+    if ("items" in block && Array.isArray(block.items)) {
+      for (const item of block.items) push(item);
+    }
+  }
+  for (const slide of outline.slides || []) {
+    push("title" in slide ? slide.title : "");
+    push("subtitle" in slide ? slide.subtitle : "");
+    push("text" in slide ? slide.text : "");
+    if ("latex" in slide) push(slide.latex);
+    if ("items" in slide && Array.isArray(slide.items)) {
+      for (const item of slide.items) push(item);
+    }
+    if (slide.type === "two_column") {
+      push(slide.left?.body);
+      push(slide.right?.body);
+      for (const item of slide.left?.items || []) push(item);
+      for (const item of slide.right?.items || []) push(item);
+    }
+  }
+  return out;
+}
+
+export function officeMathExportHints(outline: OfficeOutline): string[] {
+  const texts = outlineMathTexts(outline);
+  const hasMath = texts.some(
+    (text) => splitOfficeMath(text).some((part) => part.kind === "math") || HARD_LATEX.test(text),
+  );
+  if (!hasMath) return [];
+  if (outline.kind === "pptx") {
+    const hints = ["PPT 导出的是 Cambria Math 文本，不是 PowerPoint 可编辑公式。"];
+    if (texts.some((text) => HARD_LATEX.test(text))) {
+      hints.push("含 align/matrix 等环境，下载后可能对不齐。");
+    }
+    return hints;
+  }
+  if (texts.some((text) => HARD_LATEX.test(text))) {
+    return ["部分公式 Word 可能降级为普通文本，画布预览会更好看。"];
+  }
+  return [];
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }

@@ -665,6 +665,34 @@ def ppt_math_alternate_xml(tex: str) -> Optional[str]:
     return None
 
 
+_HARD_LATEX = re.compile(
+    r"\\(begin|end|align|alignat|gather|multline|matrix|pmatrix|bmatrix|vmatrix|"
+    r"cases|split|substack|tag|label|nonumber)\b"
+)
+
+
+def latex_export_warnings(tex: str, *, target: str = "docx") -> List[str]:
+    """Codes the canvas can map to a human export hint."""
+    raw = str(tex or "")
+    latex = strip_latex_wrappers(raw)
+    if not raw.strip() and not latex.strip():
+        return []
+    notes: List[str] = []
+    kind = (target or "docx").strip().lower()
+    haystack = f"{raw}\n{latex}"
+    if kind in {"pptx", "ppt", "powerpoint"}:
+        if latex.strip() or raw.strip():
+            notes.append("ppt-unicode")
+        if _HARD_LATEX.search(haystack):
+            notes.append("complex")
+        return notes
+    if latex_to_omml_xml(raw) is None:
+        notes.append("omml-fallback")
+    if _HARD_LATEX.search(haystack):
+        notes.append("complex")
+    return notes
+
+
 def equation_fallback_lines(tex: str) -> Tuple[str, str]:
     pretty = latex_to_unicode(tex)
     source = strip_latex_wrappers(tex)

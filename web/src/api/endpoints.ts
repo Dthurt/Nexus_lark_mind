@@ -932,6 +932,8 @@ export type WikiPage = {
   revisions?: WikiRevision[];
   links_out?: WikiLink[];
   links_in?: WikiLink[];
+  chunks?: KnowledgeChunk[];
+  doc_id?: string;
 };
 
 export type GraphNode = {

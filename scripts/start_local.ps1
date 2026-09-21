@@ -319,6 +319,20 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Root "data"), (Join-Path $
 if (-not (Test-Path (Join-Path $Root "web-static\index.html"))) {
   Write-Host "WARN: web-static\index.html missing. Build UI with scripts\build_web.bat" -ForegroundColor Yellow
   Write-Host "      Or use scripts\dev.ps1 for Vite HMR (http://127.0.0.1:5173)." -ForegroundColor Yellow
+} else {
+  $indexTime = (Get-Item (Join-Path $Root "web-static\index.html")).LastWriteTimeUtc
+  $srcRoot = Join-Path $Root "web\src"
+  $srcNewest = $null
+  if (Test-Path $srcRoot) {
+    $hit = Get-ChildItem -Path $srcRoot -Recurse -File -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTimeUtc -Descending |
+      Select-Object -First 1
+    if ($hit) { $srcNewest = $hit.LastWriteTimeUtc }
+  }
+  if ($srcNewest -and $srcNewest -gt $indexTime.AddSeconds(2)) {
+    Write-Host "WARN: web-static is older than web/src. :8000 will serve a stale UI." -ForegroundColor Yellow
+    Write-Host "      Rebuild: scripts\build_web.bat   (or nlm start, which rebuilds when Node is available)" -ForegroundColor Yellow
+  }
 }
 
 Write-Step "Freeing ports 8000/8001/8002 if busy..."

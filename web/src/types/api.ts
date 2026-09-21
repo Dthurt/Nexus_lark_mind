@@ -44,6 +44,12 @@ export type SessionSummary = {
   workspace_title?: string;
   workspace_kind?: string;
   ssh_host_id?: string;
+  parent_id?: string;
+  forked_from?: string;
+  fork_point_index?: number | null;
+  bookmarks?: { message_index: number; label?: string }[];
+  preset_name?: string;
+  active_tools?: string[] | null;
 };
 
 export type SessionDetail = {

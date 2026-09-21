@@ -84,6 +84,16 @@
   animation: nlm-office-pulse 1.4s ease-out infinite;
 }
 
+.nlm-office-export-hint {
+  flex-shrink: 0;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  background: hsl(var(--muted) / 0.45);
+  padding: 6px 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: hsl(var(--muted-foreground));
+}
+
 .nlm-office-meta {
   min-width: 0;
   font-size: 10px;
