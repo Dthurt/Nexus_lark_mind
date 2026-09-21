@@ -128,6 +128,8 @@ def test_system_prompt_forces_office_alignment():
     assert "throughline" in text
     assert "requirements" in text
     assert "giant blob" in text or "dump" in text
+    assert "style-blind" in text or "花哨" in text
+    assert "theme" in text
 
 
 def test_parse_outline_roundtrip():
@@ -136,6 +138,8 @@ def test_parse_outline_roundtrip():
     assert parsed["kind"] == "docx"
     assert parsed["plan"][0]["title"] == "S1"
     assert parsed["throughline"] == "主线"
+    assert parsed["style_id"] == "commercial"
+    assert parsed["theme"]["accent"] == "#2A9D8F"
 
 
 def test_equation_block_and_dollar_paragraph():
@@ -224,3 +228,20 @@ def test_revise_plan_adds_section_then_append_updates_last_block():
     assert compact["last_block"]["plan_id"] == "p1"
     hint = next_hint(out)
     assert "p2" in hint and "plan_id" in hint
+
+
+def test_default_style_id_is_commercial_and_unknown_falls_back():
+    out = empty_outline(kind="docx", title="Memo", throughline="主线", plan=["背景"])
+    assert out["style_id"] == "commercial"
+    assert out["theme"]["accent"] == "#2A9D8F"
+    assert out["theme"]["font_body"] == "Calibri"
+    parsed = parse_outline({**out, "style_id": "unknown-pack", "theme": {"accent": "#FF0000"}})
+    assert parsed["style_id"] == "commercial"
+    assert parsed["theme"]["accent"] == "#2A9D8F"
+    academic = parse_outline({**out, "style_id": "academic", "theme": {"accent": "#FF0000"}})
+    assert academic["style_id"] == "academic"
+    assert academic["theme"]["font_body"] == "Times New Roman"
+    assert academic["theme"]["paper"] == "#FFFFFF"
+    compact = compact_outline(academic)
+    assert "style_id" not in compact
+    assert "theme" not in compact

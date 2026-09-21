@@ -1,4 +1,16 @@
 .nlm-office-view {
+  --office-accent: #2a9d8f;
+  --office-accent-dark: #1d7a70;
+  --office-ink: #1c2430;
+  --office-ink-soft: #3d4a57;
+  --office-paper: #f6f3ec;
+  --office-paper-alt: #efebe3;
+  --office-muted: #5c6b7a;
+  --office-rule: #c9d4ce;
+  --office-quote-bg: #e4f2ee;
+  --office-header-fg: #f6f3ec;
+  --office-font-heading: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --office-font-body: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   display: flex;
   min-height: 0;
   flex: 1;
@@ -7,6 +19,35 @@
   background: hsl(var(--background));
   container-type: inline-size;
   container-name: office;
+}
+
+.nlm-office-style {
+  display: inline-flex;
+  height: 24px;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 99px;
+}
+
+.nlm-office-style-pill {
+  border: 0;
+  background: transparent;
+  padding: 0 10px;
+  font-size: 11px;
+  line-height: 22px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.nlm-office-style-pill:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.nlm-office-style-pill.is-active {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  font-weight: 600;
 }
 
 .nlm-office-toolbar {
@@ -75,7 +116,7 @@
 .nlm-office-throughline {
   margin: 0 0 10px;
   padding: 7px 8px 7px 10px;
-  border-left: 2px solid #2a9d8f;
+  border-left: 2px solid var(--office-accent);
   font-size: 11px;
   line-height: 1.45;
   color: hsl(var(--foreground));
@@ -124,8 +165,8 @@
 
 .nlm-office-page,
 .nlm-office-slide {
-  color: #1c2430;
-  background: #f6f3ec;
+  color: var(--office-ink);
+  background: var(--office-paper);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.65) inset,
     0 18px 48px rgba(28, 36, 48, 0.16);
@@ -145,6 +186,15 @@
   overflow-wrap: anywhere;
 }
 
+.nlm-office-h1 .nlm-office-eq-inline,
+.nlm-office-h2 .nlm-office-eq-inline,
+.nlm-office-h3 .nlm-office-eq-inline,
+.nlm-office-p .nlm-office-eq-inline,
+.nlm-office-li .nlm-office-eq-inline {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .nlm-office-h1,
 .nlm-office-h2,
 .nlm-office-h3,
@@ -155,37 +205,62 @@
   margin: 0;
 }
 
+.nlm-office-page-header,
+.nlm-office-page-footer {
+  margin: 0;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--office-muted);
+}
+
+.nlm-office-page-header {
+  padding-bottom: 8px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--office-rule);
+  text-align: center;
+}
+
+.nlm-office-page-footer {
+  margin-top: 28px;
+  padding-top: 8px;
+  border-top: 1px solid var(--office-rule);
+  text-align: center;
+}
+
 .nlm-office-h1 {
   padding-bottom: 10px;
   margin: 0 0 18px;
-  border-bottom: 2px solid #2a9d8f;
-  font-family: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  border-bottom: 2px solid var(--office-accent);
+  font-family: var(--office-font-heading);
   font-size: 28px;
   font-weight: 650;
   line-height: 1.2;
   letter-spacing: -0.02em;
-  color: #1c2430;
+  color: var(--office-ink);
 }
 
 .nlm-office-h2 {
   margin: 26px 0 10px;
+  font-family: var(--office-font-heading);
   font-size: 17px;
   font-weight: 650;
-  color: #1d7a70;
+  color: var(--office-accent-dark);
 }
 
 .nlm-office-h3 {
   margin: 18px 0 8px;
+  font-family: var(--office-font-heading);
   font-size: 13.5px;
   font-weight: 650;
-  color: #3d4a57;
+  color: var(--office-ink-soft);
 }
 
 .nlm-office-p {
   margin: 0 0 12px;
+  font-family: var(--office-font-body);
   font-size: 13px;
   line-height: 1.65;
-  color: #1c2430;
+  color: var(--office-ink);
 }
 
 .nlm-office-list {
@@ -202,12 +277,12 @@
 .nlm-office-quote {
   margin: 14px 0;
   padding: 10px 14px 10px 16px;
-  border-left: 3px solid #2a9d8f;
-  background: #e4f2ee;
+  border-left: 3px solid var(--office-accent);
+  background: var(--office-quote-bg);
   font-size: 13.5px;
   font-style: italic;
   line-height: 1.55;
-  color: #3d4a57;
+  color: var(--office-ink-soft);
 }
 
 .nlm-office-quote cite {
@@ -215,13 +290,13 @@
   margin-top: 6px;
   font-size: 11px;
   font-style: normal;
-  color: #5c6b7a;
+  color: var(--office-muted);
 }
 
 .nlm-office-table-wrap {
   margin: 12px 0 18px;
   overflow: auto;
-  border: 1px solid #c9d4ce;
+  border: 1px solid var(--office-rule);
   border-radius: 6px;
 }
 
@@ -232,8 +307,8 @@
 }
 
 .nlm-office-table th {
-  background: #1d7a70;
-  color: #f6f3ec;
+  background: var(--office-accent-dark);
+  color: var(--office-header-fg);
   font-weight: 600;
   text-align: left;
   padding: 7px 10px;
@@ -241,12 +316,12 @@
 
 .nlm-office-table td {
   padding: 7px 10px;
-  border-top: 1px solid #d8e0db;
-  color: #1c2430;
+  border-top: 1px solid var(--office-rule);
+  color: var(--office-ink);
 }
 
 .nlm-office-table tr:nth-child(even) td {
-  background: #efebe3;
+  background: var(--office-paper-alt);
 }
 
 .nlm-office-break {
@@ -257,7 +332,7 @@
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #5c6b7a;
+  color: var(--office-muted);
 }
 
 .nlm-office-break::before,
@@ -265,7 +340,7 @@
   content: "";
   flex: 1;
   height: 1px;
-  background: #c9d4ce;
+  background: var(--office-rule);
 }
 
 .nlm-office-figure {
@@ -284,27 +359,53 @@
   margin-top: 6px;
   font-size: 11px;
   font-style: italic;
-  color: #5c6b7a;
+  color: var(--office-muted);
 }
 
 .nlm-office-eq {
   margin: 16px 0 18px;
   padding: 14px 16px 12px;
-  border: 1px solid #c9d4ce;
+  border: 1px solid var(--office-rule);
   border-radius: 8px;
   background: #fffdf8;
   text-align: center;
   overflow-x: auto;
 }
 
+.nlm-office-eq-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
 .nlm-office-eq-body {
   min-height: 1.4em;
 }
 
+.nlm-office-eq-no {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--office-muted);
+}
+
 .nlm-office-eq-inline {
-  display: inline-block;
-  padding: 0 2px;
-  vertical-align: middle;
+  display: inline;
+  padding: 0 0.12em;
+  vertical-align: baseline;
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: nowrap;
+}
+
+.nlm-office-eq-inline .katex {
+  font-size: 1.06em;
+}
+
+.nlm-office-eq-inline .katex-display,
+.nlm-office-eq-inline .katex-display-host {
+  display: inline;
+  margin: 0;
 }
 
 .nlm-office-eq .katex-display,
@@ -335,8 +436,8 @@
 }
 
 .nlm-office-slide.is-section {
-  background: linear-gradient(135deg, #1d7a70 0%, #1c2430 100%);
-  color: #f6f3ec;
+  background: linear-gradient(135deg, var(--office-accent-dark) 0%, var(--office-ink) 100%);
+  color: var(--office-header-fg);
 }
 
 .nlm-office-slide-accent {
@@ -345,7 +446,7 @@
   left: 0;
   right: 0;
   height: 4px;
-  background: #2a9d8f;
+  background: var(--office-accent);
 }
 
 .nlm-office-slide-kicker {
@@ -354,11 +455,19 @@
   font-weight: 650;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #2a9d8f;
+  color: var(--office-accent);
+}
+
+.nlm-office-slide-num {
+  margin: 0 0 8px;
+  font-size: 36px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: var(--office-accent);
 }
 
 .nlm-office-slide.is-section .nlm-office-slide-kicker {
-  color: #e4f2ee;
+  color: var(--office-quote-bg);
 }
 
 .nlm-office-slide-title {
@@ -378,13 +487,13 @@
   width: 56px;
   height: 3px;
   margin: 10px 0 14px;
-  background: #2a9d8f;
+  background: var(--office-accent);
 }
 
 .nlm-office-slide-sub {
   margin: 0;
   font-size: 16px;
-  color: #5c6b7a;
+  color: var(--office-muted);
 }
 
 .nlm-office-slide-list {
@@ -409,7 +518,7 @@
   width: 7px;
   height: 7px;
   border-radius: 99px;
-  background: #2a9d8f;
+  background: var(--office-accent);
 }
 
 .nlm-office-cols {
@@ -422,7 +531,7 @@
 .nlm-office-col h4 {
   margin: 0 0 8px;
   font-size: 14px;
-  color: #1d7a70;
+  color: var(--office-accent-dark);
 }
 
 .nlm-office-slide-quote {
@@ -440,7 +549,7 @@
   display: flex;
   justify-content: space-between;
   font-size: 10px;
-  color: #5c6b7a;
+  color: var(--office-muted);
 }
 
 .nlm-office-slide.is-section .nlm-office-slide-footer {
@@ -487,6 +596,99 @@
   100% {
     box-shadow: 0 0 0 0 hsl(var(--teal) / 0);
   }
+}
+
+.nlm-office-view[data-style="academic"] {
+  --office-font-heading: "Times New Roman", "SimHei", "Songti SC", serif;
+  --office-font-body: "Times New Roman", "SimSun", "Songti SC", serif;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-page {
+  padding: 48px 56px 52px;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-h1 {
+  border-bottom-width: 1px;
+  border-bottom-color: var(--office-rule);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-h2,
+.nlm-office-view[data-style="academic"] .nlm-office-h3 {
+  color: var(--office-ink);
+  font-weight: 700;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-h2 {
+  font-size: 15px;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-h3 {
+  font-size: 13px;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-p,
+.nlm-office-view[data-style="academic"] .nlm-office-list {
+  line-height: 1.65;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-quote {
+  border-left-width: 1px;
+  border-left-color: var(--office-rule);
+  background: transparent;
+  padding-left: 18px;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-table-wrap {
+  border-radius: 0;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-table th {
+  background: var(--office-paper);
+  color: var(--office-ink);
+  font-weight: 700;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-table tr:nth-child(even) td {
+  background: transparent;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-eq {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  padding: 8px 0;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-slide-accent {
+  height: 0;
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-slide-rule {
+  height: 1px;
+  width: 72px;
+  background: var(--office-rule);
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-slide.is-section {
+  background: var(--office-paper);
+  color: var(--office-ink);
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-slide.is-section .nlm-office-slide-footer {
+  color: var(--office-muted);
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-col h4 {
+  color: var(--office-ink);
+}
+
+.nlm-office-view[data-style="academic"] .nlm-office-slide-list li::before {
+  width: 5px;
+  height: 5px;
+  background: var(--office-ink);
 }
 
 @container office (max-width: 640px) {

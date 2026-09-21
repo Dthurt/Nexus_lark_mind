@@ -45,6 +45,7 @@ def binary_path(doc_id: str, kind: str) -> Path:
 
 
 def put_outline(outline: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist outline JSON. Style switches reuse this + write_binary via _materialize."""
     doc_id = str(outline.get("doc_id") or "").strip()
     if not doc_id:
         raise OfficeOutlineError("outline missing doc_id")

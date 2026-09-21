@@ -1,19 +1,18 @@
 /** Shared Office outline — keep fields in sync with office_outline.py */
 
+import {
+  DEFAULT_OFFICE_STYLE,
+  normalizeOfficeStyleId,
+  themeFromStyle,
+  type OfficeStyleId,
+  type OfficeThemeTokens,
+} from "@/lib/officeStyle";
+
 export const OFFICE_SCHEMA = "nlm.office.v1";
 
-export const OFFICE_THEME = {
-  accent: "#2A9D8F",
-  accent_dark: "#1D7A70",
-  ink: "#1C2430",
-  ink_soft: "#3D4A57",
-  paper: "#F6F3EC",
-  paper_alt: "#EFEBE3",
-  muted: "#5C6B7A",
-  rule: "#C9D4CE",
-  quote_bg: "#E4F2EE",
-  header_fg: "#F6F3EC",
-} as const;
+export const OFFICE_THEME = themeFromStyle(DEFAULT_OFFICE_STYLE);
+
+export type { OfficeStyleId, OfficeThemeTokens };
 
 export type OfficeKind = "docx" | "pptx";
 
@@ -122,7 +121,8 @@ export type OfficeOutline = {
   title: string;
   subtitle?: string;
   author?: string;
-  theme?: Partial<typeof OFFICE_THEME>;
+  style_id?: OfficeStyleId | string;
+  theme?: Partial<OfficeThemeTokens>;
   throughline?: string;
   thesis?: string;
   voice?: OfficeVoice;
@@ -151,6 +151,8 @@ export function emptyOfficeOutline(): OfficeOutline {
     doc_id: "",
     kind: "docx",
     title: "",
+    style_id: DEFAULT_OFFICE_STYLE,
+    theme: themeFromStyle(DEFAULT_OFFICE_STYLE),
     throughline: "",
     glossary: [],
     forbidden: [],
@@ -190,6 +192,40 @@ export function officeTextHasMath(text: string | undefined | null): boolean {
   return /\$\$|\\\(|\\\[|(?<!\$)\$(?!\$)|\\begin\{(?:equation|align)/.test(raw);
 }
 
+const OFFICE_MATH_RE =
+  /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\begin\{(?:equation|align|alignat|gather|multline|displaymath|eqnarray)\*?\}([\s\S]+?)\\end\{(?:equation|align|alignat|gather|multline|displaymath|eqnarray)\*?\}|\\\(([\s\S]+?)\\\)|(?<!\$)\$(?!\$)((?:\\.|[^$\n\\])+?)\$(?!\$)/g;
+
+export type OfficeMathPart = { kind: "text" | "math"; value: string };
+
+export function unwrapOfficeLatex(raw: string): string {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const patterns = [/^\$\$([\s\S]*)\$\$$/, /^\\\[([\s\S]*)\\\]$/, /^\\\(([\s\S]*)\\\)$/, /^\$([\s\S]*)\$$/];
+  for (const re of patterns) {
+    const m = s.match(re);
+    if (m) return String(m[1] || "").trim();
+  }
+  return s;
+}
+
+export function splitOfficeMath(text: string): OfficeMathPart[] {
+  const raw = String(text || "");
+  if (!raw) return [];
+  const parts: OfficeMathPart[] = [];
+  const re = new RegExp(OFFICE_MATH_RE.source, "g");
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    if (m.index > last) parts.push({ kind: "text", value: raw.slice(last, m.index) });
+    const latex = unwrapOfficeLatex(String(m[1] || m[2] || m[3] || m[4] || m[5] || "").trim());
+    if (latex) parts.push({ kind: "math", value: latex });
+    last = m.index + m[0].length;
+  }
+  if (last < raw.length) parts.push({ kind: "text", value: raw.slice(last) });
+  if (!parts.length) parts.push({ kind: "text", value: raw });
+  return parts;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
@@ -204,7 +240,7 @@ function normalizeBlock(raw: unknown): OfficeWordBlock | null {
     return {
       id,
       type: "equation",
-      latex: String(b.latex || b.tex || b.math || b.text || b.content || ""),
+      latex: unwrapOfficeLatex(String(b.latex || b.tex || b.math || b.text || b.content || "")),
       display: String(b.display || "block") === "inline" ? "inline" : "block",
       caption: b.caption != null ? String(b.caption) : undefined,
       text: b.text != null ? String(b.text) : undefined,
@@ -223,7 +259,7 @@ function normalizeSlide(raw: unknown): OfficeSlide | null {
       id: String(s.id || ""),
       type: "equation",
       title: s.title != null ? String(s.title) : undefined,
-      latex: String(s.latex || s.tex || s.math || s.text || s.content || ""),
+      latex: unwrapOfficeLatex(String(s.latex || s.tex || s.math || s.text || s.content || "")),
       caption: s.caption != null ? String(s.caption) : undefined,
       text: s.text != null ? String(s.text) : undefined,
       notes: s.notes != null ? String(s.notes) : undefined,
@@ -236,6 +272,7 @@ function normalizeSlide(raw: unknown): OfficeSlide | null {
 function normalizeOutline(raw: OfficeOutline): OfficeOutline {
   const kind = String(raw.kind || (raw.slides?.length ? "pptx" : "docx")).toLowerCase() === "pptx" ? "pptx" : "docx";
   const glossarySrc = (raw.glossary || raw.terms || []) as OfficeGlossaryItem[];
+  const styleId = normalizeOfficeStyleId(raw.style_id);
   return {
     schema: OFFICE_SCHEMA,
     doc_id: String(raw.doc_id || ""),
@@ -243,7 +280,8 @@ function normalizeOutline(raw: OfficeOutline): OfficeOutline {
     title: String(raw.title || ""),
     subtitle: raw.subtitle || "",
     author: raw.author || "",
-    theme: { ...OFFICE_THEME, ...(raw.theme || {}) },
+    style_id: styleId,
+    theme: themeFromStyle(styleId),
     throughline: String(raw.throughline || raw.thesis || ""),
     voice: raw.voice || {},
     glossary: glossarySrc.map((row) => ({

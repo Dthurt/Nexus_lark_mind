@@ -16,25 +16,19 @@ from src.core_kernel.plugin_runtime.office_math import (
     latex_from_block,
     strip_latex_wrappers,
 )
+from src.core_kernel.plugin_runtime.office_style import (
+    DEFAULT_STYLE_ID,
+    DEFAULT_THEME,
+    normalize_style_id,
+    theme_from_style,
+)
+
+# Re-export pack tokens so existing `from office_outline import DEFAULT_THEME` keeps working.
+assert DEFAULT_THEME["accent"] == "#2A9D8F"
 
 SCHEMA = "nlm.office.v1"
 
-# Shared design tokens — keep in sync with web/src/lib/officeOutline.ts
-DEFAULT_THEME: Dict[str, str] = {
-    "accent": "#2A9D8F",
-    "accent_dark": "#1D7A70",
-    "ink": "#1C2430",
-    "ink_soft": "#3D4A57",
-    "paper": "#F6F3EC",
-    "paper_alt": "#EFEBE3",
-    "muted": "#5C6B7A",
-    "rule": "#C9D4CE",
-    "quote_bg": "#E4F2EE",
-    "header_fg": "#F6F3EC",
-    "font_heading": "Calibri",
-    "font_body": "Calibri",
-    "font_east_asia": "微软雅黑",
-}
+# DEFAULT_THEME is the commercial pack (today's look). Packs live in office_style.py.
 
 WORD_BLOCK_TYPES = {
     "heading",
@@ -113,16 +107,10 @@ def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def normalize_theme(raw: Any) -> Dict[str, str]:
-    theme = dict(DEFAULT_THEME)
-    if isinstance(raw, dict):
-        for key, default in DEFAULT_THEME.items():
-            val = raw.get(key)
-            if val:
-                theme[key] = str(val)
-            elif key not in theme:
-                theme[key] = default
-    return theme
+def normalize_theme(raw: Any = None, *, style_id: Any = "") -> Dict[str, str]:
+    """Theme is owned by the style pack. Model-supplied colors/fonts are ignored."""
+    del raw
+    return theme_from_style(style_id)
 
 
 def normalize_plan(raw: Any) -> List[Dict[str, str]]:
@@ -584,6 +572,7 @@ def empty_outline(
     plan: Optional[Any] = None,
     requirements: Optional[Any] = None,
     theme: Optional[Any] = None,
+    style_id: str = "",
     doc_id: str = "",
     file_name: str = "",
     throughline: str = "",
@@ -607,6 +596,8 @@ def empty_outline(
             "office_create requires a plan[] of section/slide titles that map the user's request. "
             "Do not skip the outline."
         )
+    del theme  # packs own colors; office_create must not set theme
+    sid = normalize_style_id(style_id or DEFAULT_STYLE_ID)
     # Auto-link requirements to plan items when missing.
     if reqs and plan_n:
         for req in reqs:
@@ -625,7 +616,8 @@ def empty_outline(
         "title": title_n,
         "subtitle": _clean_text(subtitle),
         "author": _clean_text(author),
-        "theme": normalize_theme(theme),
+        "style_id": sid,
+        "theme": normalize_theme(style_id=sid),
         "throughline": throughline_n,
         "voice": normalize_voice(voice),
         "glossary": normalize_glossary(glossary if glossary is not None else terms),
@@ -660,7 +652,8 @@ def parse_outline(raw: Any) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raise OfficeOutlineError("outline must be a JSON object")
     kind = normalize_kind(raw.get("kind") or ("pptx" if raw.get("slides") else "docx"))
-    theme = normalize_theme(raw.get("theme"))
+    sid = normalize_style_id(raw.get("style_id"))
+    theme = normalize_theme(style_id=sid)
     blocks = [normalize_block(b) for b in _as_list(raw.get("blocks"))]
     slides = [normalize_slide(s) for s in _as_list(raw.get("slides"))]
     return {
@@ -670,6 +663,7 @@ def parse_outline(raw: Any) -> Dict[str, Any]:
         "title": _clean_text(raw.get("title")) or "Untitled",
         "subtitle": _clean_text(raw.get("subtitle")),
         "author": _clean_text(raw.get("author")),
+        "style_id": sid,
         "theme": theme,
         "throughline": normalize_throughline(
             raw.get("throughline") or raw.get("thesis"), title=_clean_text(raw.get("title")), required=False

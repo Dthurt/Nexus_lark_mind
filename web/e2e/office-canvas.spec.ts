@@ -91,6 +91,9 @@ test.describe("office canvas", () => {
     await expect(page.getByTestId("office-throughline")).toContainText("增长必须先对齐交付节奏");
     await expect(page.getByTestId("office-equation")).toBeVisible();
     await expect(page.getByTestId("office-download")).toBeVisible();
+    await expect(page.getByTestId("office-style")).toBeVisible();
+    await expect(page.getByTestId("office-style-commercial")).toBeVisible();
+    await expect(page.getByTestId("office-style-academic")).toBeVisible();
 
     const appendedWord = {
       ...wordOutline,

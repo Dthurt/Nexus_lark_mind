@@ -177,6 +177,8 @@ OFFICE_DOCS = (
     "9. Revise with `office_replace` (by id). Finish with `office_save`. Mention the workspace path.\n"
     "10. Never use `write_file` / `run_code` / Office COM/CLI to build .docx/.pptx. "
     "Do not parallelize office_* calls. Canvas opens automatically — do not also `open_canvas`.\n"
+    "11. Stay style-blind. Do not choose colors, fonts, or 花哨排版. Do not write 商业风/学术风/配色 "
+    "into the document text, and do not pass theme to office_create. Visual style is applied afterwards.\n"
 )
 
 # ---------------------------------------------------------------------------

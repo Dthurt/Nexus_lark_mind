@@ -133,6 +133,27 @@ _SYMBOLS = {
 
 _NARY_CHARS = set("∑∏∐∫∬∭∮⋃⋂⋁⋀")
 
+_SUP_CHARS = {
+    "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+    "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+    "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾",
+    "n": "ⁿ", "i": "ⁱ", "x": "ˣ", "y": "ʸ",
+    "a": "ᵃ", "b": "ᵇ", "c": "ᶜ", "d": "ᵈ", "e": "ᵉ",
+    "f": "ᶠ", "g": "ᵍ", "h": "ʰ", "j": "ʲ", "k": "ᵏ",
+    "l": "ˡ", "m": "ᵐ", "o": "ᵒ", "p": "ᵖ", "r": "ʳ",
+    "s": "ˢ", "t": "ᵗ", "u": "ᵘ", "v": "ᵛ", "w": "ʷ",
+}
+
+_SUB_CHARS = {
+    "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+    "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+    "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎",
+    "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ",
+    "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ", "o": "ₒ",
+    "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ", "u": "ᵤ",
+    "v": "ᵥ", "x": "ₓ",
+}
+
 _ACCENTS = {
     "^": "^",
     "ˆ": "^",
@@ -143,6 +164,19 @@ _ACCENTS = {
     "¨": "¨",
     "→": "→",
 }
+
+
+
+def _script_unicode(pretty: str, table: dict, prefix: str) -> str:
+    raw = str(pretty or "")
+    if not raw:
+        return ""
+    mapped = []
+    for ch in raw:
+        if ch not in table:
+            return f"{prefix}{raw}"
+        mapped.append(table[ch])
+    return "".join(mapped)
 
 
 def strip_latex_wrappers(raw: Any) -> str:
@@ -307,15 +341,11 @@ def latex_to_unicode(tex: str) -> str:
             continue
         if ch == "^":
             body, i = _group(s, i + 1)
-            pretty = latex_to_unicode(body)
-            supers = str.maketrans("0123456789+-=()", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾")
-            out.append(pretty.translate(supers) if pretty and all(c in "0123456789+-=()n" for c in pretty) else f"^{pretty}")
+            out.append(_script_unicode(latex_to_unicode(body), _SUP_CHARS, "^"))
             continue
         if ch == "_":
             body, i = _group(s, i + 1)
-            pretty = latex_to_unicode(body)
-            subs = str.maketrans("0123456789+-=()", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎")
-            out.append(pretty.translate(subs) if pretty and all(c in "0123456789+-=()n" for c in pretty) else f"_{pretty}")
+            out.append(_script_unicode(latex_to_unicode(body), _SUB_CHARS, "_"))
             continue
         if ch == "&":
             out.append("  ")
@@ -555,15 +585,25 @@ def _simple_latex_omml(tex: str, *, display: bool) -> str:
                 body, i = grp(src, i)
                 parts.append(parse_expr(body))
                 continue
-            if ch == "^":
-                body, i = grp(src, i + 1)
-                base = parts.pop() if parts else _omml_run("")
-                parts.append(f"<m:sSup><m:e>{base}</m:e><m:sup>{parse_expr(body)}</m:sup></m:sSup>")
-                continue
-            if ch == "_":
-                body, i = grp(src, i + 1)
-                base = parts.pop() if parts else _omml_run("")
-                parts.append(f"<m:sSub><m:e>{base}</m:e><m:sub>{parse_expr(body)}</m:sub></m:sSub>")
+            if ch in "^_":
+                first = ch
+                body1, i = grp(src, i + 1)
+                while i < n and src[i] in " \t":
+                    i += 1
+                if i < n and src[i] in "^_" and src[i] != first:
+                    body2, i = grp(src, i + 1)
+                    base = parts.pop() if parts else _omml_run("")
+                    sub_b, sup_b = (body1, body2) if first == "_" else (body2, body1)
+                    parts.append(
+                        f"<m:sSubSup><m:e>{base}</m:e><m:sub>{parse_expr(sub_b)}</m:sub>"
+                        f"<m:sup>{parse_expr(sup_b)}</m:sup></m:sSubSup>"
+                    )
+                else:
+                    base = parts.pop() if parts else _omml_run("")
+                    if first == "^":
+                        parts.append(f"<m:sSup><m:e>{base}</m:e><m:sup>{parse_expr(body1)}</m:sup></m:sSup>")
+                    else:
+                        parts.append(f"<m:sSub><m:e>{base}</m:e><m:sub>{parse_expr(body1)}</m:sub></m:sSub>")
                 continue
             if ch in " \n\t":
                 i += 1
@@ -593,7 +633,10 @@ def latex_to_omml_xml(tex: str, *, display: bool = True) -> Optional[str]:
     try:
         from latex2mathml.converter import convert
 
-        mathml = convert(latex)
+        try:
+            mathml = convert(latex, display="block" if display else "inline")
+        except TypeError:
+            mathml = convert(latex)
         return _mathml_string_to_omml(mathml, display=display)
     except Exception:
         try:
@@ -608,10 +651,18 @@ def latex_to_omml_element(tex: str, *, display: bool = True):
         return None
     try:
         from docx.oxml import parse_xml
+        from docx.oxml.ns import nsmap
 
+        if "m" not in nsmap:
+            nsmap["m"] = OMML_NS
         return parse_xml(xml)
     except Exception:
         return None
+
+
+def ppt_math_alternate_xml(tex: str) -> Optional[str]:
+    """Do not emit a14:m / AlternateContent. PowerPoint repairs that slide XML."""
+    return None
 
 
 def equation_fallback_lines(tex: str) -> Tuple[str, str]:

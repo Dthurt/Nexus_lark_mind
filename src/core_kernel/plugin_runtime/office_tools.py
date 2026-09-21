@@ -16,6 +16,7 @@ from src.core_kernel.plugin_runtime.office_outline import (
     empty_outline,
     next_hint,
 )
+from src.core_kernel.plugin_runtime.office_style import apply_style_to_outline
 from src.core_kernel.plugin_runtime.office_store import (
     download_url,
     get_outline,
@@ -149,6 +150,8 @@ TOOLS: List[Dict[str, Any]] = [
             "This call ONLY writes the document contract + cover / TOC / agenda — never the full body. "
             "Do NOT dump a giant blob. Next calls MUST be office_append (one section or one slide). "
             "If the user later asks for a new section, call office_revise_plan first. "
+            "Stay style-blind: do not pass theme/colors/fonts, and do not write 商业风/学术风/配色/花哨排版 into the text. "
+            "Visual style is applied by the product after you write. "
             "Canvas opens automatically with a live preview. Engine: python-docx / python-pptx."
         ),
         "inputSchema": {
@@ -208,6 +211,7 @@ TOOLS: List[Dict[str, Any]] = [
             "Max 8 blocks. PowerPoint: preferably ONE slide (max 3). "
             "Do not introduce a section that is not on the plan — call office_revise_plan first. "
             "Keep glossary terms and the throughline. Do not restate the intro or jump to the conclusion early. "
+            "Write semantic content only — no colors, fonts, or 花哨 visual styling in the text. "
             "Never send the entire remaining document. Never use write_file for .docx/.pptx. "
             "Canvas updates live, one block/slide at a time."
         ),
@@ -353,6 +357,17 @@ def _materialize(outline: Dict[str, Any]) -> Dict[str, Any]:
         "path": outline.get("path") or "",
         "file_name": file_name,
     }
+
+
+def apply_office_style(doc_id: str, style_id: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Switch style pack, re-render JSON + binary for the same doc_id."""
+    outline = _require_doc(doc_id)
+    apply_style_to_outline(outline, style_id)
+    outline["last_op"] = "style"
+    outline["last_ids"] = []
+    extra = _materialize(outline)
+    extra["style_id"] = outline.get("style_id")
+    return outline, extra
 
 
 def _require_doc(doc_id: str) -> Dict[str, Any]:

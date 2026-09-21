@@ -129,6 +129,11 @@ class DrawioRepairRequest(BaseModel):
     model_name: Optional[str] = None
 
 
+class OfficeStyleRequest(BaseModel):
+    doc_id: str
+    style_id: str
+
+
 class SPAStaticFiles(StaticFiles):
     """Serve index.html for client routes like /knowledge and /settings."""
 
@@ -1628,6 +1633,24 @@ def create_adapters_app() -> FastAPI:
         if not isinstance(outline, dict):
             raise NotFoundError("office outline not found")
         return RpcEnvelope(ok=True, data={"outline": outline, "doc_id": key})
+
+    @app.post("/api/office/style")
+    async def post_office_style(body: OfficeStyleRequest):
+        from src.core_kernel.plugin_runtime.office_tools import apply_office_style
+
+        key = Path(str(body.doc_id or "")).name
+        if not key.startswith("off_"):
+            raise ValidationAppError("invalid office doc id")
+        outline, extra = apply_office_style(key, body.style_id)
+        return RpcEnvelope(
+            ok=True,
+            data={
+                "outline": outline,
+                "doc_id": key,
+                "style_id": outline.get("style_id"),
+                "download_url": extra.get("download_url") or outline.get("download_url"),
+            },
+        )
 
     @app.get("/api/office/recent")
     async def get_office_recent(cwd: str = "", limit: int = 8):

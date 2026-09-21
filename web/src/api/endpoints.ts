@@ -389,6 +389,13 @@ export function getOfficeOutline(docId: string): Promise<{ outline?: Record<stri
   return apiGet(`/api/office/outline/${encodeURIComponent(docId)}`);
 }
 
+export function postOfficeStyle(body: {
+  doc_id: string;
+  style_id: string;
+}): Promise<{ outline?: Record<string, unknown>; doc_id?: string; style_id?: string; download_url?: string }> {
+  return apiPost("/api/office/style", body);
+}
+
 export function listOfficeRecent(query?: {
   cwd?: string;
   limit?: number;

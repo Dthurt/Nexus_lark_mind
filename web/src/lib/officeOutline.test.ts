@@ -4,8 +4,11 @@ import {
   collectOfficeIds,
   officeAlignment,
   parseOfficeOutline,
+  splitOfficeMath,
+  unwrapOfficeLatex,
   type OfficeOutline,
 } from "./officeOutline";
+import { OFFICE_STYLE_PACKS, normalizeOfficeStyleId, themeFromStyle } from "./officeStyle";
 
 const sample: OfficeOutline = {
   schema: "nlm.office.v1",
@@ -38,6 +41,18 @@ describe("parseOfficeOutline", () => {
     expect(collectOfficeIds(out)).toEqual(["cover_h1", "b1", "b2", "b3"]);
   });
 
+  it("splits inline math out of prose", () => {
+    const parts = splitOfficeMath(String.raw`均值 $\mu_x$ 满足 $x^2+y^2=1$。`);
+    expect(parts).toEqual([
+      { kind: "text", value: "均值 " },
+      { kind: "math", value: String.raw`\mu_x` },
+      { kind: "text", value: " 满足 " },
+      { kind: "math", value: "x^2+y^2=1" },
+      { kind: "text", value: "。" },
+    ]);
+    expect(unwrapOfficeLatex(String.raw`$\mu_x$`)).toBe(String.raw`\mu_x`);
+  });
+
   it("returns null for junk", () => {
     expect(parseOfficeOutline("not-json")).toBeNull();
     expect(parseOfficeOutline("")).toBeNull();
@@ -50,5 +65,18 @@ describe("parseOfficeOutline", () => {
     expect(align.plan[0]?.filled).toBe(true);
     expect(align.plan[1]?.filled).toBe(false);
     expect(align.requirements[0]?.filled).toBe(true);
+  });
+
+  it("defaults style_id to commercial and expands academic tokens", () => {
+    const commercial = parseOfficeOutline(sample)!;
+    expect(commercial.style_id).toBe("commercial");
+    expect(commercial.theme?.accent).toBe("#2A9D8F");
+    const academic = parseOfficeOutline({ ...sample, style_id: "academic", theme: { accent: "#FF0000" } })!;
+    expect(academic.style_id).toBe("academic");
+    expect(academic.theme?.font_body).toBe("Times New Roman");
+    expect(academic.theme?.paper).toBe("#FFFFFF");
+    expect(academic.theme?.accent).toBe(OFFICE_STYLE_PACKS.academic.theme.accent);
+    expect(normalizeOfficeStyleId("未知")).toBe("commercial");
+    expect(themeFromStyle("academic").font_body).toBe("Times New Roman");
   });
 });

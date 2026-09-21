@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Download } from "lucide-react";
 
-import { getOfficeOutline } from "@/api/endpoints";
+import { getOfficeOutline, postOfficeStyle } from "@/api/endpoints";
 import type { CanvasViewProps } from "@/components/canvas/canvasRegistry";
 import { Button } from "@/components/ui/button";
 import { officeDocIdFromBody } from "@/lib/canvasDoc";
@@ -10,59 +10,97 @@ import {
   NLM_OFFICE_WRITING_EVENT,
   officeAlignment,
   officeImageSrc,
-  officeTextHasMath,
+  splitOfficeMath,
+  unwrapOfficeLatex,
   parseOfficeOutline,
   type OfficeOutline,
   type OfficeSlide,
   type OfficeWordBlock,
 } from "@/lib/officeOutline";
+import {
+  formatOfficeCaption,
+  layoutFromStyle,
+  normalizeOfficeStyleId,
+  officeThemeCssVars,
+  type OfficeStyleId,
+} from "@/lib/officeStyle";
 import { applyOfficePreview, emptyOfficePreview } from "@/lib/officePreview";
-import { renderLatex, renderMathIn } from "@/lib/markdown/math";
+import { renderLatex } from "@/lib/markdown/math";
 import { cn } from "@/lib/utils";
 
-function OfficeRichText({ text, className, as: Tag = "span" }: { text: string; className?: string; as?: "span" | "p" | "li" | "td" | "th" }) {
-  const ref = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.textContent = text;
-    if (officeTextHasMath(text)) void renderMathIn(el);
-  }, [text]);
-  return <Tag ref={ref as never} className={className} />;
+function OfficeRichText({
+  text,
+  className,
+  as: Tag = "span",
+}: {
+  text: string;
+  className?: string;
+  as?: "span" | "p" | "li" | "td" | "th" | "h1" | "h2" | "h3" | "h4";
+}) {
+  const parts = useMemo(() => splitOfficeMath(text), [text]);
+  const hasMath = parts.some((part) => part.kind === "math");
+  if (!hasMath) {
+    return <Tag className={className}>{text}</Tag>;
+  }
+  return (
+    <Tag className={className}>
+      {parts.map((part, i) =>
+        part.kind === "text" ? (
+          <Fragment key={i}>{part.value}</Fragment>
+        ) : (
+          <OfficeEquation key={i} latex={part.value} display="inline" />
+        ),
+      )}
+    </Tag>
+  );
 }
 
 function OfficeEquation({
   latex,
   display = "block",
   caption,
+  number,
 }: {
   latex: string;
   display?: "inline" | "block";
   caption?: string;
+  number?: number;
 }) {
-  const ref = useRef<HTMLDivElement | null>(null);
+  const ref = useRef<HTMLElement | null>(null);
+  const tex = unwrapOfficeLatex(latex);
   useEffect(() => {
-    void renderLatex(ref.current, latex, display !== "inline");
-  }, [latex, display]);
+    void renderLatex(ref.current, tex, display !== "inline");
+  }, [tex, display]);
   if (display === "inline") {
-    return <span ref={ref} className="nlm-office-eq-inline" data-testid="office-equation" />;
+    return <span ref={ref as never} className="nlm-office-eq-inline" data-testid="office-equation-inline" />;
   }
   return (
     <figure className="nlm-office-eq" data-testid="office-equation">
-      <div ref={ref} className="nlm-office-eq-body" />
+      <div className="nlm-office-eq-row">
+        <div ref={ref as never} className="nlm-office-eq-body" />
+        {number ? <span className="nlm-office-eq-no">({number})</span> : null}
+      </div>
       {caption ? <figcaption className="nlm-office-caption">{caption}</figcaption> : null}
     </figure>
   );
 }
 
-function WordBlockView({ block }: { block: OfficeWordBlock }) {
+function WordBlockView({
+  block,
+  caption,
+  eqNo,
+}: {
+  block: OfficeWordBlock;
+  caption?: string;
+  eqNo?: number;
+}) {
   if (block.type === "heading") {
     const Tag = block.level === 1 ? "h1" : block.level === 2 ? "h2" : "h3";
-    return <Tag className={`nlm-office-h${block.level}`}>{block.text}</Tag>;
+    return <OfficeRichText as={Tag} className={`nlm-office-h${block.level}`} text={block.text} />;
   }
   if (block.type === "paragraph") return <OfficeRichText as="p" className="nlm-office-p" text={block.text} />;
   if (block.type === "equation") {
-    return <OfficeEquation latex={block.latex} display={block.display} caption={block.caption} />;
+    return <OfficeEquation latex={block.latex} display={block.display} caption={block.caption} number={eqNo} />;
   }
   if (block.type === "bullet_list" || block.type === "numbered_list") {
     const Tag = block.type === "numbered_list" ? "ol" : "ul";
@@ -107,6 +145,7 @@ function WordBlockView({ block }: { block: OfficeWordBlock }) {
             ))}
           </tbody>
         </table>
+        {caption ? <p className="nlm-office-caption">{caption}</p> : null}
       </div>
     );
   }
@@ -115,15 +154,29 @@ function WordBlockView({ block }: { block: OfficeWordBlock }) {
     const src = officeImageSrc(block);
     return (
       <figure className="nlm-office-figure">
-        {src ? <img src={src} alt={block.alt || block.caption || ""} /> : <p className="nlm-office-caption">[图片]</p>}
-        {block.caption ? <figcaption className="nlm-office-caption">{block.caption}</figcaption> : null}
+        {src ? <img src={src} alt={block.alt || caption || block.caption || ""} /> : <p className="nlm-office-caption">[图片]</p>}
+        {caption || block.caption ? <figcaption className="nlm-office-caption">{caption || block.caption}</figcaption> : null}
       </figure>
     );
   }
   return null;
 }
 
-function SlideView({ slide, index, total, deckTitle }: { slide: OfficeSlide; index: number; total: number; deckTitle: string }) {
+function SlideView({
+  slide,
+  index,
+  total,
+  deckTitle,
+  sectionNo,
+  styleId,
+}: {
+  slide: OfficeSlide;
+  index: number;
+  total: number;
+  deckTitle: string;
+  sectionNo?: number;
+  styleId: OfficeStyleId;
+}) {
   const footer = (
     <div className="nlm-office-slide-footer">
       <span>{deckTitle}</span>
@@ -136,7 +189,7 @@ function SlideView({ slide, index, total, deckTitle }: { slide: OfficeSlide; ind
     return (
       <article className="nlm-office-slide is-title">
         <div className="nlm-office-slide-accent" />
-        <h2 className="nlm-office-slide-title">{slide.title}</h2>
+        <OfficeRichText as="h2" className="nlm-office-slide-title" text={slide.title} />
         <div className="nlm-office-slide-rule" />
         {slide.subtitle ? <OfficeRichText as="p" className="nlm-office-slide-sub" text={slide.subtitle} /> : null}
         {footer}
@@ -146,8 +199,12 @@ function SlideView({ slide, index, total, deckTitle }: { slide: OfficeSlide; ind
   if (slide.type === "section") {
     return (
       <article className="nlm-office-slide is-section">
-        <p className="nlm-office-slide-kicker">{slide.kicker || "SECTION"}</p>
-        <h2 className="nlm-office-slide-title">{slide.title}</h2>
+        {styleId === "academic" && sectionNo ? (
+          <p className="nlm-office-slide-num">{String(sectionNo).padStart(2, "0")}</p>
+        ) : (
+          <p className="nlm-office-slide-kicker">{slide.kicker || "SECTION"}</p>
+        )}
+        <OfficeRichText as="h2" className="nlm-office-slide-title" text={slide.title} />
         {footer}
       </article>
     );
@@ -166,14 +223,12 @@ function SlideView({ slide, index, total, deckTitle }: { slide: OfficeSlide; ind
     return (
       <article className="nlm-office-slide">
         <div className="nlm-office-slide-accent" />
-        <h2 className="nlm-office-slide-title" style={{ fontSize: 22 }}>
-          {slide.title}
-        </h2>
+        <OfficeRichText as="h2" className="nlm-office-slide-title" text={slide.title} />
         <div className="nlm-office-slide-rule" />
         <div className="nlm-office-cols">
           {[slide.left, slide.right].map((col, i) => (
             <div key={i} className="nlm-office-col">
-              {col?.heading ? <h4>{col.heading}</h4> : null}
+              {col?.heading ? <OfficeRichText as="h4" text={col.heading} /> : null}
               {col?.body ? <OfficeRichText as="p" className="nlm-office-p" text={col.body} /> : null}
               {col?.items?.length ? (
                 <ul className="nlm-office-slide-list">
@@ -194,11 +249,7 @@ function SlideView({ slide, index, total, deckTitle }: { slide: OfficeSlide; ind
     return (
       <article className="nlm-office-slide">
         <div className="nlm-office-slide-accent" />
-        {slide.title ? (
-          <h2 className="nlm-office-slide-title" style={{ fontSize: 20 }}>
-            {slide.title}
-          </h2>
-        ) : null}
+        {slide.title ? <OfficeRichText as="h2" className="nlm-office-slide-title" text={slide.title} /> : null}
         <figure className="nlm-office-figure">
           {src ? <img src={src} alt={slide.caption || slide.title || ""} /> : null}
           {slide.caption ? <figcaption className="nlm-office-caption">{slide.caption}</figcaption> : null}
@@ -211,11 +262,7 @@ function SlideView({ slide, index, total, deckTitle }: { slide: OfficeSlide; ind
     return (
       <article className="nlm-office-slide is-equation">
         <div className="nlm-office-slide-accent" />
-        {slide.title ? (
-          <h2 className="nlm-office-slide-title" style={{ fontSize: 22 }}>
-            {slide.title}
-          </h2>
-        ) : null}
+        {slide.title ? <OfficeRichText as="h2" className="nlm-office-slide-title" text={slide.title} /> : null}
         {slide.title ? <div className="nlm-office-slide-rule" /> : null}
         <OfficeEquation latex={slide.latex} display="block" caption={slide.caption} />
         {footer}
@@ -225,9 +272,7 @@ function SlideView({ slide, index, total, deckTitle }: { slide: OfficeSlide; ind
   return (
     <article className="nlm-office-slide">
       <div className="nlm-office-slide-accent" />
-      <h2 className="nlm-office-slide-title" style={{ fontSize: 22 }}>
-        {slide.type === "bullets" ? slide.title : ""}
-      </h2>
+      <OfficeRichText as="h2" className="nlm-office-slide-title" text={slide.type === "bullets" ? slide.title : ""} />
       <div className="nlm-office-slide-rule" />
       {slide.type === "bullets" ? (
         <ul className="nlm-office-slide-list">
@@ -246,6 +291,7 @@ export function OfficeCanvasView({ doc, onCommit }: CanvasViewProps) {
     applyOfficePreview(emptyOfficePreview(), { outline: parseOfficeOutline(doc.body) }),
   );
   const [writing, setWriting] = useState(false);
+  const [styleBusy, setStyleBusy] = useState(false);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const lastAnchor = useRef<string>("");
 
@@ -294,6 +340,9 @@ export function OfficeCanvasView({ doc, onCommit }: CanvasViewProps) {
   const kindLabel = outline?.kind === "pptx" ? "PowerPoint" : "Word";
   const downloadUrl = outline?.download_url || (outline?.doc_id ? `/api/office/files/${outline.doc_id}` : "");
   const fileName = outline?.file_name || (outline?.kind === "pptx" ? `${outline?.title || "deck"}.pptx` : `${outline?.title || "document"}.docx`);
+  const styleId = normalizeOfficeStyleId(outline?.style_id);
+  const pack = layoutFromStyle(styleId);
+  const themeVars = officeThemeCssVars(outline?.theme || {});
 
   const download = () => {
     if (!downloadUrl) return;
@@ -303,9 +352,20 @@ export function OfficeCanvasView({ doc, onCommit }: CanvasViewProps) {
     a.click();
   };
 
+  const applyStyle = (next: OfficeStyleId) => {
+    if (!outline?.doc_id || next === styleId || styleBusy) return;
+    setStyleBusy(true);
+    void postOfficeStyle({ doc_id: outline.doc_id, style_id: next })
+      .then((data) => {
+        if (data?.outline) onCommit(JSON.stringify(data.outline));
+      })
+      .catch(() => undefined)
+      .finally(() => setStyleBusy(false));
+  };
+
   if (!outline) {
     return (
-      <div className="nlm-office-view" data-testid="office-canvas">
+      <div className="nlm-office-view" data-style="commercial" data-testid="office-canvas">
         <div className="flex flex-1 items-center justify-center px-4 text-center text-[12px] text-muted-foreground">
           文档预览未就绪。点顶栏 Canvas 可恢复上次大纲；若磁盘上已有 .docx/.pptx，会从 outline JSON 重新打开。
         </div>
@@ -316,7 +376,12 @@ export function OfficeCanvasView({ doc, onCommit }: CanvasViewProps) {
   const items = outline.kind === "pptx" ? outline.slides || [] : outline.blocks || [];
 
   return (
-    <div className="nlm-office-view" data-testid="office-canvas">
+    <div
+      className="nlm-office-view"
+      data-style={styleId}
+      data-testid="office-canvas"
+      style={themeVars as CSSProperties}
+    >
       <div className="nlm-office-toolbar">
         <span className="nlm-office-kicker">{kindLabel}</span>
         <span className="min-w-0 truncate text-[12px] font-medium">{outline.title || "未命名"}</span>
@@ -331,18 +396,40 @@ export function OfficeCanvasView({ doc, onCommit }: CanvasViewProps) {
             {outline.path ? ` · ${outline.path}` : ""}
           </span>
         )}
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          className="ml-auto h-6 gap-1 px-2 text-[11px]"
-          disabled={!downloadUrl}
-          data-testid="office-download"
-          onClick={download}
-        >
-          <Download className="size-3" />
-          下载
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          <div className="nlm-office-style" data-testid="office-style" role="group" aria-label="文档风格">
+            <button
+              type="button"
+              className={cn("nlm-office-style-pill", styleId === "commercial" && "is-active")}
+              data-testid="office-style-commercial"
+              disabled={!outline.doc_id || styleBusy}
+              onClick={() => applyStyle("commercial")}
+            >
+              商业风
+            </button>
+            <button
+              type="button"
+              className={cn("nlm-office-style-pill", styleId === "academic" && "is-active")}
+              data-testid="office-style-academic"
+              disabled={!outline.doc_id || styleBusy}
+              onClick={() => applyStyle("academic")}
+            >
+              学术风
+            </button>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-6 gap-1 px-2 text-[11px]"
+            disabled={!downloadUrl}
+            data-testid="office-download"
+            onClick={download}
+          >
+            <Download className="size-3" />
+            下载
+          </Button>
+        </div>
       </div>
 
       <div className="nlm-office-body">
@@ -366,41 +453,70 @@ export function OfficeCanvasView({ doc, onCommit }: CanvasViewProps) {
         <div className="nlm-office-stage" ref={stageRef}>
           {outline.kind === "docx" ? (
             <div className="nlm-office-page">
+              {pack.word_header_title ? <p className="nlm-office-page-header">{outline.title}</p> : null}
               <AnimatePresence initial={false}>
-                {(outline.blocks || []).map((block) => (
-                  <motion.div
-                    key={block.id}
-                    data-office-id={block.id}
-                    className={cn(entering.has(block.id) && "nlm-office-block-enter")}
-                    initial={entering.has(block.id) ? { opacity: 0, y: 10 } : false}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
-                  >
-                    <WordBlockView block={block} />
-                  </motion.div>
-                ))}
+                {(() => {
+                  let fig = 0;
+                  let tbl = 0;
+                  let eq = 0;
+                  return (outline.blocks || []).map((block) => {
+                    let caption: string | undefined;
+                    let eqNo: number | undefined;
+                    if (block.type === "image") {
+                      fig += 1;
+                      caption = formatOfficeCaption("图", fig, block.caption, pack.caption_numbers);
+                    } else if (block.type === "table") {
+                      tbl += 1;
+                      caption = formatOfficeCaption("表", tbl, undefined, pack.caption_numbers);
+                    } else if (block.type === "equation" && block.display !== "inline") {
+                      eq += 1;
+                      if (pack.equation_numbers) eqNo = eq;
+                    }
+                    return (
+                      <motion.div
+                        key={block.id}
+                        data-office-id={block.id}
+                        className={cn(entering.has(block.id) && "nlm-office-block-enter")}
+                        initial={entering.has(block.id) ? { opacity: 0, y: 10 } : false}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
+                      >
+                        <WordBlockView block={block} caption={caption} eqNo={eqNo} />
+                      </motion.div>
+                    );
+                  });
+                })()}
               </AnimatePresence>
+              {pack.word_footer_page ? <p className="nlm-office-page-footer">1</p> : null}
             </div>
           ) : (
             <div className="nlm-office-slide-stack">
-              {(outline.slides || []).map((slide, i) => (
-                <div key={slide.id} data-office-id={slide.id}>
-                  <motion.div
-                    className={cn(entering.has(slide.id) && "nlm-office-block-enter")}
-                    initial={entering.has(slide.id) ? { opacity: 0, y: 14 } : false}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-                  >
-                    <SlideView
-                      slide={slide}
-                      index={i + 1}
-                      total={(outline.slides || []).length}
-                      deckTitle={outline.title}
-                    />
-                  </motion.div>
-                  {slide.notes ? <p className="nlm-office-notes">讲稿 · {slide.notes}</p> : null}
-                </div>
-              ))}
+              {(() => {
+                let sectionNo = 0;
+                return (outline.slides || []).map((slide, i) => {
+                  if (slide.type === "section") sectionNo += 1;
+                  return (
+                    <div key={slide.id} data-office-id={slide.id}>
+                      <motion.div
+                        className={cn(entering.has(slide.id) && "nlm-office-block-enter")}
+                        initial={entering.has(slide.id) ? { opacity: 0, y: 14 } : false}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                      >
+                        <SlideView
+                          slide={slide}
+                          index={i + 1}
+                          total={(outline.slides || []).length}
+                          deckTitle={outline.title}
+                          sectionNo={slide.type === "section" ? sectionNo : 0}
+                          styleId={styleId}
+                        />
+                      </motion.div>
+                      {slide.notes ? <p className="nlm-office-notes">讲稿 · {slide.notes}</p> : null}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           )}
           {!items.length ? (

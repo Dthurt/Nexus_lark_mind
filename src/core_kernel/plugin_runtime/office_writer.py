@@ -16,9 +16,22 @@ from src.core_kernel.plugin_runtime.office_math import (
 )
 from src.core_kernel.plugin_runtime.office_outline import DEFAULT_THEME, OfficeOutlineError
 from src.core_kernel.plugin_runtime.office_store import copy_asset
+from src.core_kernel.plugin_runtime.office_style import (
+    layout_from_style,
+    normalize_style_id,
+    numbered_caption,
+    theme_from_style,
+    token_color,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 IMAGE_DIR = _REPO_ROOT / "data" / "generated_images"
+
+
+def _pack_of(outline: Dict[str, Any]) -> Tuple[str, Dict[str, str], Dict[str, Any]]:
+    sid = normalize_style_id(outline.get("style_id"))
+    theme = {**DEFAULT_THEME, **theme_from_style(sid)}
+    return sid, theme, layout_from_style(sid)
 
 
 def _hex_rgb(value: str) -> Tuple[int, int, int]:
@@ -111,46 +124,74 @@ def _add_math_fallback_run(paragraph, latex: str, theme: Dict[str, str], *, size
     return run
 
 
-def _fill_rich_text(paragraph, text: str, theme: Dict[str, str], *, size_pt: float, bold: bool = False, italic: bool = False, color: str = ""):
+def _fill_rich_text(
+    paragraph,
+    text: str,
+    theme: Dict[str, str],
+    *,
+    size_pt: float,
+    bold: bool = False,
+    italic: bool = False,
+    color: str = "",
+    heading: bool = False,
+):
     if not text_has_math(text):
         run = paragraph.add_run(text)
-        _set_run_font(run, theme, size_pt=size_pt, bold=bold, italic=italic, color=color)
+        _set_run_font(run, theme, size_pt=size_pt, bold=bold, italic=italic, color=color, heading=heading)
         return paragraph
     for kind, payload in iter_text_math_parts(text):
         if kind == "text":
             if not payload:
                 continue
             run = paragraph.add_run(payload)
-            _set_run_font(run, theme, size_pt=size_pt, bold=bold, italic=italic, color=color)
+            _set_run_font(run, theme, size_pt=size_pt, bold=bold, italic=italic, color=color, heading=heading)
             continue
         if not _try_omml(paragraph, payload, display=False):
             _add_math_fallback_run(paragraph, payload, theme, size_pt=size_pt + (1 if kind == "math_block" else 0))
     return paragraph
 
 
-def _add_equation_paragraph(doc, block: Dict[str, Any], theme: Dict[str, str], *, align_center=True):
+def _add_equation_paragraph(
+    doc,
+    block: Dict[str, Any],
+    theme: Dict[str, str],
+    *,
+    align_center=True,
+    pack: Optional[Dict[str, Any]] = None,
+    number: int = 0,
+):
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+    flags = pack or {}
     latex = latex_from_block(block)
     display = str(block.get("display") or "block") != "inline"
+    size = float(flags.get("equation_size_pt") or 14) if display else 12
     p = doc.add_paragraph()
-    if align_center:
+    if display and align_center:
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _p_spacing(p, before=80, after=40, line=1.2)
+    _p_spacing(p, before=80 if display else 20, after=40 if display else 80, line=1.2 if display else 1.35)
+    if display and flags.get("equation_frame"):
+        _para_borders(p, color=theme.get("rule") or "#C9D4CE", sz="8")
     if not _try_omml(p, latex, display=display):
-        _add_math_fallback_run(p, latex, theme, size_pt=14 if display else 12)
+        _add_math_fallback_run(p, latex, theme, size_pt=size)
         src = latex
-        if src:
+        if src and display:
             s = doc.add_paragraph()
             if align_center:
                 s.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run = s.add_run(src)
             _set_run_font(run, theme, size_pt=9, italic=True, color=theme["muted"])
             _p_spacing(s, before=0, after=60, line=1.15)
+    if number and display:
+        npara = doc.add_paragraph()
+        npara.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        nr = npara.add_run(f"({number})")
+        _set_run_font(nr, theme, size_pt=10, color=theme["muted"])
+        _p_spacing(npara, before=0, after=20, line=1.1)
     caption = str(block.get("caption") or "").strip()
     if caption:
         c = doc.add_paragraph()
-        if align_center:
+        if display and align_center:
             c.alignment = WD_ALIGN_PARAGRAPH.CENTER
         cr = c.add_run(caption)
         _set_run_font(cr, theme, size_pt=9.5, italic=True, color=theme["muted"])
@@ -158,22 +199,36 @@ def _add_equation_paragraph(doc, block: Dict[str, Any], theme: Dict[str, str], *
     return p
 
 
-def _set_run_font(run, theme: Dict[str, str], *, size_pt: float, bold: bool = False, color: str = "", italic: bool = False):
+def _set_run_font(
+    run,
+    theme: Dict[str, str],
+    *,
+    size_pt: float,
+    bold: bool = False,
+    color: str = "",
+    italic: bool = False,
+    heading: bool = False,
+):
     from docx.oxml.ns import qn
     from docx.shared import Pt, RGBColor
 
     run.bold = bold
     run.italic = italic
     run.font.size = Pt(size_pt)
-    run.font.name = theme.get("font_body") or "Calibri"
+    latin = (theme.get("font_heading") if heading else theme.get("font_body")) or "Calibri"
+    run.font.name = latin
     r = _hex_rgb(color or theme.get("ink") or "#1C2430")
     run.font.color.rgb = RGBColor(*r)
     try:
         rPr = run._element.get_or_add_rPr()
         rFonts = rPr.get_or_add_rFonts()
-        east = theme.get("font_east_asia") or "微软雅黑"
-        rFonts.set(qn("w:ascii"), theme.get("font_body") or "Calibri")
-        rFonts.set(qn("w:hAnsi"), theme.get("font_body") or "Calibri")
+        east = (
+            theme.get("font_heading_east_asia")
+            if heading
+            else theme.get("font_east_asia")
+        ) or theme.get("font_east_asia") or "微软雅黑"
+        rFonts.set(qn("w:ascii"), latin)
+        rFonts.set(qn("w:hAnsi"), latin)
         rFonts.set(qn("w:eastAsia"), east)
     except Exception:
         pass
@@ -191,34 +246,78 @@ def _p_spacing(paragraph, *, before: int = 0, after: int = 80, line: float = 1.2
         pass
 
 
+def _para_borders(paragraph, *, color: str, sz: str = "8", sides: Tuple[str, ...] = ("top", "left", "bottom", "right"), space: str = "6"):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    pPr = paragraph._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    for side in sides:
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), sz)
+        el.set(qn("w:space"), space)
+        el.set(qn("w:color"), color.lstrip("#"))
+        pBdr.append(el)
+    pPr.append(pBdr)
+
+
 def _bottom_border(paragraph, color: str, *, sz: str = "12"):
+    _para_borders(paragraph, color=color, sz=sz, sides=("bottom",), space="6")
+
+
+def _left_border(paragraph, color: str, *, sz: str = "24"):
+    _para_borders(paragraph, color=color, sz=sz, sides=("left",), space="10")
+
+
+def _shade_paragraph(paragraph, hex_color: str):
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 
     pPr = paragraph._p.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    bottom = OxmlElement("w:bottom")
-    bottom.set(qn("w:val"), "single")
-    bottom.set(qn("w:sz"), sz)
-    bottom.set(qn("w:space"), "6")
-    bottom.set(qn("w:color"), color.lstrip("#"))
-    pBdr.append(bottom)
-    pPr.append(pBdr)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:fill"), hex_color.lstrip("#"))
+    shd.set(qn("w:val"), "clear")
+    pPr.append(shd)
 
 
-def _left_border(paragraph, color: str):
+def _set_table_borders(table, color: str, *, sz: str = "4"):
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 
-    pPr = paragraph._p.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    left = OxmlElement("w:left")
-    left.set(qn("w:val"), "single")
-    left.set(qn("w:sz"), "24")
-    left.set(qn("w:space"), "10")
-    left.set(qn("w:color"), color.lstrip("#"))
-    pBdr.append(left)
-    pPr.append(pBdr)
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), sz)
+        el.set(qn("w:space"), "0")
+        el.set(qn("w:color"), color.lstrip("#"))
+        borders.append(el)
+    tblPr.append(borders)
+
+
+def _add_page_field(paragraph, theme: Dict[str, str]):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    run = paragraph.add_run()
+    _set_run_font(run, theme, size_pt=9, color=theme.get("muted") or "#5C6B7A")
+    r = run._r
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = " PAGE "
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    r.append(begin)
+    r.append(instr)
+    r.append(end)
 
 
 def _shade_cell(cell, hex_color: str):
@@ -242,27 +341,50 @@ def render_docx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
     except ImportError as exc:
         raise OfficeOutlineError("python-docx is not installed") from exc
 
-    theme = {**DEFAULT_THEME, **(outline.get("theme") or {})}
+    _sid, theme, pack = _pack_of(outline)
     doc = Document()
     section = doc.sections[0]
     section.page_width = Inches(8.5)
     section.page_height = Inches(11)
-    section.left_margin = Inches(0.95)
-    section.right_margin = Inches(0.95)
-    section.top_margin = Inches(0.9)
-    section.bottom_margin = Inches(0.85)
+    margin = float(pack.get("page_margin_in") or 0.95)
+    section.left_margin = Inches(margin)
+    section.right_margin = Inches(margin)
+    section.top_margin = Inches(float(pack.get("page_margin_top_in") or 0.9))
+    section.bottom_margin = Inches(float(pack.get("page_margin_bottom_in") or 0.85))
 
-    # Default Normal
+    body_pt = float(pack.get("body_size_pt") or 11)
+    line = float(pack.get("line_spacing") or 1.35)
+
     try:
         normal = doc.styles["Normal"]
         normal.font.name = theme.get("font_body") or "Calibri"
-        normal.font.size = Pt(11)
+        normal.font.size = Pt(body_pt)
         normal.font.color.rgb = RGBColor(*_hex_rgb(theme["ink"]))
         normal.element.rPr.rFonts.set(qn("w:eastAsia"), theme.get("font_east_asia") or "微软雅黑")
     except Exception:
         pass
 
+    if pack.get("word_header_title"):
+        try:
+            hp = section.header.paragraphs[0]
+            hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            hr = hp.add_run(str(outline.get("title") or ""))
+            _set_run_font(hr, theme, size_pt=9, italic=True, color=theme["muted"])
+            _bottom_border(hp, theme["rule"], sz="6")
+        except Exception:
+            pass
+    if pack.get("word_footer_page"):
+        try:
+            fp = section.footer.paragraphs[0]
+            fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _add_page_field(fp, theme)
+        except Exception:
+            pass
+
     doc_id = str(outline.get("doc_id") or "")
+    fig_n = 0
+    tbl_n = 0
+    eq_n = 0
     for block in outline.get("blocks") or []:
         if not isinstance(block, dict):
             continue
@@ -270,41 +392,80 @@ def render_docx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
         if btype == "heading":
             level = int(block.get("level") or 1)
             p = doc.add_paragraph()
-            run = p.add_run(str(block.get("text") or ""))
             if level == 1:
-                _set_run_font(run, theme, size_pt=26, bold=True, color=theme["ink"])
+                _fill_rich_text(
+                    p,
+                    str(block.get("text") or ""),
+                    theme,
+                    size_pt=float(pack.get("h1_size_pt") or 26),
+                    bold=True,
+                    color=theme["ink"],
+                    heading=True,
+                )
                 _p_spacing(p, before=160, after=80, line=1.15)
-                _bottom_border(p, theme["accent"], sz="16")
+                underline = pack.get("h1_underline") or "thick"
+                if underline == "thick":
+                    _bottom_border(p, theme["accent"], sz="16")
+                elif underline == "thin":
+                    _bottom_border(p, theme["rule"], sz="6")
             elif level == 2:
-                _set_run_font(run, theme, size_pt=16, bold=True, color=theme["accent_dark"])
+                _fill_rich_text(
+                    p,
+                    str(block.get("text") or ""),
+                    theme,
+                    size_pt=float(pack.get("h2_size_pt") or 16),
+                    bold=True,
+                    color=token_color(theme, str(pack.get("h2_color") or "accent_dark")),
+                    heading=True,
+                )
                 _p_spacing(p, before=140, after=60, line=1.2)
             else:
-                _set_run_font(run, theme, size_pt=13, bold=True, color=theme["ink_soft"])
+                _fill_rich_text(
+                    p,
+                    str(block.get("text") or ""),
+                    theme,
+                    size_pt=float(pack.get("h3_size_pt") or 13),
+                    bold=True,
+                    color=token_color(theme, str(pack.get("h3_color") or "ink_soft")),
+                    heading=True,
+                )
                 _p_spacing(p, before=100, after=40, line=1.2)
         elif btype == "paragraph":
             p = doc.add_paragraph()
-            _fill_rich_text(p, str(block.get("text") or ""), theme, size_pt=11, color=theme["ink"])
-            _p_spacing(p, before=20, after=80, line=1.35)
+            _fill_rich_text(p, str(block.get("text") or ""), theme, size_pt=body_pt, color=theme["ink"])
+            _p_spacing(p, before=20, after=80, line=line)
         elif btype == "equation":
-            _add_equation_paragraph(doc, block, theme)
+            display = str(block.get("display") or "block") != "inline"
+            number = 0
+            if display and pack.get("equation_numbers"):
+                eq_n += 1
+                number = eq_n
+            _add_equation_paragraph(doc, block, theme, pack=pack, number=number)
         elif btype in {"bullet_list", "numbered_list"}:
             style = "List Number" if btype == "numbered_list" else "List Bullet"
             for item in block.get("items") or []:
                 p = doc.add_paragraph(style=style)
-                _fill_rich_text(p, str(item), theme, size_pt=11, color=theme["ink"])
-                _p_spacing(p, before=20, after=40, line=1.28)
+                _fill_rich_text(p, str(item), theme, size_pt=body_pt, color=theme["ink"])
+                _p_spacing(p, before=20, after=40, line=min(line, 1.35))
         elif btype == "quote":
             p = doc.add_paragraph()
-            _fill_rich_text(p, str(block.get("text") or ""), theme, size_pt=12, italic=True, color=theme["ink_soft"])
-            _p_spacing(p, before=80, after=40, line=1.4)
-            p.paragraph_format.left_indent = Inches(0.28)
-            _left_border(p, theme["accent"])
+            _fill_rich_text(p, str(block.get("text") or ""), theme, size_pt=body_pt + 1, italic=True, color=theme["ink_soft"])
+            _p_spacing(p, before=80, after=40, line=max(line, 1.4))
+            indent = 0.4 if pack.get("quote_bar") == "hairline" else 0.28
+            p.paragraph_format.left_indent = Inches(indent)
+            bar = pack.get("quote_bar") or "accent"
+            if bar == "accent":
+                _left_border(p, theme["accent"], sz=str(pack.get("quote_bar_sz") or "24"))
+            elif bar == "hairline":
+                _left_border(p, theme["rule"], sz=str(pack.get("quote_bar_sz") or "6"))
+            if pack.get("quote_shade"):
+                _shade_paragraph(p, theme.get("quote_bg") or theme["paper"])
             attr = str(block.get("attribution") or "").strip()
             if attr:
                 a = doc.add_paragraph()
                 ar = a.add_run(f"— {attr}")
                 _set_run_font(ar, theme, size_pt=10, italic=True, color=theme["muted"])
-                a.paragraph_format.left_indent = Inches(0.28)
+                a.paragraph_format.left_indent = Inches(indent)
                 _p_spacing(a, before=0, after=80, line=1.2)
         elif btype == "table":
             headers = [str(h) for h in (block.get("headers") or [])]
@@ -313,15 +474,20 @@ def render_docx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
             table = doc.add_table(rows=1 + len(rows), cols=cols)
             table.style = "Table Grid"
             table.autofit = True
+            header_fill = bool(pack.get("table_header_fill"))
+            zebra = bool(pack.get("table_zebra"))
             for i, h in enumerate(headers):
                 cell = table.rows[0].cells[i]
                 cell.text = ""
                 p = cell.paragraphs[0]
-                run = p.add_run(h)
-                _set_run_font(run, theme, size_pt=10, bold=True, color=theme["header_fg"])
-                _shade_cell(cell, theme["accent_dark"])
+                fg = theme["header_fg"] if header_fill else theme["ink"]
+                _fill_rich_text(p, h, theme, size_pt=10, bold=True, color=fg)
+                _shade_cell(cell, theme["accent_dark"] if header_fill else theme["paper"])
             for ri, row in enumerate(rows, 1):
-                bg = theme["paper"] if ri % 2 else theme["paper_alt"]
+                if zebra:
+                    bg = theme["paper"] if ri % 2 else theme["paper_alt"]
+                else:
+                    bg = theme["paper"]
                 for ci in range(cols):
                     cell = table.rows[ri].cells[ci]
                     cell.text = ""
@@ -329,10 +495,22 @@ def render_docx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                     p = cell.paragraphs[0]
                     _fill_rich_text(p, str(val), theme, size_pt=10, color=theme["ink"])
                     _shade_cell(cell, bg)
-            doc.add_paragraph()
+            if not header_fill:
+                _set_table_borders(table, theme["rule"], sz="4")
+            tbl_n += 1
+            cap = numbered_caption("表", tbl_n, str(block.get("caption") or ""), enabled=bool(pack.get("caption_numbers")))
+            if cap:
+                c = doc.add_paragraph()
+                cr = c.add_run(cap)
+                _set_run_font(cr, theme, size_pt=9.5, italic=True, color=theme["muted"])
+                c.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                _p_spacing(c, before=20, after=80, line=1.2)
+            else:
+                doc.add_paragraph()
         elif btype == "page_break":
             doc.add_page_break()
         elif btype == "image":
+            fig_n += 1
             local, _ = resolve_image_file(block, cwd=cwd, doc_id=doc_id)
             if local and local.is_file():
                 try:
@@ -347,10 +525,15 @@ def render_docx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                 p = doc.add_paragraph()
                 run = p.add_run(f"[图片：{block.get('alt') or block.get('path') or block.get('url') or 'missing'}]")
                 _set_run_font(run, theme, size_pt=10, italic=True, color=theme["muted"])
-            caption = str(block.get("caption") or "").strip()
-            if caption:
+            cap = numbered_caption(
+                "图",
+                fig_n,
+                str(block.get("caption") or ""),
+                enabled=bool(pack.get("caption_numbers")),
+            )
+            if cap:
                 c = doc.add_paragraph()
-                cr = c.add_run(caption)
+                cr = c.add_run(cap)
                 _set_run_font(cr, theme, size_pt=9.5, italic=True, color=theme["muted"])
                 c.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 _p_spacing(c, before=20, after=100, line=1.2)
@@ -391,34 +574,84 @@ def _add_rect(slide, left, top, width, height, fill_hex: str):
     return shape
 
 
-def _ppt_pretty(text: str) -> str:
-    if not text_has_math(text):
-        return text
-    parts: List[str] = []
-    for kind, payload in iter_text_math_parts(text):
+def _set_ppt_run_font(run, theme: Dict[str, str], *, size: float, bold: bool = False, italic: bool = False, color: str = "", math: bool = False):
+    from pptx.util import Pt
+
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    run.font.italic = italic or math
+    run.font.color.rgb = _ppt_rgb(color or theme["ink"])
+    if math:
+        run.font.name = "Cambria Math"
+    else:
+        run.font.name = theme.get("font_heading") if bold else (theme.get("font_body") or "Calibri")
+
+
+def _clear_ppt_runs(paragraph) -> None:
+    p_el = paragraph._p
+    for child in list(p_el):
+        local = child.tag.split("}")[-1]
+        if local in {"r", "br", "fld", "AlternateContent"}:
+            p_el.remove(child)
+
+
+def _fill_ppt_paragraph(
+    paragraph,
+    text: str,
+    theme: Dict[str, str],
+    *,
+    size: float,
+    bold: bool = False,
+    italic: bool = False,
+    color: str = "",
+    prefix: str = "",
+):
+    # PPT text frames only accept a:r / a:br / a:fld. Injecting mc:AlternateContent
+    # + a14:m (and xmlns via lxml .set) produces XML PowerPoint refuses to open.
+    _clear_ppt_runs(paragraph)
+    if prefix:
+        run = paragraph.add_run()
+        run.text = prefix
+        _set_ppt_run_font(run, theme, size=size, bold=bold, italic=italic, color=color)
+
+    raw = str(text or "")
+    if not text_has_math(raw):
+        run = paragraph.add_run()
+        run.text = raw
+        _set_ppt_run_font(run, theme, size=size, bold=bold, italic=italic, color=color)
+        return paragraph
+
+    for kind, payload in iter_text_math_parts(raw):
         if kind == "text":
-            parts.append(payload)
-        else:
-            parts.append(latex_to_unicode(payload) or payload)
-    return "".join(parts)
+            if not payload:
+                continue
+            run = paragraph.add_run()
+            run.text = payload
+            _set_ppt_run_font(run, theme, size=size, bold=bold, italic=italic, color=color)
+            continue
+        run = paragraph.add_run()
+        run.text = latex_to_unicode(payload) or payload
+        _set_ppt_run_font(
+            run,
+            theme,
+            size=size + 1,
+            bold=False,
+            italic=True,
+            color=color or theme.get("ink") or "",
+            math=True,
+        )
+    return paragraph
 
 
 def _textbox(slide, left, top, width, height, text: str, *, theme, size, bold=False, color="", italic=False, align=None):
     from pptx.enum.text import PP_ALIGN
-    from pptx.util import Pt, Emu
 
     box = slide.shapes.add_textbox(left, top, width, height)
     tf = box.text_frame
     tf.word_wrap = True
     p = tf.paragraphs[0]
     p.alignment = align or PP_ALIGN.LEFT
-    run = p.add_run()
-    run.text = _ppt_pretty(text)
-    run.font.size = Pt(size)
-    run.font.bold = bold
-    run.font.italic = italic
-    run.font.color.rgb = _ppt_rgb(color or theme["ink"])
-    run.font.name = "Cambria Math" if text_has_math(text) else (theme.get("font_heading") if bold else theme.get("font_body"))
+    _fill_ppt_paragraph(p, text, theme, size=size, bold=bold, italic=italic, color=color)
     return box
 
 
@@ -433,6 +666,26 @@ def _add_notes(slide, notes: str):
         pass
 
 
+def _ppt_paper_chrome(slide, theme: Dict[str, str], pack: Dict[str, Any], *, title_bar: bool = False):
+    from pptx.util import Inches
+
+    _set_slide_bg(slide, theme["paper"])
+    if pack.get("ppt_top_bar"):
+        height = 0.14 if title_bar else 0.12
+        _add_rect(slide, Inches(0), Inches(0), Inches(13.333), Inches(height), theme["accent"])
+
+
+def _ppt_title_rule(slide, theme: Dict[str, str], pack: Dict[str, Any], *, left=0.7, top=1.12):
+    from pptx.util import Inches
+
+    if not pack.get("ppt_rule"):
+        return
+    if pack.get("ppt_top_bar"):
+        _add_rect(slide, Inches(left), Inches(top), Inches(1.4), Inches(0.06), theme["accent"])
+    else:
+        _add_rect(slide, Inches(left), Inches(top), Inches(2.2), Inches(0.02), theme["rule"])
+
+
 def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
     try:
         from pptx import Presentation
@@ -441,7 +694,7 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
     except ImportError as exc:
         raise OfficeOutlineError("python-pptx is not installed") from exc
 
-    theme = {**DEFAULT_THEME, **(outline.get("theme") or {})}
+    _sid, theme, pack = _pack_of(outline)
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
@@ -449,6 +702,9 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
     doc_id = str(outline.get("doc_id") or "")
     slides = list(outline.get("slides") or [])
     total = max(1, len(slides))
+    heading_size = float(pack.get("ppt_heading_size") or 26)
+    body_size = float(pack.get("ppt_body_size") or 20)
+    section_n = 0
 
     for idx, spec in enumerate(slides, 1):
         if not isinstance(spec, dict):
@@ -456,37 +712,68 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
         slide = prs.slides.add_slide(layout)
         stype = spec.get("type")
         if stype == "section":
-            _set_slide_bg(slide, theme["accent_dark"])
-            _add_rect(slide, Inches(0), Inches(0), Inches(0.18), Inches(7.5), theme["accent"])
-            kicker = str(spec.get("kicker") or "SECTION")
-            _textbox(
-                slide,
-                Inches(0.9),
-                Inches(2.15),
-                Inches(11.4),
-                Inches(0.45),
-                kicker.upper(),
-                theme=theme,
-                size=13,
-                bold=True,
-                color=theme["header_fg"],
-            )
-            _textbox(
-                slide,
-                Inches(0.9),
-                Inches(2.7),
-                Inches(11.4),
-                Inches(2.2),
-                str(spec.get("title") or ""),
-                theme=theme,
-                size=36,
-                bold=True,
-                color=theme["header_fg"],
-            )
+            section_n += 1
+            if pack.get("ppt_section_fill") == "dark":
+                _set_slide_bg(slide, theme["accent_dark"])
+                _add_rect(slide, Inches(0), Inches(0), Inches(0.18), Inches(7.5), theme["accent"])
+                kicker = str(spec.get("kicker") or "SECTION")
+                _textbox(
+                    slide,
+                    Inches(0.9),
+                    Inches(2.15),
+                    Inches(11.4),
+                    Inches(0.45),
+                    kicker.upper(),
+                    theme=theme,
+                    size=13,
+                    bold=True,
+                    color=theme["header_fg"],
+                )
+                _textbox(
+                    slide,
+                    Inches(0.9),
+                    Inches(2.7),
+                    Inches(11.4),
+                    Inches(2.2),
+                    str(spec.get("title") or ""),
+                    theme=theme,
+                    size=36,
+                    bold=True,
+                    color=theme["header_fg"],
+                )
+            else:
+                _set_slide_bg(slide, theme["paper"])
+                _textbox(
+                    slide,
+                    Inches(0.9),
+                    Inches(1.85),
+                    Inches(11.4),
+                    Inches(0.9),
+                    f"{section_n:02d}",
+                    theme=theme,
+                    size=44,
+                    bold=True,
+                    color=theme["accent"],
+                )
+                _textbox(
+                    slide,
+                    Inches(0.9),
+                    Inches(2.85),
+                    Inches(11.4),
+                    Inches(1.8),
+                    str(spec.get("title") or ""),
+                    theme=theme,
+                    size=32,
+                    bold=True,
+                    color=theme["ink"],
+                )
+                _ppt_title_rule(slide, theme, pack, left=0.9, top=4.75)
         elif stype == "title":
-            _set_slide_bg(slide, theme["paper"])
-            _add_rect(slide, Inches(0), Inches(0), Inches(13.333), Inches(0.14), theme["accent"])
-            _add_rect(slide, Inches(0.9), Inches(3.05), Inches(2.1), Inches(0.08), theme["accent"])
+            _ppt_paper_chrome(slide, theme, pack, title_bar=True)
+            if pack.get("ppt_top_bar"):
+                _add_rect(slide, Inches(0.9), Inches(3.05), Inches(2.1), Inches(0.08), theme["accent"])
+            else:
+                _ppt_title_rule(slide, theme, pack, left=0.9, top=3.15)
             _textbox(
                 slide,
                 Inches(0.9),
@@ -495,7 +782,7 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                 Inches(0.9),
                 str(spec.get("title") or outline.get("title") or ""),
                 theme=theme,
-                size=40,
+                size=float(pack.get("ppt_title_size") or 40),
                 bold=True,
                 color=theme["ink"],
             )
@@ -513,8 +800,9 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                     color=theme["muted"],
                 )
         elif stype == "quote":
-            _set_slide_bg(slide, theme["paper"])
-            _add_rect(slide, Inches(0), Inches(0), Inches(0.16), Inches(7.5), theme["accent"])
+            _ppt_paper_chrome(slide, theme, pack)
+            if pack.get("ppt_quote_bar"):
+                _add_rect(slide, Inches(0), Inches(0), Inches(0.16), Inches(7.5), theme["accent"])
             _textbox(
                 slide,
                 Inches(1.2),
@@ -541,8 +829,7 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                     color=theme["muted"],
                 )
         elif stype == "two_column":
-            _set_slide_bg(slide, theme["paper"])
-            _add_rect(slide, Inches(0), Inches(0), Inches(13.333), Inches(0.12), theme["accent"])
+            _ppt_paper_chrome(slide, theme, pack)
             _textbox(
                 slide,
                 Inches(0.7),
@@ -551,11 +838,12 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                 Inches(0.7),
                 str(spec.get("title") or ""),
                 theme=theme,
-                size=26,
+                size=heading_size,
                 bold=True,
                 color=theme["ink"],
             )
-            _add_rect(slide, Inches(0.7), Inches(1.12), Inches(1.4), Inches(0.06), theme["accent"])
+            _ppt_title_rule(slide, theme, pack)
+            col_head = theme["accent_dark"] if pack.get("ppt_top_bar") else theme["ink"]
             for col, left in ((spec.get("left") or {}, 0.7), (spec.get("right") or {}, 7.05)):
                 heading = str(col.get("heading") or "")
                 top = 1.45
@@ -570,7 +858,7 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                         theme=theme,
                         size=16,
                         bold=True,
-                        color=theme["accent_dark"],
+                        color=col_head,
                     )
                     top = 1.95
                 body = str(col.get("body") or "")
@@ -590,8 +878,7 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                     color=theme["ink"],
                 )
         elif stype == "image":
-            _set_slide_bg(slide, theme["paper"])
-            _add_rect(slide, Inches(0), Inches(0), Inches(13.333), Inches(0.12), theme["accent"])
+            _ppt_paper_chrome(slide, theme, pack)
             title = str(spec.get("title") or "")
             if title:
                 _textbox(
@@ -639,8 +926,7 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                     align=PP_ALIGN.CENTER,
                 )
         elif stype == "equation":
-            _set_slide_bg(slide, theme["paper"])
-            _add_rect(slide, Inches(0), Inches(0), Inches(13.333), Inches(0.12), theme["accent"])
+            _ppt_paper_chrome(slide, theme, pack)
             title = str(spec.get("title") or "")
             top = 0.38
             if title:
@@ -652,38 +938,26 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                     Inches(0.7),
                     title,
                     theme=theme,
-                    size=26,
+                    size=heading_size,
                     bold=True,
                     color=theme["ink"],
                 )
-                _add_rect(slide, Inches(0.7), Inches(1.12), Inches(1.4), Inches(0.06), theme["accent"])
+                _ppt_title_rule(slide, theme, pack)
                 top = 1.45
             latex = latex_from_block(spec)
-            pretty = latex_to_unicode(latex) or latex
+            wrapped = latex if text_has_math(latex) else f"${latex}$"
+            eq_size = 28 if pack.get("ppt_top_bar") else 24
             _textbox(
                 slide,
                 Inches(0.9),
                 Inches(top + 0.35),
                 Inches(11.5),
-                Inches(3.2),
-                pretty,
+                Inches(3.6),
+                wrapped,
                 theme=theme,
-                size=28,
+                size=eq_size,
                 italic=True,
                 color=theme["ink"],
-                align=PP_ALIGN.CENTER,
-            )
-            _textbox(
-                slide,
-                Inches(0.9),
-                Inches(top + 3.55),
-                Inches(11.5),
-                Inches(0.7),
-                latex,
-                theme=theme,
-                size=13,
-                italic=True,
-                color=theme["muted"],
                 align=PP_ALIGN.CENTER,
             )
             caption = str(spec.get("caption") or "").strip()
@@ -702,8 +976,7 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                     align=PP_ALIGN.CENTER,
                 )
         else:  # bullets (default)
-            _set_slide_bg(slide, theme["paper"])
-            _add_rect(slide, Inches(0), Inches(0), Inches(13.333), Inches(0.12), theme["accent"])
+            _ppt_paper_chrome(slide, theme, pack)
             _textbox(
                 slide,
                 Inches(0.7),
@@ -712,11 +985,11 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                 Inches(0.7),
                 str(spec.get("title") or ""),
                 theme=theme,
-                size=26,
+                size=heading_size,
                 bold=True,
                 color=theme["ink"],
             )
-            _add_rect(slide, Inches(0.7), Inches(1.12), Inches(1.4), Inches(0.06), theme["accent"])
+            _ppt_title_rule(slide, theme, pack)
             items = spec.get("items") or []
             box = slide.shapes.add_textbox(Inches(0.75), Inches(1.45), Inches(11.8), Inches(5.2))
             tf = box.text_frame
@@ -725,14 +998,9 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
                 p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
                 p.level = 0
                 p.space_after = Pt(12)
-                run = p.add_run()
-                run.text = f"•   {_ppt_pretty(str(item))}"
-                run.font.size = Pt(20)
-                run.font.color.rgb = _ppt_rgb(theme["ink"])
-                run.font.name = "Cambria Math" if text_has_math(str(item)) else (theme.get("font_body") or "Calibri")
+                _fill_ppt_paragraph(p, str(item), theme, size=body_size, color=theme["ink"], prefix="•   ")
 
-        # Footer
-        if stype != "section":
+        if stype != "section" or pack.get("ppt_footer_on_section"):
             _textbox(
                 slide,
                 Inches(0.7),
@@ -760,7 +1028,31 @@ def render_pptx(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
 
     buf = io.BytesIO()
     prs.save(buf)
-    return buf.getvalue()
+    data = buf.getvalue()
+    _ensure_pptx_slides_parse(data)
+    return data
+
+
+def _ensure_pptx_slides_parse(data: bytes) -> None:
+    """Refuse to ship slide XML that PowerPoint would repair (xmlns:ns0 / a14:m)."""
+    from zipfile import ZipFile
+
+    from lxml import etree
+
+    with ZipFile(io.BytesIO(data)) as zf:
+        names = [n for n in zf.namelist() if n.startswith("ppt/slides/slide") and n.endswith(".xml")]
+        if not names:
+            raise OfficeOutlineError("generated pptx has no slides")
+        for name in names:
+            raw = zf.read(name)
+            if b"xmlns:ns0" in raw or b"ns0:a14" in raw or b"a14:m" in raw:
+                raise OfficeOutlineError(
+                    f"{name} contains invalid namespace markup (xmlns:ns0 / a14:m)"
+                )
+            try:
+                etree.fromstring(raw)
+            except etree.XMLSyntaxError as exc:
+                raise OfficeOutlineError(f"{name} is not well-formed XML: {exc}") from exc
 
 
 def render_outline(outline: Dict[str, Any], *, cwd: str = "") -> bytes:
